@@ -813,42 +813,48 @@ pub fn update_tile_elevation(
 /// update_aircraft_positions) to Y-up for Camera3d rendering.
 pub fn update_aircraft_3d_transform(
     state: Res<View3DState>,
-    mut aircraft_query: Query<(&crate::Aircraft, &mut Transform), Without<crate::AircraftLabel>>,
+    config: Res<crate::config::AppConfig>,
+    mut aircraft_query: Query<(&crate::Aircraft, Option<&crate::aircraft::InterpolationState>, &mut Transform), Without<crate::AircraftLabel>>,
     mut label_query: Query<(&crate::AircraftLabel, &mut Visibility)>,
 ) {
     if state.is_3d_active() {
-        // Tile mesh quads sit at ground_y in Y-up space. Aircraft must always
-        // render above tiles to avoid being occluded by opaque tile depth writes.
-        // Add a small offset (10 units) above ground to clear depth precision
-        // limits at grazing angles on Metal (~4 units at FL300).
         let ground_y = state.altitude_to_z(state.ground_elevation_ft);
         let min_aircraft_y = ground_y + 10.0;
 
-        for (aircraft, mut transform) in aircraft_query.iter_mut() {
-            // Read pixel positions set by update_aircraft_positions (Z-up)
+        for (aircraft, interp_opt, mut transform) in aircraft_query.iter_mut() {
             let px = transform.translation.x;
             let py = transform.translation.y;
-            let alt = aircraft.altitude.unwrap_or(0);
-            let alt_y = state.altitude_to_z(alt).max(min_aircraft_y);
 
-            // Remap to Y-up: (px, py, alt_z) -> (px, alt_y, -py)
+            // Use interpolated altitude/heading if available and enabled
+            let (alt, heading) = if config.interpolation_enabled {
+                if let Some(interp) = interp_opt {
+                    (
+                        interp.display_altitude.map(|a| a as i32).unwrap_or(0),
+                        interp.display_heading,
+                    )
+                } else {
+                    (aircraft.altitude.unwrap_or(0), aircraft.heading)
+                }
+            } else {
+                (aircraft.altitude.unwrap_or(0), aircraft.heading)
+            };
+
+            let alt_y = state.altitude_to_z(alt).max(min_aircraft_y);
             transform.translation = Vec3::new(px, alt_y, -py);
 
-            // Heading rotation around Y axis for Y-up space
             let base_rot = crate::camera::BASE_ROT_YUP;
-            if let Some(heading) = aircraft.heading {
+            if let Some(heading) = heading {
                 transform.rotation =
                     Quat::from_rotation_y((-heading).to_radians()) * base_rot;
             } else {
                 transform.rotation = base_rot;
             }
         }
-        // Hide text labels in 3D mode (they don't position well in perspective)
         for (_label, mut vis) in label_query.iter_mut() {
             *vis = Visibility::Hidden;
         }
     } else if !state.is_transitioning() {
-        for (_aircraft, mut transform) in aircraft_query.iter_mut() {
+        for (_aircraft, _interp, mut transform) in aircraft_query.iter_mut() {
             transform.translation.z = crate::constants::AIRCRAFT_Z_LAYER;
         }
         for (_label, mut vis) in label_query.iter_mut() {
