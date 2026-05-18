@@ -8,7 +8,7 @@ use super::{
     AircraftTypeDatabase,
     components::Aircraft,
 };
-use super::interpolation::InterpolationState;
+use super::interpolation::{InterpolationState, interpolate_aircraft_positions};
 use super::trail_renderer::{draw_trails, prune_trails};
 use super::trails::record_trail_points;
 use super::staleness::dim_stale_aircraft;
@@ -59,6 +59,8 @@ impl Plugin for AircraftPlugin {
                 dim_stale_aircraft,
             ))
             .add_systems(Update, render_detail_panel)
+            .add_systems(Update, interpolate_aircraft_positions
+                .after(crate::adsb::sync_aircraft_from_adsb))
             .add_systems(Update, (poll_aircraft_type_loading, attach_aircraft_type_info))
             .add_systems(Update, (
                 manage_selection_outline,
