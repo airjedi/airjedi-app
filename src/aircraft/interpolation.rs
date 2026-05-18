@@ -184,3 +184,52 @@ pub fn interpolate_aircraft_positions(
         }
     }
 }
+
+pub fn update_interpolation_on_adsb(
+    interp: &mut InterpolationState,
+    new_lat: f64,
+    new_lon: f64,
+    new_altitude: Option<i32>,
+    new_heading: Option<f32>,
+    new_speed: Option<f64>,
+    new_vertical_rate: Option<i32>,
+    is_on_ground: Option<bool>,
+    current_time: f64,
+) {
+    let error_nm = geo::haversine_distance_nm(
+        interp.display_lat, interp.display_lon,
+        new_lat, new_lon,
+    );
+
+    let new_alt_f32 = new_altitude.map(|a| a as f32);
+    let new_vrate_f32 = new_vertical_rate.map(|v| v as f32);
+
+    if error_nm < BLEND_THRESHOLD_NM {
+        interp.blend_target = Some(BlendTarget {
+            old_base_lat: interp.base_lat,
+            old_base_lon: interp.base_lon,
+            old_base_altitude: interp.base_altitude,
+            old_base_heading: interp.base_heading,
+            old_base_speed: interp.base_speed,
+            old_base_vertical_rate: interp.base_vertical_rate,
+            old_base_time: interp.base_time,
+            blend_start_time: current_time,
+            blend_duration: BLEND_DURATION_SECS,
+        });
+    } else {
+        interp.display_lat = new_lat;
+        interp.display_lon = new_lon;
+        interp.display_altitude = new_alt_f32;
+        interp.display_heading = new_heading;
+        interp.blend_target = None;
+    }
+
+    interp.base_lat = new_lat;
+    interp.base_lon = new_lon;
+    interp.base_altitude = new_alt_f32;
+    interp.base_heading = new_heading;
+    interp.base_speed = new_speed;
+    interp.base_vertical_rate = new_vrate_f32;
+    interp.base_time = current_time;
+    interp.predicting = should_predict(new_heading, new_speed, is_on_ground);
+}

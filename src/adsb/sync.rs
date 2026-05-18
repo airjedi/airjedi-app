@@ -5,6 +5,7 @@ use bevy::camera::visibility::RenderLayers;
 use crate::{constants, Aircraft, AircraftLabel, RenderCategory};
 use crate::aircraft::TrailHistory;
 use crate::aircraft::picking::{on_aircraft_click, on_aircraft_hover, on_aircraft_out};
+use crate::aircraft::interpolation::{InterpolationState, update_interpolation_on_adsb};
 use crate::debug_panel::DebugPanelState;
 use super::connection::{AdsbAircraftData, ConnectionStatusText};
 
@@ -110,11 +111,12 @@ pub fn sync_aircraft_from_adsb(
     mut commands: Commands,
     model_registry: Option<Res<AircraftModelRegistry>>,
     adsb_data: Option<Res<AdsbAircraftData>>,
-    mut aircraft_query: Query<(Entity, &mut Aircraft, &mut Transform)>,
+    mut aircraft_query: Query<(Entity, &mut Aircraft, &mut Transform, Option<&mut InterpolationState>)>,
     label_query: Query<(Entity, &AircraftLabel)>,
     mut debug: Option<ResMut<DebugPanelState>>,
     theme: Res<AppTheme>,
     type_db: Option<Res<crate::aircraft::AircraftTypeDatabase>>,
+    time: Res<Time<Real>>,
 ) {
     let Some(adsb_data) = adsb_data else {
         return; // ADS-B client not yet initialized
@@ -132,7 +134,7 @@ pub fn sync_aircraft_from_adsb(
     // Build a map of existing aircraft entities by ICAO
     let mut existing_aircraft: HashMap<String, Entity> = aircraft_query
         .iter()
-        .map(|(entity, aircraft, _)| (aircraft.icao.clone(), entity))
+        .map(|(entity, aircraft, _, _)| (aircraft.icao.clone(), entity))
         .collect();
 
     // Update or spawn aircraft
@@ -151,7 +153,7 @@ pub fn sync_aircraft_from_adsb(
 
         if let Some(&entity) = existing_aircraft.get(&adsb_ac.icao) {
             // Update existing aircraft
-            if let Ok((_, mut aircraft, _)) = aircraft_query.get_mut(entity) {
+            if let Ok((_, mut aircraft, _, interp_opt)) = aircraft_query.get_mut(entity) {
                 aircraft.latitude = lat;
                 aircraft.longitude = lon;
                 aircraft.altitude = adsb_ac.altitude;
@@ -165,6 +167,19 @@ pub fn sync_aircraft_from_adsb(
                 aircraft.emergency = adsb_ac.emergency;
                 aircraft.spi = adsb_ac.spi;
                 aircraft.last_seen = adsb_ac.last_seen;
+
+                if let Some(mut interp) = interp_opt {
+                    update_interpolation_on_adsb(
+                        &mut interp,
+                        lat, lon,
+                        adsb_ac.altitude,
+                        adsb_ac.track.map(|t| t as f32),
+                        adsb_ac.velocity,
+                        adsb_ac.vertical_rate,
+                        adsb_ac.is_on_ground,
+                        time.elapsed_secs_f64(),
+                    );
+                }
             }
             existing_aircraft.remove(&adsb_ac.icao);
         } else {
@@ -207,6 +222,15 @@ pub fn sync_aircraft_from_adsb(
                         last_seen: adsb_ac.last_seen,
                     },
                     TrailHistory::default(),
+                    InterpolationState::new(
+                        lat, lon,
+                        adsb_ac.altitude,
+                        adsb_ac.track.map(|t| t as f32),
+                        adsb_ac.velocity,
+                        adsb_ac.vertical_rate,
+                        adsb_ac.is_on_ground,
+                        time.elapsed_secs_f64(),
+                    ),
                 ));
             if let Some(corr) = correction {
                 entity_commands.insert(corr);
