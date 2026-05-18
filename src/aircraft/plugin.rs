@@ -8,6 +8,7 @@ use super::{
     AircraftTypeDatabase,
     components::Aircraft,
 };
+use super::interpolation::InterpolationState;
 use super::trail_renderer::{draw_trails, prune_trails};
 use super::trails::record_trail_points;
 use super::staleness::dim_stale_aircraft;
@@ -26,6 +27,7 @@ impl Plugin for AircraftPlugin {
     fn build(&self, app: &mut App) {
         app
             .register_type::<Aircraft>()
+            .register_type::<InterpolationState>()
             .register_type::<CameraFollowState>()
             .init_resource::<SessionClock>()
             .init_resource::<TrailConfig>()
