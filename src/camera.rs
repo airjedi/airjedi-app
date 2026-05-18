@@ -235,24 +235,31 @@ fn scale_aircraft_and_labels(
 pub(crate) fn update_aircraft_positions(
     map_state: Res<MapState>,
     tile_settings: Res<SlippyTilesSettings>,
-    mut aircraft_query: Query<(&Aircraft, &mut Transform)>,
+    config: Res<crate::config::AppConfig>,
+    mut aircraft_query: Query<(&Aircraft, Option<&crate::aircraft::InterpolationState>, &mut Transform)>,
 ) {
-    // Position aircraft RELATIVE to SlippyTilesSettings.reference
     let converter = geo::CoordinateConverter::new(&tile_settings, map_state.zoom_level);
 
-    for (aircraft, mut transform) in aircraft_query.iter_mut() {
-        let pos = converter.latlon_to_world(aircraft.latitude, aircraft.longitude);
+    for (aircraft, interp_opt, mut transform) in aircraft_query.iter_mut() {
+        // Use interpolated display position if available and enabled, otherwise raw ADS-B
+        let (lat, lon, heading) = if config.interpolation_enabled {
+            if let Some(interp) = interp_opt {
+                (interp.display_lat, interp.display_lon, interp.display_heading)
+            } else {
+                (aircraft.latitude, aircraft.longitude, aircraft.heading)
+            }
+        } else {
+            (aircraft.latitude, aircraft.longitude, aircraft.heading)
+        };
+
+        let pos = converter.latlon_to_world(lat, lon);
 
         transform.translation.x = pos.x;
         transform.translation.y = pos.y;
-        // Apply rotation for 3D model orientation:
-        // GLB model has nose along +Z, wings along X, height along Y.
-        // First rotate 180 around Z to flip the model right-side up (top faces camera).
-        // Then rotate -90 around X to tilt nose from +Z to +Y (north on screen).
-        // Finally heading rotation around Z orients the aircraft to its track angle.
+
         let base_rot = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)
             * Quat::from_rotation_z(std::f32::consts::PI);
-        if let Some(heading) = aircraft.heading {
+        if let Some(heading) = heading {
             transform.rotation = Quat::from_rotation_z((-heading).to_radians()) * base_rot;
         } else {
             transform.rotation = base_rot;
