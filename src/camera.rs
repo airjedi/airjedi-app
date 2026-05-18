@@ -65,6 +65,7 @@ impl Plugin for CameraPlugin {
             update_aircraft_positions
                 .after(update_camera_position)
                 .after(crate::adsb::sync_aircraft_from_adsb)
+                .after(crate::aircraft::interpolation::interpolate_aircraft_positions)
                 .after(ZoomSet::Change),
         )
         .add_systems(
