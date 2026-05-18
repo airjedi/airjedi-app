@@ -10,6 +10,8 @@ use crate::theme::{AppTheme, ThemeRegistry};
 
 const CONFIG_FILE: &str = "config.toml";
 
+fn default_interpolation_enabled() -> bool { true }
+
 /// Available basemap styles for the map display
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum BasemapStyle {
@@ -89,6 +91,8 @@ pub struct AppConfig {
     pub appearance: AppearanceConfig,
     #[serde(default)]
     pub data_ingest: DataIngestConfig,
+    #[serde(default = "default_interpolation_enabled")]
+    pub interpolation_enabled: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -297,6 +301,7 @@ impl Default for AppConfig {
             bookmarks: BookmarksConfig::default(),
             appearance: AppearanceConfig::default(),
             data_ingest: DataIngestConfig::default(),
+            interpolation_enabled: true,
         }
     }
 }
@@ -468,6 +473,7 @@ impl SettingsUiState {
             bookmarks: BookmarksConfig::default(),
             appearance: AppearanceConfig::default(),
             data_ingest: self.data_ingest.clone(),
+            interpolation_enabled: default_interpolation_enabled(),
         })
     }
 }
