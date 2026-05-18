@@ -30,8 +30,12 @@ app: icons
 
 install: app
 	@echo "Installing to /Applications..."
+	@# Kill running instances before replacing the bundle
+	-@pkill -f '$(APP_NAME).app/Contents/MacOS' 2>/dev/null; sleep 0.5
 	rm -rf /Applications/$(APP_NAME).app
 	cp -R $(BUILD_DIR)/$(APP_NAME).app /Applications/$(APP_NAME).app
+	@# Reset Launch Services cache so macOS picks up the new binary
+	/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f /Applications/$(APP_NAME).app
 	@echo "Installed /Applications/$(APP_NAME).app"
 
 run: app

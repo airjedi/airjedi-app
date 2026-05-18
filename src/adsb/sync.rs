@@ -154,6 +154,9 @@ pub fn sync_aircraft_from_adsb(
         if let Some(&entity) = existing_aircraft.get(&adsb_ac.icao) {
             // Update existing aircraft
             if let Ok((_, mut aircraft, _, interp_opt)) = aircraft_query.get_mut(entity) {
+                let position_changed = (lat - aircraft.latitude).abs() > f64::EPSILON
+                    || (lon - aircraft.longitude).abs() > f64::EPSILON;
+
                 aircraft.latitude = lat;
                 aircraft.longitude = lon;
                 aircraft.altitude = adsb_ac.altitude;
@@ -168,17 +171,19 @@ pub fn sync_aircraft_from_adsb(
                 aircraft.spi = adsb_ac.spi;
                 aircraft.last_seen = adsb_ac.last_seen;
 
-                if let Some(mut interp) = interp_opt {
-                    update_interpolation_on_adsb(
-                        &mut interp,
-                        lat, lon,
-                        adsb_ac.altitude,
-                        adsb_ac.track.map(|t| t as f32),
-                        adsb_ac.velocity,
-                        adsb_ac.vertical_rate,
-                        adsb_ac.is_on_ground,
-                        time.elapsed_secs_f64(),
-                    );
+                if position_changed {
+                    if let Some(mut interp) = interp_opt {
+                        update_interpolation_on_adsb(
+                            &mut interp,
+                            lat, lon,
+                            adsb_ac.altitude,
+                            adsb_ac.track.map(|t| t as f32),
+                            adsb_ac.velocity,
+                            adsb_ac.vertical_rate,
+                            adsb_ac.is_on_ground,
+                            time.elapsed_secs_f64(),
+                        );
+                    }
                 }
             }
             existing_aircraft.remove(&adsb_ac.icao);
