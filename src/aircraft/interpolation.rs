@@ -1,5 +1,8 @@
 use bevy::prelude::*;
 
+use crate::geo;
+use crate::config::AppConfig;
+
 pub const BLEND_THRESHOLD_NM: f64 = 0.5;
 pub const BLEND_DURATION_SECS: f32 = 0.3;
 pub const MAX_PREDICTION_SECS: f64 = 15.0;
@@ -89,9 +92,6 @@ pub fn lerp_heading(from: f32, to: f32, t: f32) -> f32 {
     let result = from + diff * t;
     ((result % 360.0) + 360.0) % 360.0
 }
-
-use crate::geo;
-use crate::config::AppConfig;
 
 fn dead_reckon(lat: f64, lon: f64, heading: Option<f32>, speed: Option<f64>,
                altitude: Option<f32>, vertical_rate: Option<f32>,
