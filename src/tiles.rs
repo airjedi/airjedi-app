@@ -1068,10 +1068,12 @@ fn animate_tile_fades(
     }
 
     // Despawn old-zoom tiles when their grid cell is covered by a fully-loaded
-    // new tile, or after 3 seconds as a fallback to prevent accumulation.
+    // new tile. In 2D mode, also expire after 3 seconds as a fallback to prevent
+    // accumulation from grid cell misalignment. In 3D mode, skip time-based expiry
+    // since lower-zoom tiles provide intentional fallback coverage at distance.
     for (entity, cx, cy, zoom, spawn_time) in old_tiles {
         let covered = loaded_cells.contains(&(cx, cy));
-        let expired = (now - spawn_time) > 3.0;
+        let expired = !is_3d && (now - spawn_time) > 3.0;
         if covered || expired {
             let tx = (cx as f32 * constants::DEFAULT_TILE_PIXELS) as i32;
             let ty = (cy as f32 * constants::DEFAULT_TILE_PIXELS) as i32;

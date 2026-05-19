@@ -828,25 +828,23 @@ pub fn update_airspace_meshes(
     let camera_lat = map_state.latitude;
     let camera_lon = map_state.longitude;
 
+    // Build a set of airspace IDs that should be visible for O(1) lookup
+    let visible_ids: std::collections::HashSet<&str> = airspace_data
+        .airspaces
+        .iter()
+        .filter(|a| display_state.is_class_visible(&a.class) && is_in_range(a, camera_lat, camera_lon))
+        .map(|a| a.id.as_str())
+        .collect();
+
     // Despawn meshes for airspaces no longer visible
     for (entity, marker) in existing_query.iter() {
-        let should_keep = airspace_data.airspaces.iter().any(|a| {
-            a.id == marker.airspace_id
-                && display_state.is_class_visible(&a.class)
-                && is_in_range(a, camera_lat, camera_lon)
-        });
-        if !should_keep {
+        if !visible_ids.contains(marker.airspace_id.as_str()) {
             commands.entity(entity).despawn();
             spawned.ids.remove(&marker.airspace_id);
         }
     }
     for (entity, marker) in outline_query.iter() {
-        let should_keep = airspace_data.airspaces.iter().any(|a| {
-            a.id == marker.airspace_id
-                && display_state.is_class_visible(&a.class)
-                && is_in_range(a, camera_lat, camera_lon)
-        });
-        if !should_keep {
+        if !visible_ids.contains(marker.airspace_id.as_str()) {
             commands.entity(entity).despawn();
         }
     }
@@ -968,9 +966,20 @@ pub fn draw_airspace_gizmos(
     }
 
     let converter = CoordinateConverter::new(&tile_settings, map_state.zoom_level);
+    let camera_lat = map_state.latitude;
+    let camera_lon = map_state.longitude;
 
     for airspace in &airspace_data.airspaces {
         if !display_state.is_class_visible(&airspace.class) {
+            continue;
+        }
+        if !is_in_range(airspace, camera_lat, camera_lon) {
+            continue;
+        }
+
+        let floor_ft = altitude_ref_to_ft(&airspace.floor);
+        let ceiling_ft = altitude_ref_to_ft(&airspace.ceiling);
+        if !display_state.passes_altitude_filter(Some(floor_ft), Some(ceiling_ft)) {
             continue;
         }
 

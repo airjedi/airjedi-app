@@ -67,7 +67,7 @@ pub fn setup_aircraft_models(mut commands: Commands, asset_server: Res<AssetServ
             settings.load_meshes = RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD;
         },
     );
-    let b737_model: Handle<Scene> = asset_server.load("models/b737/b737.glb#Scene0");
+    let b737_model: Handle<Scene> = asset_server.load("models/b737/78349.obj");
 
     let mut type_models = HashMap::new();
     for code in B737_TYPES {

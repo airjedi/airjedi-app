@@ -33,7 +33,7 @@ use bevy_egui::{egui, EguiContexts};
 // Constants for 3D view
 const TRANSITION_DURATION: f32 = 2.0;
 const DEFAULT_PITCH: f32 = 25.0;
-const DEFAULT_CAMERA_ALTITUDE: f32 = 10000.0;
+const DEFAULT_CAMERA_ALTITUDE: f32 = 30000.0;
 const MIN_PITCH: f32 = -89.9;
 const MAX_PITCH: f32 = 89.9;
 const MIN_CAMERA_ALTITUDE: f32 = 1000.0;
