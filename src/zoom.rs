@@ -150,6 +150,7 @@ fn apply_zoom_level_transition(
     tile_query: &mut Query<(&mut TileFadeState, &mut Transform), With<MapTile>>,
     spawned_tiles: &mut SpawnedTiles,
     download_events: &mut MessageWriter<DownloadSlippyTilesMessage>,
+    _download_status: &mut SlippyTileDownloadStatus,
 ) {
     spawned_tiles.positions.clear();
     let scale_factor = if map_state.zoom_level.to_u8() > old_tile_zoom.to_u8() {
@@ -187,6 +188,7 @@ pub(crate) fn handle_zoom(
     dock_state: Res<dock::DockTreeState>,
     mut spawned_tiles: ResMut<SpawnedTiles>,
     view3d_state: Res<view3d::View3DState>,
+    mut download_status: ResMut<SlippyTileDownloadStatus>,
 ) {
     // In 3D mode, scroll is handled by handle_3d_camera_controls
     if view3d_state.is_3d_active() || view3d_state.is_transitioning() {
@@ -303,6 +305,7 @@ pub(crate) fn handle_zoom(
                 &mut tile_query,
                 &mut spawned_tiles,
                 &mut download_events,
+                &mut download_status,
             );
             log_info!("  Requested new tiles at zoom level {}", map_state.zoom_level.to_u8());
         }
@@ -325,6 +328,7 @@ pub(crate) fn handle_pinch_zoom(
     dock_state: Res<dock::DockTreeState>,
     mut spawned_tiles: ResMut<SpawnedTiles>,
     view3d_state: Res<view3d::View3DState>,
+    mut download_status: ResMut<SlippyTileDownloadStatus>,
 ) {
     // In 3D mode, zoom is handled by handle_3d_camera_controls
     if view3d_state.is_3d_active() || view3d_state.is_transitioning() {
@@ -382,6 +386,7 @@ pub(crate) fn handle_pinch_zoom(
                     &mut tile_query,
                     &mut spawned_tiles,
                     &mut download_events,
+                    &mut download_status,
                 );
             }
         }

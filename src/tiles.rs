@@ -23,6 +23,8 @@ pub(crate) struct TileFadeState {
     pub(crate) alpha: f32,
     /// The zoom level this tile was spawned for
     pub(crate) tile_zoom: u8,
+    /// When this tile was spawned (seconds since startup)
+    pub(crate) spawn_time: f64,
 }
 
 /// Links a tile entity to its 3D mesh quad companion (used in 3D mode only).
@@ -745,8 +747,10 @@ fn display_tiles_filtered(
     view3d_state: Res<view3d::View3DState>,
     grid: Option<Res<GridOverlay>>,
     basemap_state: Res<crate::config::CurrentBasemapState>,
+    time: Res<Time<Real>>,
 ) {
     let current_zoom = map_state.zoom_level.to_u8();
+    let now = time.elapsed_secs_f64();
 
     // Scale factor to compensate when the tile server returns smaller images
     // than the requested tile size (e.g. ESRI returns 256px for @2x/512 requests).
@@ -853,6 +857,7 @@ fn display_tiles_filtered(
             TileFadeState {
                 alpha: 0.0,
                 tile_zoom: event_zoom,
+                spawn_time: now,
             },
             RenderLayers::layer(RenderCategory::TILES_2D),
         ));
@@ -876,7 +881,7 @@ fn max_tile_entities(view3d_state: Option<&view3d::View3DState>) -> usize {
             return 1500;
         }
     }
-    400 // 2D limit
+    200 // 2D limit: a typical screen shows ~50-80 tiles at one zoom level
 }
 
 /// Despawn tile entities that are far outside the visible viewport.
@@ -888,6 +893,7 @@ fn cull_offscreen_tiles(
     tile_query: Query<(Entity, &Transform, &TileFadeState), With<MapTile>>,
     window_query: Query<&Window>,
     mut spawned_tiles: ResMut<SpawnedTiles>,
+    mut download_status: ResMut<SlippyTileDownloadStatus>,
     view3d_state: Res<view3d::View3DState>,
     alt_tracker: Res<AltitudeChangeTracker>,
 ) {
@@ -1001,12 +1007,15 @@ fn cull_offscreen_tiles(
 fn animate_tile_fades(
     mut commands: Commands,
     time: Res<Time>,
+    real_time: Res<Time<Real>>,
     map_state: Res<MapState>,
     mut tile_query: Query<(Entity, &mut TileFadeState, &mut Sprite, &Transform), With<MapTile>>,
     mut spawned_tiles: ResMut<SpawnedTiles>,
+    mut download_status: ResMut<SlippyTileDownloadStatus>,
     view3d_state: Res<view3d::View3DState>,
 ) {
     let delta = time.delta_secs();
+    let now = real_time.elapsed_secs_f64();
     let current_zoom = map_state.zoom_level.to_u8();
 
     // In 3D mode, tiles within the multi-resolution band (current_zoom to
@@ -1016,7 +1025,7 @@ fn animate_tile_fades(
     // Collect grid cells covered by fully-opaque new tiles.
     // Quantize positions to 256px cells so old (rescaled) tiles can be matched.
     let mut loaded_cells: std::collections::HashSet<(i32, i32)> = std::collections::HashSet::new();
-    let mut old_tiles: Vec<(Entity, i32, i32, u8)> = Vec::new();
+    let mut old_tiles: Vec<(Entity, i32, i32, u8, f64)> = Vec::new();
 
     for (entity, mut fade_state, mut sprite, transform) in tile_query.iter_mut() {
         let dominated = if is_3d {
@@ -1054,14 +1063,16 @@ fn animate_tile_fades(
                 (transform.translation.x / constants::DEFAULT_TILE_PIXELS).round() as i32,
                 (transform.translation.y / constants::DEFAULT_TILE_PIXELS).round() as i32,
             );
-            old_tiles.push((entity, cell.0, cell.1, fade_state.tile_zoom));
+            old_tiles.push((entity, cell.0, cell.1, fade_state.tile_zoom, fade_state.spawn_time));
         }
     }
 
-    // Despawn old tiles whose grid cell is covered by a fully-loaded new tile.
-    // Remove from spawned_tiles so the position can be re-used.
-    for (entity, cx, cy, zoom) in old_tiles {
-        if loaded_cells.contains(&(cx, cy)) {
+    // Despawn old-zoom tiles when their grid cell is covered by a fully-loaded
+    // new tile, or after 3 seconds as a fallback to prevent accumulation.
+    for (entity, cx, cy, zoom, spawn_time) in old_tiles {
+        let covered = loaded_cells.contains(&(cx, cy));
+        let expired = (now - spawn_time) > 3.0;
+        if covered || expired {
             let tx = (cx as f32 * constants::DEFAULT_TILE_PIXELS) as i32;
             let ty = (cy as f32 * constants::DEFAULT_TILE_PIXELS) as i32;
             spawned_tiles.positions.remove(&(tx, ty, zoom));

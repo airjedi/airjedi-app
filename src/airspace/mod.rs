@@ -852,7 +852,7 @@ pub fn update_airspace_meshes(
     }
 
     // Spawn meshes for newly visible airspaces
-    warn!(
+    trace!(
         "Airspace refresh: {} airspaces, camera ({:.4}, {:.4}), is_3d={}, spawned={}",
         airspace_data.airspaces.len(), camera_lat, camera_lon, is_3d, spawned.ids.len()
     );
@@ -861,11 +861,9 @@ pub fn update_airspace_meshes(
             continue;
         }
         if !display_state.is_class_visible(&airspace.class) {
-            warn!("  {} skipped: class not visible", airspace.id);
             continue;
         }
         if !is_in_range(airspace, camera_lat, camera_lon) {
-            warn!("  {} skipped: out of range (centroid: {:?})", airspace.id, airspace.centroid());
             continue;
         }
 
@@ -942,7 +940,7 @@ pub fn update_airspace_meshes(
         }
 
         spawned.ids.insert(airspace.id.clone());
-        warn!("  SPAWNED airspace mesh: {} (floor={} ceil={} is_3d={})", airspace.id, floor_ft, ceiling_ft, is_3d);
+        debug!("  Spawned airspace mesh: {} (floor={} ceil={} is_3d={})", airspace.id, floor_ft, ceiling_ft, is_3d);
     }
 }
 

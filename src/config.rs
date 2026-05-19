@@ -372,6 +372,7 @@ pub struct SettingsUiState {
     pub trails_renderer_2d: TrailRenderer,
     pub trails_renderer_3d: TrailRenderer,
     pub data_ingest: DataIngestConfig,
+    pub interpolation_enabled: bool,
     pub error_message: Option<String>,
     pub layout_reset_requested: bool,
 }
@@ -395,6 +396,7 @@ impl SettingsUiState {
         self.trails_renderer_2d = config.trails.renderer_2d;
         self.trails_renderer_3d = config.trails.renderer_3d;
         self.data_ingest = config.data_ingest.clone();
+        self.interpolation_enabled = config.interpolation_enabled;
         self.error_message = None;
     }
 
@@ -473,7 +475,7 @@ impl SettingsUiState {
             bookmarks: BookmarksConfig::default(),
             appearance: AppearanceConfig::default(),
             data_ingest: self.data_ingest.clone(),
-            interpolation_enabled: default_interpolation_enabled(),
+            interpolation_enabled: self.interpolation_enabled,
         })
     }
 }
@@ -557,6 +559,18 @@ pub fn render_settings_pane_content(
         ui.checkbox(&mut ui_state.show_airports, "Show Airports");
         ui.checkbox(&mut ui_state.show_runways, "Show Runways");
         ui.checkbox(&mut ui_state.show_navaids, "Show Navaids");
+    });
+
+    ui.add_space(12.0);
+
+    // Aircraft section
+    ui.collapsing("Aircraft", |ui| {
+        ui.checkbox(&mut ui_state.interpolation_enabled, "Smooth Interpolation");
+        ui.label(
+            egui::RichText::new("Predict aircraft positions between ADS-B updates for smooth motion")
+                .size(10.0)
+                .color(egui::Color32::GRAY),
+        );
     });
 
     ui.add_space(12.0);

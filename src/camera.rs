@@ -75,6 +75,12 @@ impl Plugin for CameraPlugin {
         .add_systems(
             Update,
             update_aircraft_labels.after(update_aircraft_positions),
+        )
+        .add_systems(
+            Update,
+            cull_offscreen_aircraft
+                .after(update_aircraft_positions)
+                .after(crate::view3d::update_aircraft_3d_transform),
         );
     }
 }
@@ -279,6 +285,66 @@ fn update_aircraft_labels(
         if let Ok(aircraft_transform) = aircraft_query.get(label.aircraft_entity) {
             label_transform.translation.x = aircraft_transform.translation.x + world_space_offset;
             label_transform.translation.y = aircraft_transform.translation.y + world_space_offset;
+        }
+    }
+}
+
+/// Hide aircraft (and their entire scene hierarchy) when they are outside
+/// the camera viewport. Setting Visibility::Hidden on the root entity
+/// causes Bevy to skip rendering all child mesh/material entities,
+/// which is the primary performance win for off-screen aircraft.
+fn cull_offscreen_aircraft(
+    camera_query: Query<(&Transform, &Projection), With<MapCamera>>,
+    mut aircraft_query: Query<(&Transform, &mut Visibility), (With<Aircraft>, Without<MapCamera>)>,
+    mut label_query: Query<(&AircraftLabel, &mut Visibility), (Without<Aircraft>, Without<MapCamera>)>,
+    window_query: Query<&Window>,
+    view3d_state: Res<view3d::View3DState>,
+) {
+    // In 3D mode, perspective frustum culling is handled by Bevy's built-in
+    // system via Aabb, so we only do manual viewport culling in 2D.
+    if view3d_state.is_3d_active() || view3d_state.is_transitioning() {
+        return;
+    }
+
+    let Ok((camera_tf, projection)) = camera_query.single() else {
+        return;
+    };
+    let Ok(window) = window_query.single() else {
+        return;
+    };
+
+    let ortho_scale = if let Projection::Orthographic(ref ortho) = projection {
+        ortho.scale
+    } else {
+        1.0
+    };
+
+    let margin = 1.3;
+    let half_w = (window.width() / 2.0) * ortho_scale * margin;
+    let half_h = (window.height() / 2.0) * ortho_scale * margin;
+    let cam_x = camera_tf.translation.x;
+    let cam_y = camera_tf.translation.y;
+
+    for (transform, mut visibility) in aircraft_query.iter_mut() {
+        let dx = (transform.translation.x - cam_x).abs();
+        let dy = (transform.translation.y - cam_y).abs();
+        let in_view = dx < half_w && dy < half_h;
+
+        let target = if in_view { Visibility::Inherited } else { Visibility::Hidden };
+        if *visibility != target {
+            *visibility = target;
+        }
+    }
+
+    for (label, mut visibility) in label_query.iter_mut() {
+        if let Ok((ac_tf, _)) = aircraft_query.get(label.aircraft_entity) {
+            let dx = (ac_tf.translation.x - cam_x).abs();
+            let dy = (ac_tf.translation.y - cam_y).abs();
+            let in_view = dx < half_w && dy < half_h;
+            let target = if in_view { Visibility::Inherited } else { Visibility::Hidden };
+            if *visibility != target {
+                *visibility = target;
+            }
         }
     }
 }
