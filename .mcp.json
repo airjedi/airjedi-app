@@ -5,6 +5,6 @@
       "command": "bevy_brp_mcp",
       "args": [],
       "env": {}
-    },
+    }
   }
 }

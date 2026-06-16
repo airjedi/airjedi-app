@@ -243,9 +243,11 @@ pub(crate) fn update_aircraft_positions(
     map_state: Res<MapState>,
     tile_settings: Res<SlippyTilesSettings>,
     config: Res<crate::config::AppConfig>,
+    view3d_state: Res<view3d::View3DState>,
     mut aircraft_query: Query<(&Aircraft, Option<&crate::aircraft::InterpolationState>, &mut Transform)>,
 ) {
-    let converter = geo::CoordinateConverter::new(&tile_settings, map_state.zoom_level);
+    let zoom = view3d_state.effective_zoom(map_state.zoom_level);
+    let converter = geo::CoordinateConverter::new(&tile_settings, zoom);
 
     for (aircraft, interp_opt, mut transform) in aircraft_query.iter_mut() {
         // Use interpolated display position if available and enabled, otherwise raw ADS-B

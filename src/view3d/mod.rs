@@ -94,6 +94,10 @@ pub struct View3DState {
     pub follow_altitude_ft: Option<i32>,
     /// Saved 2D zoom level when entering 3D mode, restored on return
     pub saved_2d_zoom_level: Option<u8>,
+    /// Fixed zoom level for rendering coordinates in 3D mode. Stays constant
+    /// while the tile system's zoom_level changes for LOD - prevents position
+    /// jumps when crossing discrete zoom boundaries.
+    pub rendering_zoom: Option<u8>,
     /// Whether the camera is in chase mode (tracking aircraft heading)
     pub chase_active: bool,
     /// Progress of the initial transition into chase position (0.0 to 1.0)
@@ -128,6 +132,7 @@ impl Default for View3DState {
             drag_active: false,
             follow_altitude_ft: None,
             saved_2d_zoom_level: None,
+            rendering_zoom: None,
             chase_active: false,
             chase_transition: 0.0,
             pre_chase_pitch: DEFAULT_PITCH,
@@ -146,6 +151,15 @@ impl View3DState {
 
     pub fn is_transitioning(&self) -> bool {
         !matches!(self.transition, TransitionState::Idle)
+    }
+
+    /// Get the zoom level to use for coordinate conversion. In 3D mode,
+    /// returns the fixed rendering zoom to prevent position jumps. In 2D,
+    /// returns None (callers should use map_state.zoom_level).
+    pub fn effective_zoom(&self, map_zoom: bevy_slippy_tiles::ZoomLevel) -> bevy_slippy_tiles::ZoomLevel {
+        self.rendering_zoom
+            .and_then(|z| bevy_slippy_tiles::ZoomLevel::try_from(z).ok())
+            .unwrap_or(map_zoom)
     }
 
     /// Convert altitude in feet to pixel-space Z offset
@@ -258,6 +272,7 @@ pub fn toggle_3d_view(
 
                 // Save the 2D zoom level so we can restore it when returning
                 state.saved_2d_zoom_level = Some(map_state.zoom_level.to_u8());
+                state.rendering_zoom = Some(map_state.zoom_level.to_u8());
 
                 // Auto-detect ground elevation from nearest airport
                 detect_ground_elevation(&mut state, &map_state, &aviation_data);
@@ -465,12 +480,8 @@ pub fn update_3d_camera(
         TransitionState::TransitioningTo2D { progress } => smooth_step(1.0 - progress),
     };
 
-    // Compute orbit center from geographic coordinates at the current zoom level.
-    // This ensures the camera is in the same pixel-space coordinate system as
-    // all entity positions (which also use CoordinateConverter with map_state.zoom_level).
-    // Using lat/lon as the authoritative source eliminates frame-ordering issues
-    // where saved_2d_center might be at a different zoom's scale than entities.
-    let converter = crate::geo::CoordinateConverter::new(&tile_settings, map_state.zoom_level);
+    let render_zoom = state.effective_zoom(map_state.zoom_level);
+    let converter = crate::geo::CoordinateConverter::new(&tile_settings, render_zoom);
     let center_2d = converter.latlon_to_world(map_state.latitude, map_state.longitude);
 
     // When following an aircraft, orbit around its altitude instead of ground.
@@ -516,6 +527,7 @@ pub fn update_3d_camera(
         if matches!(state.transition, TransitionState::TransitioningTo2D { .. }) {
             state.mode = ViewMode::Map2D;
             state.transition = TransitionState::Idle;
+            state.rendering_zoom = None;
             info!("Transition to 2D complete");
         }
         return;

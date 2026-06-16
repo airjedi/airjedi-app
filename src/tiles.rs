@@ -78,6 +78,8 @@ struct AltitudeChangeTracker {
     prev_altitude: f32,
     /// Seconds since the last significant altitude change.
     idle_secs: f32,
+    /// Cooldown: seconds remaining before a zoom level change is allowed.
+    zoom_cooldown: f32,
 }
 
 impl Default for AltitudeChangeTracker {
@@ -85,6 +87,7 @@ impl Default for AltitudeChangeTracker {
         Self {
             prev_altitude: 10000.0,
             idle_secs: f32::MAX,
+            zoom_cooldown: 0.0,
         }
     }
 }
@@ -524,6 +527,7 @@ fn request_3d_tiles_continuous(
     mut download_events: MessageWriter<DownloadSlippyTilesMessage>,
     mut spawned_tiles: ResMut<SpawnedTiles>,
     tile_query: Query<(Entity, &TileFadeState, Option<&TileMeshQuad>), With<MapTile>>,
+    mut alt_tracker: ResMut<AltitudeChangeTracker>,
 ) {
     if !view3d_state.is_3d_active() {
         return;
@@ -539,21 +543,10 @@ fn request_3d_tiles_continuous(
     let old_zoom = map_state.zoom_level.to_u8();
     let adaptive_zoom = altitude_to_zoom_level(view3d_state.camera_altitude, old_zoom);
     if let Ok(new_zoom) = ZoomLevel::try_from(adaptive_zoom) {
-        if map_state.zoom_level != new_zoom {
+        if map_state.zoom_level != new_zoom && alt_tracker.zoom_cooldown <= 0.0 {
+            alt_tracker.zoom_cooldown = 1.0;
             debug!("3D adaptive zoom: altitude {:.0} ft -> zoom {}", view3d_state.camera_altitude, adaptive_zoom);
             map_state.zoom_level = new_zoom;
-
-            // Recalculate the camera orbit center (saved_2d_center) in the
-            // new zoom level's pixel space. Without this, the camera center
-            // stays in the old zoom's coordinates while all entity positions
-            // recalculate at the new zoom, causing everything to jump.
-            let converter = crate::geo::CoordinateConverter::new(
-                &tile_settings, new_zoom,
-            );
-            let new_center = converter.latlon_to_world(
-                map_state.latitude, map_state.longitude,
-            );
-            view3d_state.saved_2d_center = new_center;
 
             // When zoom level changes, despawn tiles that are now outside
             // the new multi-resolution band [new_zoom-4, new_zoom].
@@ -668,15 +661,16 @@ fn track_altitude_changes(
     view3d_state: Res<view3d::View3DState>,
     mut tracker: ResMut<AltitudeChangeTracker>,
 ) {
+    let dt = time.delta_secs();
     let current = view3d_state.camera_altitude;
     let delta = (current - tracker.prev_altitude).abs();
     if delta > 50.0 {
-        // Significant altitude change — reset cooldown
         tracker.idle_secs = 0.0;
     } else {
-        tracker.idle_secs += time.delta_secs();
+        tracker.idle_secs += dt;
     }
     tracker.prev_altitude = current;
+    tracker.zoom_cooldown = (tracker.zoom_cooldown - dt).max(0.0);
 }
 
 /// Rescale all existing tile transforms when the 3D adaptive zoom changes.
