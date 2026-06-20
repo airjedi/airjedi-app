@@ -12,13 +12,8 @@ pub mod picking;
 pub mod stats_panel;
 pub mod typeinfo;
 pub mod typeloader;
+pub mod mesh_trails;
 pub mod plugin;
-#[cfg(feature = "hanabi")]
-pub mod hanabi_plugin;
-#[cfg(feature = "hanabi")]
-pub mod hanabi_selection;
-#[cfg(feature = "hanabi")]
-pub mod hanabi_trails;
 
 pub use components::{Aircraft, AircraftLabel};
 pub use trails::{TrailHistory, TrailConfig, TrailRenderer, SessionClock, TrailRecordTimer};

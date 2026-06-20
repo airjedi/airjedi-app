@@ -97,6 +97,7 @@ pub fn draw_emergency_rings(
     alert_state: Res<EmergencyAlertState>,
     map_state: Res<MapState>,
     tile_settings: Res<SlippyTilesSettings>,
+    view3d_state: Res<crate::view3d::View3DState>,
     aircraft_query: Query<&Aircraft>,
 ) {
     if alert_state.active_emergencies.is_empty() {
@@ -107,7 +108,8 @@ pub fn draw_emergency_rings(
     let pulse = (alert_state.pulse_timer.sin() + 1.0) / 2.0;
     let alpha = 0.3 + pulse * 0.7;
 
-    let converter = CoordinateConverter::new(&tile_settings, map_state.zoom_level);
+    let zoom = view3d_state.effective_zoom(map_state.zoom_level);
+    let converter = CoordinateConverter::new(&tile_settings, zoom);
 
     for emergency in &alert_state.active_emergencies {
         // Find the aircraft

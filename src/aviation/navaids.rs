@@ -46,7 +46,8 @@ pub fn draw_navaids(
         return;
     }
 
-    let converter = CoordinateConverter::new(&tile_settings, map_state.zoom_level);
+    let render_zoom = view3d_state.effective_zoom(map_state.zoom_level);
+    let converter = CoordinateConverter::new(&tile_settings, render_zoom);
     let is_3d = view3d_state.is_3d_active();
     let ground_z = view3d_state.altitude_to_z(view3d_state.ground_elevation_ft);
 

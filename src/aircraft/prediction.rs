@@ -36,6 +36,7 @@ pub fn draw_predictions(
     follow_state: Res<CameraFollowState>,
     tile_settings: Res<SlippyTilesSettings>,
     map_state: Res<MapState>,
+    view3d_state: Res<crate::view3d::View3DState>,
     aircraft_query: Query<&Aircraft>,
 ) {
     if !config.enabled {
@@ -68,7 +69,8 @@ pub fn draw_predictions(
         return;
     }
 
-    let converter = CoordinateConverter::new(&tile_settings, map_state.zoom_level);
+    let zoom = view3d_state.effective_zoom(map_state.zoom_level);
+    let converter = CoordinateConverter::new(&tile_settings, zoom);
 
     // Get current aircraft position in world coordinates
     let start_pos = converter.latlon_to_world(aircraft.latitude, aircraft.longitude);

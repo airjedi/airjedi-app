@@ -272,7 +272,14 @@ pub fn toggle_3d_view(
 
                 // Save the 2D zoom level so we can restore it when returning
                 state.saved_2d_zoom_level = Some(map_state.zoom_level.to_u8());
-                state.rendering_zoom = Some(map_state.zoom_level.to_u8());
+                // Set rendering_zoom to match the altitude-appropriate zoom,
+                // not the 2D zoom. At FL300 the adaptive zoom is ~12, but
+                // the 2D zoom might be 7-10 - using the 2D zoom would make
+                // everything appear compressed.
+                let adaptive = crate::tiles::altitude_to_zoom_level(
+                    state.camera_altitude, map_state.zoom_level.to_u8(),
+                );
+                state.rendering_zoom = Some(adaptive);
 
                 // Auto-detect ground elevation from nearest airport
                 detect_ground_elevation(&mut state, &map_state, &aviation_data);
@@ -603,7 +610,7 @@ fn smooth_step(t: f32) -> f32 {
 }
 
 const ORBIT_SENSITIVITY: f32 = 0.3;
-const PAN_3D_SENSITIVITY: f32 = 0.003;
+const PAN_3D_SENSITIVITY: f32 = 0.006;
 const PITCH_SCROLL_SENSITIVITY: f32 = 2.0;
 const ALTITUDE_SCROLL_SENSITIVITY: f32 = 1000.0;
 

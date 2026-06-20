@@ -1289,6 +1289,7 @@ pub fn highlight_selected_aircraft(
     list_state: Res<AircraftListState>,
     tile_settings: Res<bevy_slippy_tiles::SlippyTilesSettings>,
     map_state: Res<MapState>,
+    view3d_state: Res<crate::view3d::View3DState>,
     aircraft_query: Query<&crate::Aircraft>,
 ) {
     let Some(selected_icao) = &list_state.selected_icao else {
@@ -1300,7 +1301,8 @@ pub fn highlight_selected_aircraft(
         return;
     };
 
-    let converter = CoordinateConverter::new(&tile_settings, map_state.zoom_level);
+    let zoom = view3d_state.effective_zoom(map_state.zoom_level);
+    let converter = CoordinateConverter::new(&tile_settings, zoom);
     let pos = converter.latlon_to_world(aircraft.latitude, aircraft.longitude);
 
     // Draw selection ring (yellow)

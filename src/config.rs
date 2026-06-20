@@ -124,10 +124,7 @@ pub struct TrailsConfig {
 
 impl TrailsConfig {
     fn default_renderer_3d() -> TrailRenderer {
-        #[cfg(feature = "hanabi")]
-        { TrailRenderer::Particle }
-        #[cfg(not(feature = "hanabi"))]
-        { TrailRenderer::Gizmo }
+        TrailRenderer::MeshStrip
     }
 }
 

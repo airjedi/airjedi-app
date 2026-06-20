@@ -9,8 +9,7 @@ use std::time::Instant;
 pub enum TrailRenderer {
     #[default]
     Gizmo,
-    #[cfg(feature = "hanabi")]
-    Particle,
+    MeshStrip,
 }
 
 /// Resource providing a session-relative clock for serializable timestamps.
@@ -60,8 +59,7 @@ impl fmt::Display for TrailRenderer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             TrailRenderer::Gizmo => write!(f, "Gizmo"),
-            #[cfg(feature = "hanabi")]
-            TrailRenderer::Particle => write!(f, "Particle"),
+            TrailRenderer::MeshStrip => write!(f, "Mesh Strip"),
         }
     }
 }
@@ -69,8 +67,7 @@ impl fmt::Display for TrailRenderer {
 impl TrailRenderer {
     pub const ALL: &'static [TrailRenderer] = &[
         TrailRenderer::Gizmo,
-        #[cfg(feature = "hanabi")]
-        TrailRenderer::Particle,
+        TrailRenderer::MeshStrip,
     ];
 }
 
@@ -93,10 +90,7 @@ impl Default for TrailConfig {
             solid_duration_seconds: 225,
             fade_duration_seconds: 75,
             renderer_2d: TrailRenderer::Gizmo,
-            #[cfg(feature = "hanabi")]
-            renderer_3d: TrailRenderer::Particle,
-            #[cfg(not(feature = "hanabi"))]
-            renderer_3d: TrailRenderer::Gizmo,
+            renderer_3d: TrailRenderer::MeshStrip,
         }
     }
 }

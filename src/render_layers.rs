@@ -15,7 +15,7 @@ use bevy::camera::visibility::RenderLayers;
 pub struct RenderCategory;
 
 impl RenderCategory {
-    pub const DEFAULT: usize = 0;      // Aircraft, lights, SceneRoot children, hanabi particles
+    pub const DEFAULT: usize = 0;      // Aircraft, lights, SceneRoot children
     pub const TILES_2D: usize = 1;     // Tile sprites (2D rendering)
     pub const GIZMOS: usize = 2;       // Trails, navaids, runways
     pub const OVERLAYS_2D: usize = 4;  // Day/night tint, weather overlays

@@ -162,7 +162,8 @@ pub fn follow_aircraft_3d(
         view3d_state.chase_transition = 0.0;
     }
 
-    let converter = crate::geo::CoordinateConverter::new(&tile_settings, map_state.zoom_level);
+    let render_zoom = view3d_state.effective_zoom(map_state.zoom_level);
+    let converter = crate::geo::CoordinateConverter::new(&tile_settings, render_zoom);
     let target_pos = converter.latlon_to_world(aircraft.latitude, aircraft.longitude);
 
     // Lerp map center toward aircraft position

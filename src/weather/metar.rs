@@ -495,8 +495,10 @@ pub fn update_weather_indicator_positions(
     map_state: Res<MapState>,
     tile_settings: Res<SlippyTilesSettings>,
     zoom_state: Res<ZoomState>,
+    view3d_state: Res<crate::view3d::View3DState>,
 ) {
-    let converter = CoordinateConverter::new(&tile_settings, map_state.zoom_level);
+    let zoom = view3d_state.effective_zoom(map_state.zoom_level);
+    let converter = CoordinateConverter::new(&tile_settings, zoom);
 
     for (indicator, mut transform) in indicators.iter_mut() {
         let pos = converter.latlon_to_world(indicator.latitude, indicator.longitude);

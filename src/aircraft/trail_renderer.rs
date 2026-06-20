@@ -33,7 +33,8 @@ pub fn draw_trails(
     // Gizmo trails draw in both 2D and 3D modes. In 3D, they render as
     // an overlay through Camera2d on the GIZMOS layer.
 
-    let converter = CoordinateConverter::new(&tile_settings, map_state.zoom_level);
+    let zoom = view3d_state.effective_zoom(map_state.zoom_level);
+    let converter = CoordinateConverter::new(&tile_settings, zoom);
 
     for (trail, aircraft) in trail_query.iter() {
         let stale_opacity = staleness_opacity(aircraft_age_secs(aircraft));

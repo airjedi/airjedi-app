@@ -4,8 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["hanabi", "brp"]
-hanabi = ["dep:bevy_hanabi"]
+default = ["brp"]
 brp = ["bevy/bevy_remote", "dep:bevy_brp_extras"]
 
 [dependencies]
@@ -30,7 +29,6 @@ csv = "1.3"
 solar-positioning = "0.3"
 libc = "0.2"
 image = { version = "0.25", default-features = false, features = ["png"] }
-bevy_hanabi = { version = "0.18", optional = true }
 bevy_brp_extras = { version = "0.18", optional = true }
 shadow-rs = { version = "1", default-features = false }
 tokio-cron-scheduler = "0.15"

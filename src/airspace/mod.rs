@@ -806,7 +806,11 @@ pub fn update_airspace_meshes(
         return;
     }
 
-    let converter = CoordinateConverter::new(&tile_settings, map_state.zoom_level);
+    let render_zoom = view3d_state
+        .as_ref()
+        .map(|v| v.effective_zoom(map_state.zoom_level))
+        .unwrap_or(map_state.zoom_level);
+    let converter = CoordinateConverter::new(&tile_settings, render_zoom);
     let is_3d = view3d_state
         .as_ref()
         .is_some_and(|v| v.mode == crate::view3d::ViewMode::Perspective3D);
@@ -818,11 +822,11 @@ pub fn update_airspace_meshes(
         spawned.was_3d = is_3d;
     }
 
-    // Despawn all meshes when zoom level changes (positions are zoom-dependent)
-    if Some(map_state.zoom_level.to_u8()) != spawned.last_zoom {
+    // Despawn all meshes when rendering zoom changes (positions are zoom-dependent)
+    if Some(render_zoom.to_u8()) != spawned.last_zoom {
         despawn_all(&mut commands, &existing_query, &outline_query);
         spawned.ids.clear();
-        spawned.last_zoom = Some(map_state.zoom_level.to_u8());
+        spawned.last_zoom = Some(render_zoom.to_u8());
     }
 
     let camera_lat = map_state.latitude;
@@ -965,7 +969,11 @@ pub fn draw_airspace_gizmos(
         return;
     }
 
-    let converter = CoordinateConverter::new(&tile_settings, map_state.zoom_level);
+    let render_zoom = view3d_state
+        .as_ref()
+        .map(|v| v.effective_zoom(map_state.zoom_level))
+        .unwrap_or(map_state.zoom_level);
+    let converter = CoordinateConverter::new(&tile_settings, render_zoom);
     let camera_lat = map_state.latitude;
     let camera_lon = map_state.longitude;
 
