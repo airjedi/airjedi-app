@@ -8,6 +8,7 @@ pub mod sensor;
 pub mod store;
 pub mod systems;
 pub mod track;
+pub mod transport;
 pub mod types;
 
 pub use classification::TargetClassification;
@@ -81,5 +82,22 @@ impl Plugin for FusionPlugin {
                 Update,
                 systems::store_eviction_system.in_set(FusionSet::Lifecycle),
             );
+
+        // Conditionally add NATS transport systems when feature is enabled
+        #[cfg(feature = "nats")]
+        if let Some(transport_config) = config.transport.clone() {
+            let transport = transport::nats::NatsTransport::start(transport_config);
+            app.insert_resource(transport)
+                .add_systems(
+                    Update,
+                    transport::nats::nats_subscribe_drain_system
+                        .in_set(FusionSet::Drain),
+                )
+                .add_systems(
+                    Update,
+                    transport::nats::nats_publish_system
+                        .after(FusionSet::Fuse),
+                );
+        }
     }
 }

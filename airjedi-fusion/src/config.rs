@@ -5,6 +5,7 @@ use crate::filter::OosmConfig;
 use crate::sensor::FusionTier;
 use crate::store::StoreConfig;
 use crate::track::LifecycleProfiles;
+use crate::transport::NatsTransportConfig;
 
 #[derive(Resource, Debug, Clone)]
 pub struct FusionConfig {
@@ -16,6 +17,7 @@ pub struct FusionConfig {
     pub node_id: String,
     pub tier: FusionTier,
     pub spatial_cell_size_deg: f64,
+    pub transport: Option<NatsTransportConfig>,
 }
 
 impl Default for FusionConfig {
@@ -29,6 +31,7 @@ impl Default for FusionConfig {
             node_id: "local".to_string(),
             tier: FusionTier::Regional,
             spatial_cell_size_deg: 0.5,
+            transport: None,
         }
     }
 }

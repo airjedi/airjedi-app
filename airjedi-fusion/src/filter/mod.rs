@@ -1,4 +1,5 @@
 pub mod ekf;
+pub mod oosm;
 
 use crate::prelude_imports::*;
 use nalgebra::{DMatrix, DVector};
