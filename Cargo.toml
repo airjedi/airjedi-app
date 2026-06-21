@@ -1,3 +1,7 @@
+[workspace]
+members = ["airjedi-fusion"]
+resolver = "2"
+
 [package]
 name = "airjedi_bevy"
 version = "0.1.0"
