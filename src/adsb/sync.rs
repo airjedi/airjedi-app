@@ -29,6 +29,10 @@ pub struct ModelCorrection {
 #[derive(Component)]
 pub struct ModelCorrectionApplied;
 
+/// Marker: materials have been set to unlit for this aircraft's mesh children.
+#[derive(Component)]
+pub struct MaterialsUnlit;
+
 /// Resource holding aircraft 3D model handles keyed by type code
 #[derive(Resource)]
 pub struct AircraftModelRegistry {
@@ -312,6 +316,33 @@ pub fn apply_model_corrections(
         }
         if applied {
             commands.entity(entity).insert(ModelCorrectionApplied);
+        }
+    }
+}
+
+/// Make aircraft model materials self-lit so they aren't affected by the
+/// day/night ambient lighting cycle. Runs once per aircraft after scene load.
+pub fn make_aircraft_unlit(
+    mut commands: Commands,
+    aircraft_query: Query<(Entity, &Children), (With<Aircraft>, Without<MaterialsUnlit>)>,
+    children_query: Query<&Children>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    material_query: Query<&MeshMaterial3d<StandardMaterial>>,
+) {
+    for (entity, children) in aircraft_query.iter() {
+        let mut found_any = false;
+        for child in children.iter() {
+            for descendant in std::iter::once(child).chain(children_query.iter_descendants(child)) {
+                if let Ok(mat_handle) = material_query.get(descendant) {
+                    if let Some(mat) = materials.get_mut(&mat_handle.0) {
+                        mat.unlit = true;
+                        found_any = true;
+                    }
+                }
+            }
+        }
+        if found_any {
+            commands.entity(entity).insert(MaterialsUnlit);
         }
     }
 }

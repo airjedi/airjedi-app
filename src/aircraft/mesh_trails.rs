@@ -20,7 +20,8 @@ pub struct MeshTrailEffect {
     pub material_handle: Handle<StandardMaterial>,
 }
 
-const TRAIL_HALF_WIDTH: f32 = 1.5;
+const TRAIL_HALF_WIDTH_2D: f32 = 1.275;
+const TRAIL_HALF_WIDTH_3D: f32 = 3.0;
 
 pub fn spawn_mesh_trails(
     mut commands: Commands,
@@ -144,7 +145,8 @@ pub fn update_mesh_trails(
                 prev_dir.unwrap_or(Vec2::Y)
             };
 
-            let perp = Vec2::new(-dir.y, dir.x) * TRAIL_HALF_WIDTH;
+            let half_width = if is_3d { TRAIL_HALF_WIDTH_3D } else { TRAIL_HALF_WIDTH_2D };
+            let perp = Vec2::new(-dir.y, dir.x) * half_width;
 
             // Z-up positions: (x, y, altitude)
             let left_zup = Vec3::new(xy.x + perp.x, xy.y + perp.y, z);

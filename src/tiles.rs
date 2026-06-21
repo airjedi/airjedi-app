@@ -687,10 +687,15 @@ fn rescale_tiles_on_zoom_change(
     mut tile_query: Query<&mut Transform, With<MapTile>>,
     mut spawned_tiles: ResMut<SpawnedTiles>,
 ) {
-    let current = map_state.zoom_level.to_u8();
+    // In 3D mode, use the rendering zoom (stable coordinate space) so tile
+    // positions stay consistent with entities. In 2D, use map_state directly.
+    let current = if view3d_state.is_3d_active() {
+        view3d_state.effective_zoom(map_state.zoom_level).to_u8()
+    } else {
+        map_state.zoom_level.to_u8()
+    };
 
     if !view3d_state.is_3d_active() {
-        // Keep tracking zoom even in 2D so transition to 3D starts correct
         prev_zoom.0 = current;
         return;
     }
@@ -792,10 +797,12 @@ fn display_tiles_filtered(
         let mut transform_x = (tile_center_x - ref_x) as f32;
         let mut transform_y = (tile_center_y - ref_y) as f32;
 
-        // In 3D mode, lower-zoom tiles are in a different pixel coordinate
-        // system. Rescale their position and size so they align with the
-        // current zoom level's world space.
-        let zoom_diff = current_zoom.saturating_sub(event_zoom) as u32;
+        // In 3D mode, tiles must be positioned in rendering_zoom space
+        // (not LOD zoom space) so they align with entities. Rescale from
+        // the tile's native zoom to rendering_zoom.
+        let render_zoom = view3d_state.effective_zoom(map_state.zoom_level).to_u8();
+        let target_zoom = if view3d_state.is_3d_active() { render_zoom } else { current_zoom };
+        let zoom_diff = target_zoom.saturating_sub(event_zoom) as u32;
         let rescale = if view3d_state.is_3d_active() && zoom_diff > 0 {
             let s = (1u32 << zoom_diff) as f32; // 2, 4, 8, 16
             transform_x *= s;
@@ -1104,18 +1111,18 @@ fn sync_tile_mesh_quads(
     let Some(quad_mesh) = quad_mesh else { return };
 
     if view3d_state.is_3d_active() {
-        let current_zoom = map_state.zoom_level.to_u8();
+        let lod_zoom = map_state.zoom_level.to_u8();
 
-        // Create mesh quads for tiles at current zoom AND one zoom level
+        // Create mesh quads for tiles at LOD zoom AND one zoom level
         // below (fallback). When zoom changes, the previous zoom's mesh
         // quads persist as visual fallback until new tiles arrive and their
         // mesh quads replace them. This prevents the ground from going
         // blank during zoom transitions. Minor Z-fighting between adjacent
         // zoom levels at grazing angles near the horizon is acceptable
         // since those tiles are already faded by distance fog.
-        let min_quad_zoom = current_zoom.saturating_sub(1);
+        let min_quad_zoom = lod_zoom.saturating_sub(1);
         for (tile_entity, sprite, transform, fade_state) in tiles_without_quad.iter() {
-            if fade_state.tile_zoom < min_quad_zoom || fade_state.tile_zoom > current_zoom {
+            if fade_state.tile_zoom < min_quad_zoom || fade_state.tile_zoom > lod_zoom {
                 continue;
             }
 
@@ -1150,9 +1157,9 @@ fn sync_tile_mesh_quads(
         }
 
         // Despawn mesh quads for tiles more than 1 zoom level away from
-        // current. Adjacent-zoom quads are kept as fallback.
+        // current LOD. Adjacent-zoom quads are kept as fallback.
         for (tile_entity, quad, fade_state) in tiles_with_quad.iter() {
-            if fade_state.tile_zoom < min_quad_zoom || fade_state.tile_zoom > current_zoom {
+            if fade_state.tile_zoom < min_quad_zoom || fade_state.tile_zoom > lod_zoom {
                 commands.entity(quad.0).despawn();
                 commands.entity(tile_entity).remove::<TileMeshQuad>();
             }

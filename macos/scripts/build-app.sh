@@ -29,7 +29,7 @@ echo "Building $APP_NAME v$VERSION..."
 # Step 1: Build binary
 echo "Step 1: Building $BUILD_MODE binary..."
 if [ "$BUILD_MODE" = "release" ]; then
-    (cd "$ROOT_DIR" && cargo build --release --no-default-features -F hanabi)
+    (cd "$ROOT_DIR" && cargo build --release --no-default-features)
 else
     (cd "$ROOT_DIR" && cargo build)
 fi
