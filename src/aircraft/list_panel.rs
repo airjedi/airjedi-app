@@ -461,8 +461,10 @@ pub fn render_aircraft_list_panel(
                                     .color(status_active)
                                     .size(13.0));
 
-                                // ICAO
-                                ui.label(egui::RichText::new(&aircraft.icao)
+                                // Display tail number if known, otherwise ICAO
+                                let id_label = aircraft.registration.as_deref()
+                                    .unwrap_or(&aircraft.icao);
+                                ui.label(egui::RichText::new(id_label)
                                     .color(icao_color)
                                     .size(13.0)
                                     .monospace()

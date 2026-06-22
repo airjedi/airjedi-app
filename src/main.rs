@@ -44,6 +44,7 @@ pub(crate) mod widgets;
 mod data_ingest;
 #[cfg(feature = "brp")]
 mod brp;
+mod fusion_integration;
 
 // Re-export core types so crate::Aircraft, crate::MapState, crate::ZoomState
 // continue to resolve throughout the codebase.
@@ -248,6 +249,8 @@ fn main() {
         .add_systems(Update, update_help_overlay)
         .add_systems(Update, debug_panel::update_debug_metrics)
         .add_systems(Update, heartbeat_diagnostic);
+
+    app.add_plugins(fusion_integration::FusionIntegrationPlugin);
 
     #[cfg(feature = "brp")]
     app.add_plugins(brp::BrpPlugin);

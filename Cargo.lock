@@ -166,6 +166,7 @@ name = "airjedi_bevy"
 version = "0.1.0"
 dependencies = [
  "adsb-client",
+ "airjedi-fusion",
  "bevy",
  "bevy-inspector-egui",
  "bevy_brp_extras",

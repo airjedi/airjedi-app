@@ -12,6 +12,7 @@ pub mod picking;
 pub mod stats_panel;
 pub mod typeinfo;
 pub mod typeloader;
+pub mod mesh_trails;
 pub mod plugin;
 #[cfg(feature = "hanabi")]
 pub mod hanabi_plugin;

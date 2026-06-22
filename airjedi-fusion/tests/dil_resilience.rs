@@ -369,6 +369,7 @@ fn message_round_trip_preserves_track_data() {
         }],
         created_at: Utc::now(),
         last_update: Utc::now(),
+        is_on_ground: false,
     };
     let quality = TrackQuality {
         status: TrackStatus::Confirmed,
@@ -435,6 +436,7 @@ fn upstream_fused_track_enters_local_pipeline() {
         }],
         created_at: Utc::now(),
         last_update: Utc::now(),
+        is_on_ground: false,
     };
     let quality = TrackQuality {
         status: TrackStatus::Confirmed,
@@ -486,6 +488,7 @@ fn mixed_local_and_upstream_observations() {
         }],
         created_at: Utc::now(),
         last_update: Utc::now(),
+        is_on_ground: false,
     };
     let quality = TrackQuality::default();
     let classification = TargetClassification::default();

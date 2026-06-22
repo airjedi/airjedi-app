@@ -9,6 +9,7 @@ pub struct Track {
     pub cooperative_ids: Vec<TargetId>,
     pub created_at: Timestamp,
     pub last_update: Timestamp,
+    pub is_on_ground: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Reflect)]

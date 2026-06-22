@@ -9,8 +9,7 @@ use std::time::Instant;
 pub enum TrailRenderer {
     #[default]
     Gizmo,
-    #[cfg(feature = "hanabi")]
-    Particle,
+    MeshStrip,
 }
 
 /// Resource providing a session-relative clock for serializable timestamps.
@@ -48,6 +47,9 @@ pub struct TrailPoint {
     pub altitude: Option<i32>,
     /// Seconds since session start (serializable replacement for Instant)
     pub timestamp: f64,
+    /// True when this point was generated from EKF prediction rather than a real observation
+    #[serde(default)]
+    pub estimated: bool,
 }
 
 /// Component storing trail history for an aircraft
@@ -60,8 +62,7 @@ impl fmt::Display for TrailRenderer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             TrailRenderer::Gizmo => write!(f, "Gizmo"),
-            #[cfg(feature = "hanabi")]
-            TrailRenderer::Particle => write!(f, "Particle"),
+            TrailRenderer::MeshStrip => write!(f, "Mesh Strip"),
         }
     }
 }
@@ -69,8 +70,7 @@ impl fmt::Display for TrailRenderer {
 impl TrailRenderer {
     pub const ALL: &'static [TrailRenderer] = &[
         TrailRenderer::Gizmo,
-        #[cfg(feature = "hanabi")]
-        TrailRenderer::Particle,
+        TrailRenderer::MeshStrip,
     ];
 }
 
@@ -93,22 +93,20 @@ impl Default for TrailConfig {
             solid_duration_seconds: 225,
             fade_duration_seconds: 75,
             renderer_2d: TrailRenderer::Gizmo,
-            #[cfg(feature = "hanabi")]
-            renderer_3d: TrailRenderer::Particle,
-            #[cfg(not(feature = "hanabi"))]
-            renderer_3d: TrailRenderer::Gizmo,
+            renderer_3d: TrailRenderer::MeshStrip,
         }
     }
 }
 
 impl TrailHistory {
     /// Add a new point to the trail
-    pub fn add_point(&mut self, lat: f64, lon: f64, altitude: Option<i32>, clock: &SessionClock) {
+    pub fn add_point(&mut self, lat: f64, lon: f64, altitude: Option<i32>, estimated: bool, clock: &SessionClock) {
         self.points.push_back(TrailPoint {
             lat,
             lon,
             altitude,
             timestamp: clock.now_secs(),
+            estimated,
         });
     }
 
@@ -199,7 +197,10 @@ pub fn record_trail_points(
     }
     timer.last_record = now;
 
+    let now_utc = chrono::Utc::now();
     for (aircraft, mut trail) in query.iter_mut() {
-        trail.add_point(aircraft.latitude, aircraft.longitude, aircraft.altitude, &clock);
+        let age_secs = (now_utc - aircraft.last_seen).num_seconds();
+        let estimated = age_secs > timer.interval_secs as i64;
+        trail.add_point(aircraft.latitude, aircraft.longitude, aircraft.altitude, estimated, &clock);
     }
 }

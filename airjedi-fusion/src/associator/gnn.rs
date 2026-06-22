@@ -7,7 +7,7 @@ use crate::sensor::{Measurement, SensorObservation};
 use crate::store::StoredObservation;
 use crate::track::Track;
 use crate::types::TrackId;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub struct GnnAssociator;
 
@@ -32,10 +32,33 @@ impl GnnAssociator {
             .map(|(i, (t, _, _))| (&t.id, i))
             .collect();
 
-        // Build sparse cost matrix via spatial pre-filter + gating
+        // Build cost matrix in two passes:
+        // 1. Cooperative ID matches (ICAO, MMSI, etc.) - forced association, no gating
+        // 2. Spatial pre-filter + Mahalanobis gating for non-cooperative targets
         let mut costs: Vec<(usize, usize, f64)> = Vec::new();
+        let mut id_matched_obs: HashSet<usize> = HashSet::new();
+        let mut id_matched_tracks: HashSet<usize> = HashSet::new();
 
+        // Pass 1: cooperative ID matches are deterministic - same ID = same target
         for (obs_idx, obs) in observations.iter().enumerate() {
+            if let Some(ref target_id) = obs.observation.target_id {
+                for (track_idx, (track, _, _)) in tracks.iter().enumerate() {
+                    if track.cooperative_ids.iter().any(|cid| cid.id == target_id.id) {
+                        costs.push((obs_idx, track_idx, 0.0));
+                        id_matched_obs.insert(obs_idx);
+                        id_matched_tracks.insert(track_idx);
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Pass 2: spatial + statistical gating for observations without ID matches
+        for (obs_idx, obs) in observations.iter().enumerate() {
+            if id_matched_obs.contains(&obs_idx) {
+                continue;
+            }
+
             let obs_pos = observation_geodetic_position(&obs.observation);
             let (obs_lat, obs_lon) = match obs_pos {
                 Some(pos) => pos,
@@ -50,23 +73,15 @@ impl GnnAssociator {
                     None => continue,
                 };
 
-                let (track, tracker, classification) = &tracks[track_idx];
+                if id_matched_tracks.contains(&track_idx) {
+                    continue;
+                }
+
+                let (_, tracker, classification) = &tracks[track_idx];
                 let gate = config.gate_for(&classification.category);
 
                 if let Some(innov) = tracker.variant.innovation(&obs.observation) {
-                    let mut distance = innov.mahalanobis_distance;
-
-                    // Cooperative ID boost: heavily discount distance when IDs match
-                    if let Some(ref target_id) = obs.observation.target_id {
-                        if track
-                            .cooperative_ids
-                            .iter()
-                            .any(|cid| cid.id == target_id.id)
-                        {
-                            distance *= config.cooperative_id_boost;
-                        }
-                    }
-
+                    let distance = innov.mahalanobis_distance;
                     if distance * distance <= gate.chi_squared_threshold {
                         costs.push((obs_idx, track_idx, distance));
                     }
@@ -221,6 +236,7 @@ mod tests {
             cooperative_ids: Vec::new(),
             created_at: Utc::now(),
             last_update: Utc::now(),
+            is_on_ground: false,
         };
         if let Some(id) = icao {
             track.cooperative_ids.push(TargetId {

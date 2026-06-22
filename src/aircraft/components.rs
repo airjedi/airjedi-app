@@ -41,3 +41,11 @@ pub struct Aircraft {
 pub struct AircraftLabel {
     pub aircraft_entity: Entity,
 }
+
+/// Links a visual Aircraft entity to its fusion track entity
+#[cfg(feature = "fusion")]
+#[derive(Component, Debug)]
+pub struct FusionTrackLink {
+    pub track_entity: Entity,
+    pub track_id: airjedi_fusion::TrackId,
+}

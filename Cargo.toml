@@ -8,9 +8,10 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["hanabi", "brp"]
+default = ["brp", "fusion"]
 hanabi = ["dep:bevy_hanabi"]
 brp = ["bevy/bevy_remote", "dep:bevy_brp_extras"]
+fusion = ["dep:airjedi-fusion"]
 
 [dependencies]
 bevy = { version = "0.18", features = ["jpeg"] }
@@ -36,6 +37,7 @@ libc = "0.2"
 image = { version = "0.25", default-features = false, features = ["png"] }
 bevy_hanabi = { version = "0.18", optional = true }
 bevy_brp_extras = { version = "0.18", optional = true }
+airjedi-fusion = { path = "airjedi-fusion", optional = true }
 shadow-rs = { version = "1", default-features = false }
 tokio-cron-scheduler = "0.15"
 crossbeam-channel = "0.5"

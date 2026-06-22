@@ -18,6 +18,7 @@ use super::emergency::{detect_emergencies, draw_emergency_rings, update_emergenc
 use super::prediction::draw_predictions;
 use super::typeloader::{start_aircraft_type_loading, poll_aircraft_type_loading, attach_aircraft_type_info};
 use super::picking::{setup_outline_materials, manage_selection_outline, swap_outline_materials, deselect_on_escape, clear_stale_selection, follow_aircraft_3d, pick_aircraft_3d};
+use super::mesh_trails::{spawn_mesh_trails, update_mesh_trails, cleanup_mesh_trails};
 #[cfg(feature = "hanabi")]
 use super::hanabi_plugin::HanabiEffectsPlugin;
 
@@ -71,6 +72,12 @@ impl Plugin for AircraftPlugin {
                 follow_aircraft_3d,
                 pick_aircraft_3d,
             ));
+
+        app.add_systems(Update, (
+            spawn_mesh_trails,
+            update_mesh_trails.after(crate::ZoomSet::Change),
+            cleanup_mesh_trails,
+        ));
 
         #[cfg(feature = "hanabi")]
         app.add_plugins(HanabiEffectsPlugin);

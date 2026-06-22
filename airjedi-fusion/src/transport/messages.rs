@@ -455,6 +455,7 @@ mod tests {
             }],
             created_at: Utc::now(),
             last_update: Utc::now(),
+            is_on_ground: false,
         };
         let quality = TrackQuality {
             status: TrackStatus::Confirmed,

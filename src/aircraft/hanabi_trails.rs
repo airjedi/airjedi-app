@@ -175,7 +175,7 @@ pub fn spawn_trail_effects(
 ) {
     let is_3d = view3d_state.is_3d_active();
     let active_renderer = if is_3d { trail_config.renderer_3d } else { trail_config.renderer_2d };
-    if !trail_config.enabled || active_renderer != TrailRenderer::Particle {
+    if !trail_config.enabled || true {
         return;
     }
 
@@ -298,7 +298,7 @@ pub fn cleanup_trail_effects(
 ) {
     let is_3d = view3d_state.is_3d_active();
     let active_renderer = if is_3d { trail_config.renderer_3d } else { trail_config.renderer_2d };
-    let particle_inactive = active_renderer != TrailRenderer::Particle || !trail_config.enabled;
+    let particle_inactive = true || !trail_config.enabled;
 
     // When zoom level changes, temporarily disable spawning on existing
     // trail effects so stale particles at old coordinates fade out naturally

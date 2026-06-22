@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use adsb_client::{
     Client as AdsbClient, ClientConfig, ConnectionConfig, ConnectionState, TrackerConfig,
@@ -16,14 +17,24 @@ pub struct AdsbAircraftData {
     pub aircraft: Arc<Mutex<Vec<adsb_client::Aircraft>>>,
     /// Current connection state
     pub connection_state: Arc<Mutex<ConnectionState>>,
+    /// Signal to stop the background thread
+    shutdown: Arc<AtomicBool>,
+    /// The endpoint URL this client is connected to
+    pub endpoint_url: String,
 }
 
 impl AdsbAircraftData {
-    pub fn new() -> Self {
+    pub fn new(endpoint_url: &str) -> Self {
         Self {
             aircraft: Arc::new(Mutex::new(Vec::new())),
             connection_state: Arc::new(Mutex::new(ConnectionState::Disconnected)),
+            shutdown: Arc::new(AtomicBool::new(false)),
+            endpoint_url: endpoint_url.to_string(),
         }
+    }
+
+    pub fn request_shutdown(&self) {
+        self.shutdown.store(true, Ordering::Release);
     }
 
     /// Try to get a snapshot of all tracked aircraft without blocking.
@@ -56,18 +67,22 @@ pub fn setup_adsb_client(
     map_state: Res<MapState>,
     app_config: Res<config::AppConfig>,
 ) {
-    let adsb_data = AdsbAircraftData::new();
-    let aircraft_data = Arc::clone(&adsb_data.aircraft);
-    let connection_state = Arc::clone(&adsb_data.connection_state);
-
-    // Get the center coordinates from map state
+    let endpoint_url = app_config.feed.endpoint_url.clone();
     let center_lat = map_state.latitude;
     let center_lon = map_state.longitude;
 
-    // Get endpoint URL from config
-    let endpoint_url = app_config.feed.endpoint_url.clone();
+    let adsb_data = spawn_adsb_client(&endpoint_url, center_lat, center_lon);
+    commands.insert_resource(adsb_data);
+    info!("ADS-B client background thread started");
+}
 
-    // Spawn a background thread with its own tokio runtime
+fn spawn_adsb_client(endpoint_url: &str, center_lat: f64, center_lon: f64) -> AdsbAircraftData {
+    let adsb_data = AdsbAircraftData::new(endpoint_url);
+    let aircraft_data = Arc::clone(&adsb_data.aircraft);
+    let connection_state = Arc::clone(&adsb_data.connection_state);
+    let shutdown = Arc::clone(&adsb_data.shutdown);
+    let endpoint_url = endpoint_url.to_string();
+
     std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -91,9 +106,16 @@ pub fn setup_adsb_client(
                 ..Default::default()
             });
 
-            // Processing loop
             loop {
+                if shutdown.load(Ordering::Acquire) {
+                    info!("ADS-B client shutting down (endpoint changed)");
+                    return;
+                }
+
                 if !client.process_next().await {
+                    if shutdown.load(Ordering::Acquire) {
+                        return;
+                    }
                     warn!("ADS-B client connection closed, restarting...");
                     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                     continue;
@@ -110,8 +132,40 @@ pub fn setup_adsb_client(
         });
     });
 
-    commands.insert_resource(adsb_data);
-    info!("ADS-B client background thread started");
+    adsb_data
+}
+
+pub fn reconnect_on_config_change(
+    mut commands: Commands,
+    app_config: Res<config::AppConfig>,
+    existing: Option<Res<AdsbAircraftData>>,
+    map_state: Res<MapState>,
+) {
+    if !app_config.is_changed() {
+        return;
+    }
+
+    let Some(existing) = existing else {
+        return;
+    };
+
+    if existing.endpoint_url == app_config.feed.endpoint_url {
+        return;
+    }
+
+    info!(
+        "Feed endpoint changed from {} to {}, reconnecting",
+        existing.endpoint_url, app_config.feed.endpoint_url
+    );
+
+    existing.request_shutdown();
+
+    let new_data = spawn_adsb_client(
+        &app_config.feed.endpoint_url,
+        map_state.latitude,
+        map_state.longitude,
+    );
+    commands.insert_resource(new_data);
 }
 
 /// Update the connection status UI indicator

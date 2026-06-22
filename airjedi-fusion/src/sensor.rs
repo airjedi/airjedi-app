@@ -96,6 +96,7 @@ pub struct ObservationMetadata {
     pub signal_strength: Option<f32>,
     pub accuracy_category: Option<u8>,
     pub source_label: String,
+    pub is_on_ground: Option<bool>,
 }
 
 pub trait SensorSource: Send + Sync + 'static {
@@ -142,6 +143,7 @@ mod tests {
                 signal_strength: Some(-85.0),
                 accuracy_category: Some(8),
                 source_label: "Home ADS-B receiver".to_string(),
+                ..Default::default()
             },
         };
         assert_eq!(obs.sensor_id.kind, SensorKind::AdsbReceiver);

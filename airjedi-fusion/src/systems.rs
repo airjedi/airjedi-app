@@ -68,7 +68,7 @@ pub fn association_system(
 
 pub fn fusion_update_system(
     store: Res<TimelineStore>,
-    mut tracks: Query<(&Track, &mut TrackerState, &mut TrackQuality)>,
+    mut tracks: Query<(&mut Track, &mut TrackerState, &mut TrackQuality)>,
     time: Res<Time>,
 ) {
     let dt = time.delta_secs_f64();
@@ -77,8 +77,10 @@ pub fn fusion_update_system(
     }
     let now = Utc::now();
 
-    for (track, mut tracker, mut quality) in &mut tracks {
-        tracker.variant.predict(dt);
+    for (mut track, mut tracker, mut quality) in &mut tracks {
+        if !track.is_on_ground {
+            tracker.variant.predict(dt);
+        }
 
         let obs = store.query_range(
             &track.id,
@@ -91,10 +93,19 @@ pub fn fusion_update_system(
                 FilterResult::Updated => {
                     quality.observation_count += 1;
                     quality.reacquire();
+                    track.last_update = now;
                 }
                 FilterResult::OutlierRejected { .. } => {}
                 FilterResult::DivergenceDetected => {
                     tracker.variant.initialize(&stored_obs.observation);
+                    track.last_update = now;
+                }
+            }
+
+            if let Some(on_ground) = stored_obs.observation.metadata.is_on_ground {
+                track.is_on_ground = on_ground;
+                if on_ground {
+                    tracker.zero_velocity();
                 }
             }
         }
@@ -128,9 +139,35 @@ pub fn track_status_system(
 pub fn track_initiation_system(
     mut commands: Commands,
     store: Res<TimelineStore>,
+    existing_tracks: Query<&Track>,
     fusion_config: Res<FusionConfig>,
 ) {
+    use std::collections::HashSet;
+
+    if store.unassociated().is_empty() {
+        return;
+    }
+
+    // Collect cooperative IDs from existing tracks to avoid duplicates
+    let existing_ids: HashSet<String> = existing_tracks
+        .iter()
+        .flat_map(|t| t.cooperative_ids.iter().map(|cid| cid.id.clone()))
+        .collect();
+
+    // Track which cooperative IDs we initiate this frame
+    let mut initiated_ids: HashSet<String> = HashSet::new();
+
     for obs in store.unassociated() {
+        if let Some(ref target_id) = obs.observation.target_id {
+            if existing_ids.contains(&target_id.id) {
+                continue;
+            }
+            if initiated_ids.contains(&target_id.id) {
+                continue;
+            }
+            initiated_ids.insert(target_id.id.clone());
+        }
+
         let mut tracker =
             TrackerState::new_6dof(fusion_config.filter_defaults.clone());
         tracker.variant.initialize(&obs.observation);
@@ -157,6 +194,7 @@ pub fn track_initiation_system(
                 cooperative_ids,
                 created_at: Utc::now(),
                 last_update: Utc::now(),
+                is_on_ground: false,
             },
             tracker,
             TrackQuality::default(),

@@ -19,6 +19,8 @@ pub use store::TimelineStore;
 pub use track::{Track, TrackQuality, TrackStatus};
 pub use types::*;
 
+pub use nalgebra;
+
 use prelude_imports::*;
 use systems::FusionSet;
 
@@ -56,11 +58,14 @@ impl Plugin for FusionPlugin {
             )
             .add_systems(
                 Update,
-                (
-                    systems::association_system,
-                    systems::update_spatial_index,
-                )
+                systems::update_spatial_index
                     .in_set(FusionSet::Associate),
+            )
+            .add_systems(
+                Update,
+                systems::association_system
+                    .in_set(FusionSet::Associate)
+                    .after(systems::update_spatial_index),
             )
             .add_systems(
                 Update,

@@ -89,6 +89,7 @@ pub trait TrackFilter: Send + Sync {
     fn initialize(&mut self, observation: &SensorObservation);
     fn initialize_from_state(&mut self, state: DVector<f64>, covariance: DMatrix<f64>);
     fn state_history(&self) -> &StateHistory;
+    fn zero_velocity(&mut self);
 }
 
 #[derive(Debug, Clone)]
@@ -148,6 +149,12 @@ impl FilterVariant {
             Self::Ekf6Dof(f) => TrackFilter::state_history(f),
         }
     }
+
+    pub fn zero_velocity(&mut self) {
+        match self {
+            Self::Ekf6Dof(f) => TrackFilter::zero_velocity(f),
+        }
+    }
 }
 
 #[derive(Component, Debug, Clone)]
@@ -183,5 +190,9 @@ impl TrackerState {
     pub fn position_geodetic(&self) -> (f64, f64, f64) {
         let ecef = self.position_ecef();
         coord::ecef_to_geodetic(&ecef)
+    }
+
+    pub fn zero_velocity(&mut self) {
+        self.variant.zero_velocity();
     }
 }

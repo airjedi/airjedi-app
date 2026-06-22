@@ -326,6 +326,12 @@ impl TrackFilter for Ekf6Dof {
     fn state_history(&self) -> &StateHistory {
         &self.history
     }
+
+    fn zero_velocity(&mut self) {
+        self.x[3] = 0.0;
+        self.x[4] = 0.0;
+        self.x[5] = 0.0;
+    }
 }
 
 #[cfg(test)]
