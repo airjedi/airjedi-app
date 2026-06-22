@@ -45,6 +45,7 @@ pub fn draw_trails(
 
         let mut prev_pos: Option<Vec3> = None;
         let mut prev_color: Option<Color> = None;
+        let mut prev_estimated = false;
 
         for point in trail.points.iter() {
             let opacity = age_opacity(
@@ -67,11 +68,15 @@ pub fn draw_trails(
             let pos = Vec3::new(xy.x, xy.y, z);
 
             let base_color = altitude_color(point.altitude);
-            let color = base_color.with_alpha(opacity * stale_opacity);
+            let segment_estimated = point.estimated || prev_estimated;
+            let est_dim = if segment_estimated { 0.4 } else { 1.0 };
+            let color = base_color.with_alpha(opacity * stale_opacity * est_dim);
 
             if let Some(prev) = prev_pos {
                 let draw_color = prev_color.unwrap_or(color);
-                if is_3d {
+                if segment_estimated {
+                    draw_dashed(prev, pos, draw_color, is_3d, &mut gizmos);
+                } else if is_3d {
                     gizmos.line(prev, pos, draw_color);
                 } else {
                     gizmos.line_2d(prev.truncate(), pos.truncate(), draw_color);
@@ -80,7 +85,35 @@ pub fn draw_trails(
 
             prev_pos = Some(pos);
             prev_color = Some(color);
+            prev_estimated = point.estimated;
         }
+    }
+}
+
+/// Draw a dashed line segment between two points.
+/// Alternates between visible (60%) and gap (40%) along the segment.
+fn draw_dashed(from: Vec3, to: Vec3, color: Color, is_3d: bool, gizmos: &mut Gizmos) {
+    let dir = to - from;
+    let length = dir.length();
+    if length < 0.1 {
+        return;
+    }
+
+    let dash_len = 8.0_f32.min(length * 0.3);
+    let gap_len = dash_len * 0.65;
+    let step = dash_len + gap_len;
+    let norm = dir / length;
+
+    let mut t = 0.0;
+    while t < length {
+        let seg_start = from + norm * t;
+        let seg_end = from + norm * (t + dash_len).min(length);
+        if is_3d {
+            gizmos.line(seg_start, seg_end, color);
+        } else {
+            gizmos.line_2d(seg_start.truncate(), seg_end.truncate(), color);
+        }
+        t += step;
     }
 }
 

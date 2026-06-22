@@ -68,11 +68,12 @@ impl Plugin for AircraftPlugin {
                 clear_stale_selection,
                 follow_aircraft_3d,
                 pick_aircraft_3d,
-            ))
-            .add_systems(Update, (
-                spawn_mesh_trails,
-                update_mesh_trails.after(crate::ZoomSet::Change),
-                cleanup_mesh_trails,
             ));
+
+        app.add_systems(Update, (
+            spawn_mesh_trails,
+            update_mesh_trails.after(crate::ZoomSet::Change),
+            cleanup_mesh_trails,
+        ));
     }
 }

@@ -47,6 +47,9 @@ pub struct TrailPoint {
     pub altitude: Option<i32>,
     /// Seconds since session start (serializable replacement for Instant)
     pub timestamp: f64,
+    /// True when this point was generated from EKF prediction rather than a real observation
+    #[serde(default)]
+    pub estimated: bool,
 }
 
 /// Component storing trail history for an aircraft
@@ -97,12 +100,13 @@ impl Default for TrailConfig {
 
 impl TrailHistory {
     /// Add a new point to the trail
-    pub fn add_point(&mut self, lat: f64, lon: f64, altitude: Option<i32>, clock: &SessionClock) {
+    pub fn add_point(&mut self, lat: f64, lon: f64, altitude: Option<i32>, estimated: bool, clock: &SessionClock) {
         self.points.push_back(TrailPoint {
             lat,
             lon,
             altitude,
             timestamp: clock.now_secs(),
+            estimated,
         });
     }
 
@@ -193,7 +197,10 @@ pub fn record_trail_points(
     }
     timer.last_record = now;
 
+    let now_utc = chrono::Utc::now();
     for (aircraft, mut trail) in query.iter_mut() {
-        trail.add_point(aircraft.latitude, aircraft.longitude, aircraft.altitude, &clock);
+        let age_secs = (now_utc - aircraft.last_seen).num_seconds();
+        let estimated = age_secs > timer.interval_secs as i64;
+        trail.add_point(aircraft.latitude, aircraft.longitude, aircraft.altitude, estimated, &clock);
     }
 }

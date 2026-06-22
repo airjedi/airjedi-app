@@ -87,8 +87,7 @@ pub fn update_mesh_trails(
         return;
     }
 
-    let render_zoom = view3d_state.effective_zoom(map_state.zoom_level);
-    let converter = CoordinateConverter::new(&tile_settings, render_zoom);
+    let converter = CoordinateConverter::new(&tile_settings, map_state.zoom_level);
 
     for effect in effect_query.iter() {
         let Ok((trail, aircraft)) = aircraft_query.get(effect.aircraft_entity) else {
@@ -107,10 +106,13 @@ pub fn update_mesh_trails(
 
         let stale_opacity = staleness_opacity(aircraft_age_secs(aircraft));
 
-        let mut positions: Vec<[f32; 3]> = Vec::with_capacity(trail.points.len() * 2);
-        let mut colors: Vec<[f32; 4]> = Vec::with_capacity(trail.points.len() * 2);
+        let mut positions: Vec<[f32; 3]> = Vec::with_capacity(trail.points.len() * 4);
+        let mut colors: Vec<[f32; 4]> = Vec::with_capacity(trail.points.len() * 4);
 
         let mut prev_dir: Option<Vec2> = None;
+        let mut prev_xy: Option<Vec2> = None;
+        let mut prev_z: Option<f32> = None;
+        let mut prev_estimated = false;
 
         for (i, point) in trail.points.iter().enumerate() {
             let opacity = age_opacity(
@@ -121,6 +123,8 @@ pub fn update_mesh_trails(
 
             if opacity <= 0.0 {
                 prev_dir = None;
+                prev_xy = None;
+                prev_z = None;
                 continue;
             }
 
@@ -131,7 +135,6 @@ pub fn update_mesh_trails(
                 2.0
             };
 
-            // Compute direction to next point (or reuse previous)
             let dir = if i + 1 < trail.points.len() {
                 let next = &trail.points[i + 1];
                 let next_xy = converter.latlon_to_world(next.lat, next.lon);
@@ -145,14 +148,93 @@ pub fn update_mesh_trails(
                 prev_dir.unwrap_or(Vec2::Y)
             };
 
-            let half_width = if is_3d { TRAIL_HALF_WIDTH_3D } else { TRAIL_HALF_WIDTH_2D };
-            let perp = Vec2::new(-dir.y, dir.x) * half_width;
+            let base_color = altitude_color(point.altitude);
+            let linear = base_color.to_linear();
+            let base_half_width = if is_3d { TRAIL_HALF_WIDTH_3D } else { TRAIL_HALF_WIDTH_2D };
+            let segment_estimated = point.estimated || prev_estimated;
 
-            // Z-up positions: (x, y, altitude)
+            if segment_estimated && prev_xy.is_some() {
+                let p_xy = prev_xy.unwrap();
+                let p_z = prev_z.unwrap_or(z);
+                let half_width = base_half_width * 0.5;
+
+                emit_dashed_segment(
+                    p_xy, p_z, xy, z, dir, half_width,
+                    opacity, stale_opacity, &linear,
+                    is_3d, &mut positions, &mut colors,
+                );
+            } else {
+                let half_width = base_half_width;
+                let perp = Vec2::new(-dir.y, dir.x) * half_width;
+
+                let left_zup = Vec3::new(xy.x + perp.x, xy.y + perp.y, z);
+                let right_zup = Vec3::new(xy.x - perp.x, xy.y - perp.y, z);
+
+                let (left, right) = if is_3d {
+                    (
+                        Vec3::new(left_zup.x, left_zup.z, -left_zup.y),
+                        Vec3::new(right_zup.x, right_zup.z, -right_zup.y),
+                    )
+                } else {
+                    (left_zup, right_zup)
+                };
+
+                let alpha = opacity * stale_opacity;
+                let color = [linear.red, linear.green, linear.blue, alpha];
+
+                positions.push(left.into());
+                positions.push(right.into());
+                colors.push(color);
+                colors.push(color);
+            }
+
+            prev_dir = Some(dir);
+            prev_xy = Some(xy);
+            prev_z = Some(z);
+            prev_estimated = point.estimated;
+        }
+
+        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+    }
+}
+
+const DASH_FRACTION: f32 = 0.55;
+const DASH_COUNT: usize = 4;
+
+fn emit_dashed_segment(
+    from_xy: Vec2, from_z: f32,
+    to_xy: Vec2, to_z: f32,
+    dir: Vec2, half_width: f32,
+    opacity: f32, stale_opacity: f32,
+    linear: &bevy::color::LinearRgba,
+    is_3d: bool,
+    positions: &mut Vec<[f32; 3]>,
+    colors: &mut Vec<[f32; 4]>,
+) {
+    let seg_len = (to_xy - from_xy).length();
+    if seg_len < 0.1 {
+        return;
+    }
+
+    let perp = Vec2::new(-dir.y, dir.x) * half_width;
+    let step = 1.0 / DASH_COUNT as f32;
+    let dash_alpha = opacity * stale_opacity * 0.5;
+    let gap_alpha = 0.0;
+
+    for d in 0..DASH_COUNT {
+        let seg_start = d as f32 * step;
+        let seg_dash_end = seg_start + step * DASH_FRACTION;
+        let seg_end = seg_start + step;
+
+        // Dash portion (visible)
+        for &t in &[seg_start, seg_dash_end] {
+            let xy = from_xy.lerp(to_xy, t);
+            let z = from_z + (to_z - from_z) * t;
+
             let left_zup = Vec3::new(xy.x + perp.x, xy.y + perp.y, z);
             let right_zup = Vec3::new(xy.x - perp.x, xy.y - perp.y, z);
 
-            // In 3D mode, Camera3d uses Y-up: (x, z, -y)
             let (left, right) = if is_3d {
                 (
                     Vec3::new(left_zup.x, left_zup.z, -left_zup.y),
@@ -162,21 +244,36 @@ pub fn update_mesh_trails(
                 (left_zup, right_zup)
             };
 
-            let base_color = altitude_color(point.altitude);
-            let linear = base_color.to_linear();
-            let alpha = opacity * stale_opacity;
-            let color = [linear.red, linear.green, linear.blue, alpha];
-
+            let color = [linear.red, linear.green, linear.blue, dash_alpha];
             positions.push(left.into());
             positions.push(right.into());
             colors.push(color);
             colors.push(color);
-
-            prev_dir = Some(dir);
         }
 
-        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+        // Gap portion (invisible) - degenerate bridge to next dash
+        for &t in &[seg_dash_end, seg_end.min(1.0)] {
+            let xy = from_xy.lerp(to_xy, t);
+            let z = from_z + (to_z - from_z) * t;
+
+            let left_zup = Vec3::new(xy.x + perp.x, xy.y + perp.y, z);
+            let right_zup = Vec3::new(xy.x - perp.x, xy.y - perp.y, z);
+
+            let (left, right) = if is_3d {
+                (
+                    Vec3::new(left_zup.x, left_zup.z, -left_zup.y),
+                    Vec3::new(right_zup.x, right_zup.z, -right_zup.y),
+                )
+            } else {
+                (left_zup, right_zup)
+            };
+
+            let color = [linear.red, linear.green, linear.blue, gap_alpha];
+            positions.push(left.into());
+            positions.push(right.into());
+            colors.push(color);
+            colors.push(color);
+        }
     }
 }
 

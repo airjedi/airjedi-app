@@ -347,19 +347,32 @@ pub fn make_aircraft_unlit(
     }
 }
 
-/// Update aircraft labels with current data
+/// Update aircraft labels with current data.
+/// Display priority: callsign > tail number (registration) > ICAO hex.
 pub fn update_aircraft_label_text(
     aircraft_query: Query<&Aircraft>,
     mut label_query: Query<(&AircraftLabel, &mut Text2d)>,
+    type_db: Option<Res<crate::aircraft::AircraftTypeDatabase>>,
 ) {
     for (label, mut text) in label_query.iter_mut() {
         if let Ok(aircraft) = aircraft_query.get(label.aircraft_entity) {
-            let callsign_display = aircraft.callsign.as_deref().unwrap_or(&aircraft.icao);
+            let registration = type_db
+                .as_ref()
+                .and_then(|db| db.lookup(&aircraft.icao))
+                .and_then(|info| info.registration);
+
+            let display_name = aircraft
+                .callsign
+                .as_deref()
+                .filter(|s| !s.trim().is_empty())
+                .or(registration.as_deref())
+                .unwrap_or(&aircraft.icao);
+
             let alt_display = aircraft
                 .altitude
                 .map(|a| format!("{} ft", a))
                 .unwrap_or_default();
-            **text = format!("{}\n{}", callsign_display, alt_display);
+            **text = format!("{}\n{}", display_name, alt_display);
         }
     }
 }
