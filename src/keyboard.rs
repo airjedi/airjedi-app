@@ -191,6 +191,8 @@ pub fn toggle_overlays_keyboard(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut airport_state: Option<ResMut<crate::aviation::AirportRenderState>>,
     mut trail_config: Option<ResMut<crate::aircraft::TrailConfig>>,
+    #[cfg(feature = "fusion")]
+    mut estimated_track_config: Option<ResMut<crate::fusion_integration::estimated_track::EstimatedTrackConfig>>,
     mut contexts: EguiContexts,
 ) {
     // Check if egui wants keyboard input
@@ -212,6 +214,14 @@ pub fn toggle_overlays_keyboard(
     // T - Toggle trails
     if keyboard.just_pressed(KeyCode::KeyT) {
         if let Some(ref mut config) = trail_config {
+            config.enabled = !config.enabled;
+        }
+    }
+
+    // P - Toggle estimated track prediction cone
+    #[cfg(feature = "fusion")]
+    if keyboard.just_pressed(KeyCode::KeyP) {
+        if let Some(ref mut config) = estimated_track_config {
             config.enabled = !config.enabled;
         }
     }
@@ -348,6 +358,7 @@ F12   Toggle inspector
 R     Reset view
 A     Toggle airports
 T     Toggle trails
+P     Toggle estimated track cone
 W     Toggle weather overlay
 
 Shift+ Modifiers:

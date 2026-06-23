@@ -7,6 +7,8 @@ mod interpolation;
 #[cfg(feature = "fusion")]
 mod uncertainty_viz;
 #[cfg(feature = "fusion")]
+pub(crate) mod estimated_track;
+#[cfg(feature = "fusion")]
 #[allow(dead_code)]
 pub(crate) mod fusion_ui;
 #[cfg(feature = "fusion")]
@@ -28,6 +30,8 @@ impl Plugin for FusionIntegrationPlugin {
         }
 
         app.add_plugins(FusionPlugin)
+            .register_type::<estimated_track::EstimatedTrackConfig>()
+            .init_resource::<estimated_track::EstimatedTrackConfig>()
             .add_systems(
                 Update,
                 adsb_adapter::adsb_to_fusion_system
@@ -42,6 +46,9 @@ impl Plugin for FusionIntegrationPlugin {
                         .after(render_bridge::sync_tracks_to_visuals),
                     uncertainty_viz::render_uncertainty_ellipses
                         .after(render_bridge::sync_tracks_to_visuals),
+                    estimated_track::draw_estimated_track_cones
+                        .after(render_bridge::sync_tracks_to_visuals)
+                        .after(crate::ZoomSet::Change),
                     render_bridge::cleanup_orphaned_visuals
                         .after(render_bridge::sync_tracks_to_visuals),
                     landing_detection::detect_landings
