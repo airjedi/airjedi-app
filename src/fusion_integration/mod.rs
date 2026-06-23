@@ -32,6 +32,7 @@ impl Plugin for FusionIntegrationPlugin {
         app.add_plugins(FusionPlugin)
             .register_type::<estimated_track::EstimatedTrackConfig>()
             .init_resource::<estimated_track::EstimatedTrackConfig>()
+            .init_resource::<estimated_track::HeadingHistory>()
             .add_systems(
                 Update,
                 adsb_adapter::adsb_to_fusion_system
@@ -46,8 +47,10 @@ impl Plugin for FusionIntegrationPlugin {
                         .after(render_bridge::sync_tracks_to_visuals),
                     uncertainty_viz::render_uncertainty_ellipses
                         .after(render_bridge::sync_tracks_to_visuals),
+                    estimated_track::update_heading_history
+                        .after(render_bridge::sync_tracks_to_visuals),
                     estimated_track::draw_estimated_track_cones
-                        .after(render_bridge::sync_tracks_to_visuals)
+                        .after(estimated_track::update_heading_history)
                         .after(crate::ZoomSet::Change),
                     render_bridge::cleanup_orphaned_visuals
                         .after(render_bridge::sync_tracks_to_visuals),
