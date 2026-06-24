@@ -1,12 +1,12 @@
 use std::collections::{HashMap, VecDeque};
 
+use airjedi_fusion::nalgebra::DMatrix;
+use airjedi_fusion::{TrackQuality, TrackerState};
 use bevy::prelude::*;
 use bevy_slippy_tiles::SlippyTilesSettings;
-use airjedi_fusion::{TrackerState, TrackQuality};
-use airjedi_fusion::nalgebra::DMatrix;
 
 use crate::aircraft::components::FusionTrackLink;
-use crate::aircraft::{AircraftListState, CameraFollowState, Aircraft};
+use crate::aircraft::{Aircraft, AircraftListState, CameraFollowState};
 use crate::geo::CoordinateConverter;
 use crate::map::MapState;
 use crate::view3d::View3DState;
@@ -26,8 +26,8 @@ impl Default for EstimatedTrackConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            horizon_seconds: 20.0,
-            sample_count: 20,
+            horizon_seconds: 45.0,
+            sample_count: 30,
             sigma_multiplier: 2.0,
             min_speed_kts: 30.0,
             max_turn_rate_dps: 6.0,
@@ -38,10 +38,12 @@ impl Default for EstimatedTrackConfig {
 #[derive(Resource, Default)]
 pub struct HeadingHistory {
     entries: HashMap<Entity, VecDeque<(f64, f64)>>,
+    smoothed_turn_rates: HashMap<Entity, f64>,
 }
 
 const HEADING_HISTORY_WINDOW: f64 = 5.0;
 const TURN_RATE_DEAD_ZONE: f64 = 0.1;
+const TURN_RATE_SMOOTHING_TAU: f64 = 0.5;
 
 struct PredictedSample {
     lat: f64,
@@ -60,12 +62,10 @@ fn ecef_vel_to_enu(vel_ecef: &[f64; 3], lat_deg: f64, lon_deg: f64) -> (f64, f64
     let cos_lon = lon_rad.cos();
 
     let east = -sin_lon * vel_ecef[0] + cos_lon * vel_ecef[1];
-    let north = -sin_lat * cos_lon * vel_ecef[0]
-        - sin_lat * sin_lon * vel_ecef[1]
-        + cos_lat * vel_ecef[2];
-    let up = cos_lat * cos_lon * vel_ecef[0]
-        + cos_lat * sin_lon * vel_ecef[1]
-        + sin_lat * vel_ecef[2];
+    let north =
+        -sin_lat * cos_lon * vel_ecef[0] - sin_lat * sin_lon * vel_ecef[1] + cos_lat * vel_ecef[2];
+    let up =
+        cos_lat * cos_lon * vel_ecef[0] + cos_lat * sin_lon * vel_ecef[1] + sin_lat * vel_ecef[2];
     (east, north, up)
 }
 
@@ -107,16 +107,43 @@ fn compute_turn_rate(history: &VecDeque<(f64, f64)>) -> f64 {
     if history.len() < 2 {
         return 0.0;
     }
-    let (t_old, h_old) = history.front().unwrap();
-    let (t_new, h_new) = history.back().unwrap();
-    let dt = t_new - t_old;
-    if dt < 0.3 {
+
+    let t_newest = history.back().unwrap().0;
+    let tau = 1.0; // Time constant in seconds for exponential decay
+
+    let mut weighted_dh_sum = 0.0;
+    let mut weighted_dt_sum = 0.0;
+
+    for i in 1..history.len() {
+        let (t_prev, h_prev) = history[i - 1];
+        let (t_curr, h_curr) = history[i];
+
+        let dt = t_curr - t_prev;
+        if dt <= 0.0 {
+            continue;
+        }
+
+        let mut dh = h_curr - h_prev;
+        if dh > 180.0 {
+            dh -= 360.0;
+        }
+        if dh < -180.0 {
+            dh += 360.0;
+        }
+
+        // Weight exponentially decays based on how old the current segment is relative to the newest point
+        let age = t_newest - t_curr;
+        let weight = (-age / tau).exp();
+
+        weighted_dh_sum += dh * weight;
+        weighted_dt_sum += dt * weight;
+    }
+
+    if weighted_dt_sum < 0.1 {
         return 0.0;
     }
-    let mut dh = h_new - h_old;
-    if dh > 180.0 { dh -= 360.0; }
-    if dh < -180.0 { dh += 360.0; }
-    dh / dt
+
+    weighted_dh_sum / weighted_dt_sum
 }
 
 fn horizontal_uncertainty_m(cov: &DMatrix<f64>, lat_deg: f64, lon_deg: f64) -> f64 {
@@ -134,8 +161,7 @@ fn horizontal_uncertainty_m(cov: &DMatrix<f64>, lat_deg: f64, lon_deg: f64) -> f
 
     let pos_cov = cov.view((0, 0), (3, 3));
 
-    let var_east = sin_lon * sin_lon * pos_cov[(0, 0)]
-        + cos_lon * cos_lon * pos_cov[(1, 1)]
+    let var_east = sin_lon * sin_lon * pos_cov[(0, 0)] + cos_lon * cos_lon * pos_cov[(1, 1)]
         - 2.0 * sin_lon * cos_lon * pos_cov[(0, 1)];
 
     let var_north = (sin_lat * cos_lon).powi(2) * pos_cov[(0, 0)]
@@ -207,6 +233,7 @@ pub fn update_heading_history(
     trackers: Query<(Entity, &TrackerState, &TrackQuality)>,
 ) {
     let now = time.elapsed_secs_f64();
+    let dt = time.delta_secs_f64();
 
     for (entity, tracker, _quality) in trackers.iter() {
         let vel = tracker.velocity_ecef();
@@ -232,7 +259,24 @@ pub fn update_heading_history(
         }
     }
 
-    history.entries.retain(|entity, _| trackers.get(*entity).is_ok());
+    let raw_rates: Vec<(Entity, f64)> = history
+        .entries
+        .iter()
+        .map(|(entity, h)| (*entity, compute_turn_rate(h)))
+        .collect();
+
+    let alpha = (dt / TURN_RATE_SMOOTHING_TAU).min(1.0);
+    for (entity, raw) in raw_rates {
+        let smoothed = history.smoothed_turn_rates.entry(entity).or_insert(raw);
+        *smoothed += alpha * (raw - *smoothed);
+    }
+
+    history
+        .entries
+        .retain(|entity, _| trackers.get(*entity).is_ok());
+    history
+        .smoothed_turn_rates
+        .retain(|entity, _| trackers.get(*entity).is_ok());
 }
 
 pub fn draw_estimated_track_cones(
@@ -276,9 +320,9 @@ pub fn draw_estimated_track_cones(
     }
 
     let turn_rate = heading_history
-        .entries
+        .smoothed_turn_rates
         .get(&link.track_entity)
-        .map(|h| compute_turn_rate(h))
+        .copied()
         .unwrap_or(0.0);
 
     let zoom = view3d_state.effective_zoom(map_state.zoom_level);
@@ -338,5 +382,173 @@ pub fn draw_estimated_track_cones(
         prev_center = sample_pos;
         prev_left = left;
         prev_right = right;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compute_turn_rate_empty_or_single() {
+        let mut history = VecDeque::new();
+        assert_eq!(compute_turn_rate(&history), 0.0);
+
+        history.push_back((100.0, 45.0));
+        assert_eq!(compute_turn_rate(&history), 0.0);
+    }
+
+    #[test]
+    fn test_compute_turn_rate_constant_turn() {
+        let mut history = VecDeque::new();
+        // A direct, constant turn: 3 degrees per second clockwise
+        for s in 0..6 {
+            let t = s as f64;
+            let heading = (t * 3.0) % 360.0;
+            history.push_back((t, heading));
+        }
+
+        let rate = compute_turn_rate(&history);
+        // Standard constant turn should be very close to 3.0 degrees/sec
+        assert!((rate - 3.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_compute_turn_rate_leveling_off() {
+        let mut history = VecDeque::new();
+        // An aircraft turns sharply at 10 deg/sec for 3 seconds:
+        // t=0: 0, t=1: 10, t=2: 20, t=3: 30
+        for s in 0..4 {
+            let t = s as f64;
+            history.push_back((t, t * 10.0));
+        }
+        // Then it levels off and flies straight for another 2 seconds:
+        // t=4: 30, t=5: 30
+        history.push_back((4.0, 30.0));
+        history.push_back((5.0, 30.0));
+
+        let rate = compute_turn_rate(&history);
+        // Under the old system, the turn rate would have been:
+        // (30 - 0) / 5 = 6.0 deg/sec
+        // Under our new exponentially-decaying system, older turning segments have decayed,
+        // and the most recent 1-2 seconds (where rate is 0.0) dominate, pulling it close to zero.
+        println!("Decayed turn rate during level off: {}", rate);
+        assert!(rate < 2.0); // Majorly reduced from 6.0!
+    }
+
+    #[test]
+    fn test_compute_turn_rate_boundary_crossing() {
+        let mut history = VecDeque::new();
+        // Constant turn crossing the 360/0 boundary (355 -> 358 -> 1 -> 4 -> 7)
+        history.push_back((0.0, 355.0));
+        history.push_back((1.0, 358.0));
+        history.push_back((2.0, 1.0));
+        history.push_back((3.0, 4.0));
+        history.push_back((4.0, 7.0));
+
+        let rate = compute_turn_rate(&history);
+        assert!((rate - 3.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_sample_predicted_track_curves_with_turn_rate() {
+        use airjedi_fusion::coord;
+        use airjedi_fusion::filter::ekf::ProcessNoiseConfig;
+        use airjedi_fusion::nalgebra::DVector;
+
+        let mut tracker = TrackerState::new_6dof(ProcessNoiseConfig::default());
+
+        let lat = 37.6872_f64;
+        let lon = -97.3301_f64;
+        let alt = 10000.0_f64;
+        let ecef = coord::geodetic_to_ecef(lat, lon, alt);
+
+        // Heading north at ~200 kts (103 m/s) - convert NED to ECEF velocity
+        let lat_rad = lat.to_radians();
+        let lon_rad = lon.to_radians();
+        let (sin_lat, cos_lat) = (lat_rad.sin(), lat_rad.cos());
+        let (sin_lon, cos_lon) = (lon_rad.sin(), lon_rad.cos());
+        let vn = 103.0;
+        let vx = -sin_lat * cos_lon * vn;
+        let vy = -sin_lat * sin_lon * vn;
+        let vz = cos_lat * vn;
+
+        let mut state = DVector::zeros(6);
+        state[0] = ecef[0]; state[1] = ecef[1]; state[2] = ecef[2];
+        state[3] = vx; state[4] = vy; state[5] = vz;
+        let cov = DMatrix::identity(6, 6) * 100.0;
+        tracker.variant.initialize_from_state(state, cov);
+
+        let config = EstimatedTrackConfig::default();
+        let turn_rate = 3.0;
+        let samples = sample_predicted_track(&tracker, &config, turn_rate);
+
+        assert_eq!(samples.len(), config.sample_count);
+
+        let first = &samples[0];
+        let last = samples.last().unwrap();
+
+        let mut heading_delta = last.heading_deg - first.heading_deg;
+        if heading_delta > 180.0 { heading_delta -= 360.0; }
+        if heading_delta < -180.0 { heading_delta += 360.0; }
+
+        let dt = config.horizon_seconds as f64 / config.sample_count as f64;
+        let expected_delta = (config.sample_count - 1) as f64 * turn_rate * dt;
+
+        println!(
+            "First heading: {:.1}, Last heading: {:.1}, Delta: {:.1}, Expected: {:.1}",
+            first.heading_deg, last.heading_deg, heading_delta, expected_delta
+        );
+        println!(
+            "First pos: ({:.6}, {:.6}), Last pos: ({:.6}, {:.6})",
+            first.lat, first.lon, last.lat, last.lon
+        );
+
+        assert!(
+            (heading_delta - expected_delta).abs() < expected_delta * 0.15,
+            "Heading delta {:.1} too far from expected {:.1}",
+            heading_delta,
+            expected_delta
+        );
+    }
+
+    #[test]
+    fn test_sample_predicted_track_straight_when_no_turn() {
+        use airjedi_fusion::coord;
+        use airjedi_fusion::filter::ekf::ProcessNoiseConfig;
+        use airjedi_fusion::nalgebra::DVector;
+
+        let mut tracker = TrackerState::new_6dof(ProcessNoiseConfig::default());
+
+        let lat = 37.6872_f64;
+        let lon = -97.3301_f64;
+        let ecef = coord::geodetic_to_ecef(lat, lon, 10000.0);
+
+        let lat_rad = lat.to_radians();
+        let lon_rad = lon.to_radians();
+        let vn = 103.0;
+        let vx = -lat_rad.sin() * lon_rad.cos() * vn;
+        let vy = -lat_rad.sin() * lon_rad.sin() * vn;
+        let vz = lat_rad.cos() * vn;
+
+        let mut state = DVector::zeros(6);
+        state[0] = ecef[0]; state[1] = ecef[1]; state[2] = ecef[2];
+        state[3] = vx; state[4] = vy; state[5] = vz;
+        tracker.variant.initialize_from_state(state, DMatrix::identity(6, 6) * 100.0);
+
+        let config = EstimatedTrackConfig::default();
+        let samples = sample_predicted_track(&tracker, &config, 0.0);
+
+        let first = &samples[0];
+        let last = samples.last().unwrap();
+        let mut heading_delta = last.heading_deg - first.heading_deg;
+        if heading_delta > 180.0 { heading_delta -= 360.0; }
+        if heading_delta < -180.0 { heading_delta += 360.0; }
+
+        assert!(
+            heading_delta.abs() < 0.5,
+            "Straight-line prediction should have near-zero heading delta, got {:.1}",
+            heading_delta
+        );
     }
 }
