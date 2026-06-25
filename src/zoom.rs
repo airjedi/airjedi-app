@@ -9,7 +9,7 @@ use crate::camera::MapCamera;
 use crate::constants::{self, ZOOM_DOWNGRADE_THRESHOLD, ZOOM_UPGRADE_THRESHOLD};
 use crate::dock;
 use crate::map::{MapState, ZoomState};
-use crate::tiles::{request_tiles_at_location, SpawnedTiles, TileFadeState};
+use crate::tiles::{compute_tile_radius, request_tiles_at_location, SpawnedTiles, TileFadeState};
 use crate::view3d;
 use crate::{clamp_latitude, clamp_longitude, ZoomDebugLogger};
 
@@ -147,6 +147,7 @@ fn apply_zoom_level_transition(
     spawned_tiles: &mut SpawnedTiles,
     download_events: &mut MessageWriter<DownloadSlippyTilesMessage>,
     download_status: &mut SlippyTileDownloadStatus,
+    radius: u8,
 ) {
     spawned_tiles.positions.clear();
     download_status.0.clear();
@@ -165,6 +166,7 @@ fn apply_zoom_level_transition(
         map_state.latitude,
         map_state.longitude,
         map_state.zoom_level,
+        radius,
         true,
     );
 }
@@ -186,6 +188,7 @@ pub(crate) fn handle_zoom(
     mut spawned_tiles: ResMut<SpawnedTiles>,
     view3d_state: Res<view3d::View3DState>,
     mut download_status: ResMut<SlippyTileDownloadStatus>,
+    mut last_requested_radius: Local<u8>,
 ) {
     // In 3D mode, scroll is handled by handle_3d_camera_controls
     if view3d_state.is_3d_active() || view3d_state.is_transitioning() {
@@ -324,6 +327,12 @@ pub(crate) fn handle_zoom(
         );
 
         // === Handle zoom level transition (scale old tiles, request new) ===
+        let radius = compute_tile_radius(
+            window.width(),
+            window.height(),
+            zoom_state.camera_zoom,
+            Some(&view3d_state),
+        );
         if zoom_level_changed {
             apply_zoom_level_transition(
                 old_tile_zoom,
@@ -332,11 +341,25 @@ pub(crate) fn handle_zoom(
                 &mut spawned_tiles,
                 &mut download_events,
                 &mut download_status,
+                radius,
             );
+            *last_requested_radius = radius;
             log_info!(
                 "  Requested new tiles at zoom level {}",
                 map_state.zoom_level.to_u8()
             );
+        } else if radius > *last_requested_radius {
+            download_events.write(DownloadSlippyTilesMessage {
+                tile_size: constants::DEFAULT_TILE_SIZE,
+                zoom_level: map_state.zoom_level,
+                coordinates: Coordinates::from_latitude_longitude(
+                    map_state.latitude,
+                    map_state.longitude,
+                ),
+                radius: Radius(radius),
+                use_cache: true,
+            });
+            *last_requested_radius = radius;
         }
 
         log_info!(
@@ -360,6 +383,7 @@ pub(crate) fn handle_pinch_zoom(
     mut spawned_tiles: ResMut<SpawnedTiles>,
     view3d_state: Res<view3d::View3DState>,
     mut download_status: ResMut<SlippyTileDownloadStatus>,
+    mut last_requested_radius: Local<u8>,
 ) {
     // In 3D mode, zoom is handled by handle_3d_camera_controls
     if view3d_state.is_3d_active() || view3d_state.is_transitioning() {
@@ -410,6 +434,12 @@ pub(crate) fn handle_pinch_zoom(
             map_state.latitude = clamp_latitude(new_lat);
             map_state.longitude = clamp_longitude(new_lon);
 
+            let radius = compute_tile_radius(
+                window.width(),
+                window.height(),
+                zoom_state.camera_zoom,
+                Some(&view3d_state),
+            );
             if zoom_level_changed {
                 apply_zoom_level_transition(
                     old_tile_zoom,
@@ -418,7 +448,21 @@ pub(crate) fn handle_pinch_zoom(
                     &mut spawned_tiles,
                     &mut download_events,
                     &mut download_status,
+                    radius,
                 );
+                *last_requested_radius = radius;
+            } else if radius > *last_requested_radius {
+                download_events.write(DownloadSlippyTilesMessage {
+                    tile_size: constants::DEFAULT_TILE_SIZE,
+                    zoom_level: map_state.zoom_level,
+                    coordinates: Coordinates::from_latitude_longitude(
+                        map_state.latitude,
+                        map_state.longitude,
+                    ),
+                    radius: Radius(radius),
+                    use_cache: true,
+                });
+                *last_requested_radius = radius;
             }
         }
     }

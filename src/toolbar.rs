@@ -237,6 +237,7 @@ pub fn render_toolbar(
                         map_state.latitude,
                         map_state.longitude,
                         map_state.zoom_level,
+                        crate::constants::TILE_DOWNLOAD_RADIUS,
                         false,
                     );
 

@@ -554,6 +554,7 @@ pub(crate) fn setup_map(
         map_state.latitude,
         map_state.longitude,
         map_state.zoom_level,
+        constants::TILE_DOWNLOAD_RADIUS,
         true,
     );
 

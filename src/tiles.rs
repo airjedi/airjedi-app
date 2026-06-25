@@ -347,15 +347,17 @@ pub(crate) fn compute_tile_radius(
             // Use whichever axis demands more tiles
             let max_ground_extent = far_ground_dist.max(half_width);
             let tile_world_size = constants::DEFAULT_TILE_PIXELS;
-            let tiles_needed = (max_ground_extent / tile_world_size).ceil() as u8;
+            let tiles_needed = (max_ground_extent / tile_world_size).ceil() as u8 + 1;
             return tiles_needed.clamp(3, 12);
         }
     }
 
     // 2D orthographic mode
+    // +1 accounts for the camera's sub-tile offset: when the camera sits near
+    // a tile edge, the far side needs one extra tile to avoid blank edges.
     let tile_screen_px = constants::DEFAULT_TILE_PIXELS * camera_zoom;
-    let half_tiles_x = (window_width / (2.0 * tile_screen_px)).ceil() as u8;
-    let half_tiles_y = (window_height / (2.0 * tile_screen_px)).ceil() as u8;
+    let half_tiles_x = (window_width / (2.0 * tile_screen_px)).ceil() as u8 + 1;
+    let half_tiles_y = (window_height / (2.0 * tile_screen_px)).ceil() as u8 + 1;
     half_tiles_x.max(half_tiles_y).clamp(3, 8)
 }
 
@@ -365,13 +367,14 @@ pub(crate) fn request_tiles_at_location(
     latitude: f64,
     longitude: f64,
     zoom_level: ZoomLevel,
+    radius: u8,
     use_cache: bool,
 ) {
     download_events.write(DownloadSlippyTilesMessage {
         tile_size: constants::DEFAULT_TILE_SIZE,
         zoom_level,
         coordinates: Coordinates::from_latitude_longitude(latitude, longitude),
-        radius: Radius(constants::TILE_DOWNLOAD_RADIUS),
+        radius: Radius(radius),
         use_cache,
     });
 }
@@ -391,6 +394,9 @@ fn handle_basemap_change(
     mut tile_asset_cache: ResMut<TileAssetCache>,
     mut download_events: MessageWriter<DownloadSlippyTilesMessage>,
     map_state: Res<MapState>,
+    zoom_state: Res<ZoomState>,
+    window_query: Query<&Window>,
+    view3d_state: Res<view3d::View3DState>,
     mut last_style: Local<Option<crate::config::BasemapStyle>>,
 ) {
     let current = basemap_state.style;
@@ -419,11 +425,17 @@ fn handle_basemap_change(
     download_status.0.clear();
     tile_asset_cache.entries.clear();
 
+    let radius = if let Ok(window) = window_query.single() {
+        compute_tile_radius(window.width(), window.height(), zoom_state.camera_zoom, Some(&view3d_state))
+    } else {
+        constants::TILE_DOWNLOAD_RADIUS
+    };
     request_tiles_at_location(
         &mut download_events,
         map_state.latitude,
         map_state.longitude,
         map_state.zoom_level,
+        radius,
         true,
     );
 }

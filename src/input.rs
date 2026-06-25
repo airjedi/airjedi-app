@@ -106,12 +106,18 @@ pub(crate) fn handle_pan_drag(
 
     if mouse_button.just_released(MouseButton::Left) {
         if drag_state.is_dragging {
-            // Final tile request at drag end position
+            let radius = compute_tile_radius(
+                window.width(),
+                window.height(),
+                zoom_state.camera_zoom,
+                Some(&view3d_state),
+            );
             request_tiles_at_location(
                 &mut download_events,
                 map_state.latitude,
                 map_state.longitude,
                 map_state.zoom_level,
+                radius,
                 true,
             );
             drag_state.last_tile_request_coords = Some((map_state.latitude, map_state.longitude));
