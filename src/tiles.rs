@@ -791,6 +791,7 @@ fn rescale_tiles_on_zoom_change(
 fn display_tiles_filtered(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
+    images: Res<Assets<Image>>,
     tile_settings: Res<SlippyTilesSettings>,
     map_state: Res<MapState>,
     mut tile_events: MessageReader<SlippyTileDownloadedMessage>,
@@ -871,8 +872,11 @@ fn display_tiles_filtered(
         }
 
         let tile_path = event.path.clone();
-        let tile_handle: Handle<Image> = asset_server.load(tile_path.clone());
-        asset_server.reload(tile_path);
+        let tile_handle: Handle<Image> = asset_server.load(tile_path);
+
+        // If the image is already loaded (disk cache hit), skip the fade-in
+        let already_loaded = images.contains(&tile_handle);
+        let initial_alpha = if already_loaded { 1.0 } else { 0.0 };
 
         // Use grid texture if the overlay is enabled, otherwise use the tile image
         let display_handle = match &grid {
@@ -894,7 +898,7 @@ fn display_tiles_filtered(
             Name::new(format!("Map Tile z{}", event_zoom)),
             Sprite {
                 image: display_handle,
-                color: Color::srgba(1.0, 1.0, 1.0, 0.0),
+                color: Color::srgba(1.0, 1.0, 1.0, initial_alpha),
                 custom_size: if tile_scale != 1.0 {
                     Some(Vec2::splat(requested_px))
                 } else {
@@ -906,7 +910,7 @@ fn display_tiles_filtered(
             Transform::from_xyz(transform_x, transform_y, tile_z).with_scale(Vec3::splat(rescale)),
             MapTile,
             TileFadeState {
-                alpha: 0.0,
+                alpha: initial_alpha,
                 tile_zoom: event_zoom,
                 spawn_time: now,
             },
