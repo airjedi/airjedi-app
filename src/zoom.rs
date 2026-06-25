@@ -146,9 +146,10 @@ fn apply_zoom_level_transition(
     tile_query: &mut Query<(&mut TileFadeState, &mut Transform), With<MapTile>>,
     spawned_tiles: &mut SpawnedTiles,
     download_events: &mut MessageWriter<DownloadSlippyTilesMessage>,
-    _download_status: &mut SlippyTileDownloadStatus,
+    download_status: &mut SlippyTileDownloadStatus,
 ) {
     spawned_tiles.positions.clear();
+    download_status.0.clear();
     let scale_factor = if map_state.zoom_level.to_u8() > old_tile_zoom.to_u8() {
         2.0_f32
     } else {
