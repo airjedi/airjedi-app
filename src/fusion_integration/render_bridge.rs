@@ -3,12 +3,16 @@ use crate::aircraft::components::{Aircraft, AircraftLabel, FusionTrackLink};
 use crate::aircraft::picking::{on_aircraft_click, on_aircraft_hover, on_aircraft_out};
 use crate::aircraft::{InterpolationState, TrailHistory};
 use crate::constants;
+use crate::geo;
+use crate::map::MapState;
 use crate::theme::AppTheme;
+use crate::view3d;
 use crate::RenderCategory;
 use airjedi_fusion::types::{IdentifierType, TargetCategory};
 use airjedi_fusion::{TargetClassification, Track, TrackQuality, TrackStatus, TrackerState};
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
+use bevy_slippy_tiles::SlippyTilesSettings;
 
 pub fn sync_tracks_to_visuals(
     mut commands: Commands,
@@ -33,6 +37,9 @@ pub fn sync_tracks_to_visuals(
     type_db: Option<Res<crate::aircraft::AircraftTypeDatabase>>,
     theme: Res<AppTheme>,
     time: Res<Time<Real>>,
+    map_state: Res<MapState>,
+    tile_settings: Res<SlippyTilesSettings>,
+    view3d_state: Res<view3d::View3DState>,
 ) {
     let Some(model_registry) = model_registry else {
         return;
@@ -133,10 +140,14 @@ pub fn sync_tracks_to_visuals(
                 .unwrap_or(&icao);
             let aircraft_name = display_name;
 
+            let zoom = view3d_state.effective_zoom(map_state.zoom_level);
+            let converter = geo::CoordinateConverter::new(&tile_settings, zoom);
+            let pos = converter.latlon_to_world(lat, lon);
+
             let mut entity_commands = commands.spawn((
                 Name::new(format!("Aircraft: {}", aircraft_name)),
                 SceneRoot(model_handle),
-                Transform::from_xyz(0.0, 0.0, constants::AIRCRAFT_Z_LAYER),
+                Transform::from_xyz(pos.x, pos.y, constants::AIRCRAFT_Z_LAYER),
                 Pickable::default(),
                 Aircraft {
                     icao: icao.clone(),
@@ -189,7 +200,8 @@ pub fn sync_tracks_to_visuals(
                     ..default()
                 },
                 TextColor(theme.text_primary()),
-                Transform::from_xyz(0.0, 0.0, constants::LABEL_Z_LAYER),
+                Transform::from_xyz(pos.x, pos.y, constants::LABEL_Z_LAYER),
+                Visibility::Hidden,
                 AircraftLabel { aircraft_entity },
                 RenderLayers::layer(RenderCategory::LABELS),
             ));

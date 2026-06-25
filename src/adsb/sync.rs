@@ -6,8 +6,12 @@ use crate::aircraft::interpolation::{update_interpolation_on_adsb, Interpolation
 use crate::aircraft::picking::{on_aircraft_click, on_aircraft_hover, on_aircraft_out};
 use crate::aircraft::TrailHistory;
 use crate::debug_panel::DebugPanelState;
+use crate::geo;
+use crate::map::MapState;
+use crate::view3d;
 use crate::{constants, Aircraft, AircraftLabel, RenderCategory};
 use bevy::camera::visibility::RenderLayers;
+use bevy_slippy_tiles::SlippyTilesSettings;
 
 use crate::theme::AppTheme;
 
@@ -125,6 +129,9 @@ pub fn sync_aircraft_from_adsb(
     theme: Res<AppTheme>,
     type_db: Option<Res<crate::aircraft::AircraftTypeDatabase>>,
     time: Res<Time<Real>>,
+    map_state: Res<MapState>,
+    tile_settings: Res<SlippyTilesSettings>,
+    view3d_state: Res<view3d::View3DState>,
 ) {
     let Some(adsb_data) = adsb_data else {
         return; // ADS-B client not yet initialized
@@ -214,10 +221,14 @@ pub fn sync_aircraft_from_adsb(
             let model_handle = model_registry.get_model(type_code.as_deref());
             let correction = model_registry.get_correction(type_code.as_deref());
 
+            let zoom = view3d_state.effective_zoom(map_state.zoom_level);
+            let converter = geo::CoordinateConverter::new(&tile_settings, zoom);
+            let pos = converter.latlon_to_world(lat, lon);
+
             let mut entity_commands = commands.spawn((
                 Name::new(format!("Aircraft: {}", aircraft_name)),
                 SceneRoot(model_handle),
-                Transform::from_xyz(0.0, 0.0, constants::AIRCRAFT_Z_LAYER),
+                Transform::from_xyz(pos.x, pos.y, constants::AIRCRAFT_Z_LAYER),
                 Pickable::default(),
                 Aircraft {
                     icao: adsb_ac.icao.clone(),
@@ -272,7 +283,8 @@ pub fn sync_aircraft_from_adsb(
                     ..default()
                 },
                 TextColor(theme.text_primary()),
-                Transform::from_xyz(0.0, 0.0, constants::LABEL_Z_LAYER),
+                Transform::from_xyz(pos.x, pos.y, constants::LABEL_Z_LAYER),
+                Visibility::Hidden,
                 AircraftLabel { aircraft_entity },
                 RenderLayers::layer(RenderCategory::LABELS),
             ));

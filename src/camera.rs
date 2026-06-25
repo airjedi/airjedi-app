@@ -80,6 +80,7 @@ impl Plugin for CameraPlugin {
             Update,
             cull_offscreen_aircraft
                 .after(update_aircraft_positions)
+                .after(update_aircraft_labels)
                 .after(crate::view3d::update_aircraft_3d_transform),
         );
     }
@@ -316,14 +317,18 @@ pub(crate) fn update_aircraft_positions(
 fn update_aircraft_labels(
     zoom_state: Res<ZoomState>,
     aircraft_query: Query<&Transform, With<Aircraft>>,
-    mut label_query: Query<(&AircraftLabel, &mut Transform), Without<Aircraft>>,
+    mut label_query: Query<(&AircraftLabel, &mut Transform, &mut Visibility), Without<Aircraft>>,
 ) {
     let world_space_offset = constants::LABEL_SCREEN_OFFSET / zoom_state.camera_zoom;
 
-    for (label, mut label_transform) in label_query.iter_mut() {
+    for (label, mut label_transform, mut visibility) in label_query.iter_mut() {
         if let Ok(aircraft_transform) = aircraft_query.get(label.aircraft_entity) {
             label_transform.translation.x = aircraft_transform.translation.x + world_space_offset;
             label_transform.translation.y = aircraft_transform.translation.y + world_space_offset;
+
+            if *visibility == Visibility::Hidden {
+                *visibility = Visibility::Inherited;
+            }
         }
     }
 }
