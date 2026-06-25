@@ -51,6 +51,8 @@ impl TrackQuality {
             TrackStatus::Tentative => {
                 if self.observation_count >= config.confirm_threshold {
                     self.status = TrackStatus::Confirmed;
+                } else if staleness > config.confirm_window {
+                    self.status = TrackStatus::Lost;
                 }
             }
             TrackStatus::Confirmed => {
@@ -68,7 +70,7 @@ impl TrackQuality {
     }
 
     pub fn reacquire(&mut self) {
-        if self.status == TrackStatus::Coasting {
+        if matches!(self.status, TrackStatus::Coasting | TrackStatus::Lost) {
             self.status = TrackStatus::Confirmed;
         }
         self.staleness = Duration::ZERO;
@@ -112,7 +114,7 @@ impl Default for LifecycleProfiles {
                 confirm_window: Duration::from_secs(10),
                 coast_timeout: Duration::from_secs(15),
                 lost_timeout: Duration::from_secs(60),
-                cleanup_delay: Duration::from_secs(5),
+                cleanup_delay: Duration::from_secs(120),
             },
         );
         profiles.insert(

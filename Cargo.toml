@@ -8,9 +8,8 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["brp", "fusion"]
+default = ["brp"]
 brp = ["bevy/bevy_remote", "dep:bevy_brp_extras"]
-fusion = ["dep:airjedi-fusion"]
 
 [dependencies]
 bevy = { version = "0.18", features = ["jpeg"] }
@@ -35,7 +34,7 @@ solar-positioning = "0.3"
 libc = "0.2"
 image = { version = "0.25", default-features = false, features = ["png"] }
 bevy_brp_extras = { version = "0.18", optional = true }
-airjedi-fusion = { path = "airjedi-fusion", optional = true }
+airjedi-fusion = { path = "airjedi-fusion" }
 shadow-rs = { version = "1", default-features = false }
 tokio-cron-scheduler = "0.15"
 crossbeam-channel = "0.5"

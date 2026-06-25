@@ -191,7 +191,7 @@ pub fn toggle_overlays_keyboard(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut airport_state: Option<ResMut<crate::aviation::AirportRenderState>>,
     mut trail_config: Option<ResMut<crate::aircraft::TrailConfig>>,
-    #[cfg(feature = "fusion")] mut estimated_track_config: Option<
+    mut estimated_track_config: Option<
         ResMut<crate::fusion_integration::estimated_track::EstimatedTrackConfig>,
     >,
     mut contexts: EguiContexts,
@@ -220,7 +220,6 @@ pub fn toggle_overlays_keyboard(
     }
 
     // P - Toggle estimated track prediction cone
-    #[cfg(feature = "fusion")]
     if keyboard.just_pressed(KeyCode::KeyP) {
         if let Some(ref mut config) = estimated_track_config {
             config.enabled = !config.enabled;

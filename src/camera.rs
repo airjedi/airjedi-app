@@ -44,7 +44,7 @@ impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            follow_aircraft.after(crate::adsb::sync_aircraft_from_adsb),
+            follow_aircraft.after(airjedi_fusion::systems::FusionSet::Lifecycle),
         )
         .add_systems(
             Update,
@@ -64,7 +64,7 @@ impl Plugin for CameraPlugin {
             Update,
             update_aircraft_positions
                 .after(update_camera_position)
-                .after(crate::adsb::sync_aircraft_from_adsb)
+                .after(airjedi_fusion::systems::FusionSet::Lifecycle)
                 .after(crate::aircraft::interpolation::interpolate_aircraft_positions)
                 .after(ZoomSet::Change),
         )

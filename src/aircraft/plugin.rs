@@ -67,7 +67,7 @@ impl Plugin for AircraftPlugin {
             .add_systems(Update, render_detail_panel)
             .add_systems(
                 Update,
-                interpolate_aircraft_positions.after(crate::adsb::sync_aircraft_from_adsb),
+                interpolate_aircraft_positions.after(airjedi_fusion::systems::FusionSet::Lifecycle),
             )
             .add_systems(
                 Update,

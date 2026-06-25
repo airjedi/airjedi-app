@@ -70,7 +70,11 @@ pub fn fusion_update_system(
     let now = Utc::now();
 
     for (mut track, mut tracker, mut quality) in &mut tracks {
-        if !track.is_on_ground {
+        let dominated = matches!(
+            quality.status,
+            TrackStatus::Coasting | TrackStatus::Lost
+        );
+        if !track.is_on_ground && !dominated {
             tracker.variant.predict(dt);
         }
 
@@ -90,6 +94,7 @@ pub fn fusion_update_system(
                 FilterResult::OutlierRejected { .. } => {}
                 FilterResult::DivergenceDetected => {
                     tracker.variant.initialize(&stored_obs.observation);
+                    quality.reacquire();
                     track.last_update = now;
                 }
             }
@@ -197,12 +202,17 @@ pub fn track_initiation_system(
 pub fn track_cleanup_system(
     mut commands: Commands,
     mut spatial_index: ResMut<SpatialIndex>,
-    tracks: Query<(Entity, &Track, &TrackQuality)>,
+    lifecycle: Res<LifecycleProfiles>,
+    tracks: Query<(Entity, &Track, &TrackQuality, &TargetClassification)>,
 ) {
-    for (entity, track, quality) in &tracks {
+    for (entity, track, quality, classification) in &tracks {
         if quality.status == TrackStatus::Lost {
-            spatial_index.remove_track(&track.id);
-            commands.entity(entity).despawn();
+            let config = lifecycle.get(&classification.category);
+            let cleanup_after = config.coast_timeout + config.lost_timeout + config.cleanup_delay;
+            if quality.staleness > cleanup_after {
+                spatial_index.remove_track(&track.id);
+                commands.entity(entity).despawn();
+            }
         }
     }
 }

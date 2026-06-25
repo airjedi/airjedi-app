@@ -5,7 +5,6 @@ pub use connection::*;
 pub use sync::*;
 
 use bevy::prelude::*;
-use bevy_egui::EguiPrimaryContextPass;
 
 pub struct AdsbPlugin;
 
@@ -19,18 +18,6 @@ impl Plugin for AdsbPlugin {
             ),
         );
 
-        #[cfg(not(feature = "fusion"))]
-        app.add_systems(
-            Update,
-            (
-                sync_aircraft_from_adsb,
-                update_aircraft_label_text.after(sync_aircraft_from_adsb),
-                apply_model_corrections.after(sync_aircraft_from_adsb),
-                make_aircraft_unlit.after(apply_model_corrections),
-            ),
-        );
-
-        #[cfg(feature = "fusion")]
         app.add_systems(
             Update,
             (

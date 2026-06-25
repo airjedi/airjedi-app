@@ -43,7 +43,6 @@ pub struct AircraftLabel {
 }
 
 /// Links a visual Aircraft entity to its fusion track entity
-#[cfg(feature = "fusion")]
 #[derive(Component, Debug)]
 pub struct FusionTrackLink {
     pub track_entity: Entity,

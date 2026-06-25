@@ -9,10 +9,17 @@ use std::collections::HashMap;
 
 use crate::adsb::connection::AdsbAircraftData;
 
+/// Tracks the last-pushed state per ICAO to avoid sending stale observations.
+pub(crate) struct LastPushedState {
+    last_seen: DateTime<Utc>,
+    lat: f64,
+    lon: f64,
+}
+
 pub fn adsb_to_fusion_system(
     adsb_data: Option<Res<AdsbAircraftData>>,
     mut buffer: ResMut<ObservationBuffer>,
-    mut last_seen: Local<HashMap<String, DateTime<Utc>>>,
+    mut last_pushed: Local<HashMap<String, LastPushedState>>,
 ) {
     let Some(adsb_data) = adsb_data else {
         return;
@@ -28,13 +35,22 @@ pub fn adsb_to_fusion_system(
             continue;
         };
 
-        // Only push when we have a new ADS-B message (last_seen changed)
-        if let Some(prev) = last_seen.get(&ac.icao) {
-            if *prev == ac.last_seen {
+        if let Some(prev) = last_pushed.get(&ac.icao) {
+            if prev.last_seen == ac.last_seen {
+                continue;
+            }
+            if (prev.lat - lat).abs() < f64::EPSILON && (prev.lon - lon).abs() < f64::EPSILON {
                 continue;
             }
         }
-        last_seen.insert(ac.icao.clone(), ac.last_seen);
+        last_pushed.insert(
+            ac.icao.clone(),
+            LastPushedState {
+                last_seen: ac.last_seen,
+                lat,
+                lon,
+            },
+        );
 
         if let Some(obs) = adsb_aircraft_to_observation(ac, lat, lon) {
             buffer.observations.push(obs);
@@ -42,10 +58,10 @@ pub fn adsb_to_fusion_system(
     }
 
     // Clean up stale entries for aircraft no longer in the list
-    if last_seen.len() > aircraft_list.len() * 2 {
+    if last_pushed.len() > aircraft_list.len() * 2 {
         let active: std::collections::HashSet<&str> =
             aircraft_list.iter().map(|ac| ac.icao.as_str()).collect();
-        last_seen.retain(|icao, _| active.contains(icao.as_str()));
+        last_pushed.retain(|icao, _| active.contains(icao.as_str()));
     }
 }
 

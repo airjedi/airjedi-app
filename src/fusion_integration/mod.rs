@@ -1,24 +1,16 @@
-#[cfg(feature = "fusion")]
 mod adsb_adapter;
-#[cfg(feature = "fusion")]
 pub(crate) mod estimated_track;
-#[cfg(feature = "fusion")]
 #[allow(dead_code)]
 pub(crate) mod fusion_ui;
-#[cfg(feature = "fusion")]
 mod interpolation;
-#[cfg(feature = "fusion")]
 mod landing_detection;
-#[cfg(feature = "fusion")]
 mod render_bridge;
-#[cfg(feature = "fusion")]
 mod uncertainty_viz;
 
 use bevy::prelude::*;
 
 pub struct FusionIntegrationPlugin;
 
-#[cfg(feature = "fusion")]
 impl Plugin for FusionIntegrationPlugin {
     fn build(&self, app: &mut App) {
         use airjedi_fusion::config::FusionConfig;
@@ -58,9 +50,4 @@ impl Plugin for FusionIntegrationPlugin {
                 ),
             );
     }
-}
-
-#[cfg(not(feature = "fusion"))]
-impl Plugin for FusionIntegrationPlugin {
-    fn build(&self, _app: &mut App) {}
 }

@@ -59,16 +59,10 @@ pub fn sync_tracks_to_visuals(
             .iter()
             .find(|(_, link)| link.track_entity == track_entity);
 
-        if quality.status == TrackStatus::Lost {
-            if let Some((visual_entity, _)) = existing_visual {
-                for (label_entity, label) in label_query.iter() {
-                    if label.aircraft_entity == visual_entity {
-                        commands.entity(label_entity).despawn();
-                        break;
-                    }
-                }
-                commands.entity(visual_entity).despawn();
-            }
+        if matches!(
+            quality.status,
+            TrackStatus::Coasting | TrackStatus::Lost
+        ) {
             continue;
         }
 
