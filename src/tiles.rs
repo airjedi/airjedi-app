@@ -96,6 +96,15 @@ impl Default for AltitudeChangeTracker {
 #[derive(Component)]
 pub(crate) struct TileOriginalImage(pub Handle<Image>);
 
+/// Retains strong handles to recently-loaded tile images so they survive entity
+/// despawns. Without this, Bevy drops the GPU texture when the last entity
+/// referencing it is despawned, forcing a disk reload (and gray flash) when the
+/// same tile is re-requested.
+#[derive(Resource, Default)]
+struct TileAssetCache {
+    entries: std::collections::HashMap<String, Handle<Image>>,
+}
+
 /// Controls whether tiles display a procedural grid instead of their imagery.
 #[derive(Resource, Reflect)]
 #[reflect(Resource)]
@@ -122,6 +131,7 @@ impl Plugin for TilesPlugin {
             .init_resource::<Tile3DRefreshTimer>()
             .init_resource::<AltitudeChangeTracker>()
             .init_resource::<Previous3DZoom>()
+            .init_resource::<TileAssetCache>()
             .register_type::<GridOverlay>()
             .add_systems(Startup, (setup_tile_quad_mesh, setup_grid_overlay))
             .add_systems(Update, toggle_grid_overlay)
@@ -378,6 +388,7 @@ fn handle_basemap_change(
     tile_query: Query<(Entity, Option<&TileMeshQuad>), With<MapTile>>,
     mut spawned_tiles: ResMut<SpawnedTiles>,
     mut download_status: ResMut<SlippyTileDownloadStatus>,
+    mut tile_asset_cache: ResMut<TileAssetCache>,
     mut download_events: MessageWriter<DownloadSlippyTilesMessage>,
     map_state: Res<MapState>,
     mut last_style: Local<Option<crate::config::BasemapStyle>>,
@@ -406,6 +417,7 @@ fn handle_basemap_change(
 
     spawned_tiles.positions.clear();
     download_status.0.clear();
+    tile_asset_cache.entries.clear();
 
     request_tiles_at_location(
         &mut download_events,
@@ -797,6 +809,7 @@ fn display_tiles_filtered(
     mut tile_events: MessageReader<SlippyTileDownloadedMessage>,
     mut _tile_query: Query<(Entity, &mut TileFadeState), With<MapTile>>,
     mut spawned_tiles: ResMut<SpawnedTiles>,
+    mut tile_asset_cache: ResMut<TileAssetCache>,
     logger: Option<Res<ZoomDebugLogger>>,
     view3d_state: Res<view3d::View3DState>,
     grid: Option<Res<GridOverlay>>,
@@ -872,9 +885,17 @@ fn display_tiles_filtered(
         }
 
         let tile_path = event.path.clone();
-        let tile_handle: Handle<Image> = asset_server.load(tile_path);
+        let path_key = tile_path.to_string_lossy().to_string();
 
-        // If the image is already loaded (disk cache hit), skip the fade-in
+        let tile_handle: Handle<Image> =
+            if let Some(cached) = tile_asset_cache.entries.get(&path_key) {
+                cached.clone()
+            } else {
+                let h: Handle<Image> = asset_server.load(tile_path);
+                tile_asset_cache.entries.insert(path_key, h.clone());
+                h
+            };
+
         let already_loaded = images.contains(&tile_handle);
         let initial_alpha = if already_loaded { 1.0 } else { 0.0 };
 
