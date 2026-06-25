@@ -2,7 +2,6 @@
 ///
 /// Provides a single resource that tracks which panels are open, replacing
 /// scattered boolean flags across many individual resources.
-
 use bevy::prelude::*;
 use egui_phosphor::regular;
 use std::collections::HashSet;

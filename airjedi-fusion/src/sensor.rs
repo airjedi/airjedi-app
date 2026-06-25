@@ -1,6 +1,6 @@
-use nalgebra::{DMatrix, DVector};
 use crate::coord::CoordinateFrame;
-use crate::types::{TargetCategory, TargetId, Timestamp, StateVectorType};
+use crate::types::{StateVectorType, TargetCategory, TargetId, Timestamp};
+use nalgebra::{DMatrix, DVector};
 
 #[derive(Debug, Clone)]
 pub struct SensorId {

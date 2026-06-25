@@ -184,7 +184,10 @@ pub fn fetch_with_cache(
 
                 if let Some(len) = server_len {
                     if len == cached_len {
-                        info!("{}: not modified (Content-Length match: {} bytes)", cache_key, len);
+                        info!(
+                            "{}: not modified (Content-Length match: {} bytes)",
+                            cache_key, len
+                        );
                         let data = read_cache(&cached_path)?;
                         return Ok(FetchResult::NotModified(data));
                     }
@@ -207,13 +210,18 @@ pub fn fetch_with_cache(
     if !resp.status().is_success() {
         // Fall back to cache if available
         if has_cache {
-            warn!("{}: server returned {}, using stale cache", cache_key, resp.status());
+            warn!(
+                "{}: server returned {}, using stale cache",
+                cache_key,
+                resp.status()
+            );
             let data = read_cache(&cached_path)?;
             return Ok(FetchResult::NotModified(data));
         }
         return Err(ProviderError::Network(format!(
             "{} returned status {}",
-            url, resp.status()
+            url,
+            resp.status()
         )));
     }
 
@@ -279,8 +287,7 @@ fn finish_download(
 
 /// Read cached file from disk.
 fn read_cache(path: &Path) -> Result<Vec<u8>, ProviderError> {
-    std::fs::read(path)
-        .map_err(|e| ProviderError::Other(format!("failed to read cache: {}", e)))
+    std::fs::read(path).map_err(|e| ProviderError::Other(format!("failed to read cache: {}", e)))
 }
 
 #[cfg(test)]
@@ -315,7 +322,10 @@ mod tests {
         let restored: CacheMeta = serde_json::from_str(&json).unwrap();
 
         assert_eq!(restored.etag, Some("\"abc123\"".to_string()));
-        assert_eq!(restored.last_modified, Some("Thu, 01 Jan 2026 00:00:00 GMT".to_string()));
+        assert_eq!(
+            restored.last_modified,
+            Some("Thu, 01 Jan 2026 00:00:00 GMT".to_string())
+        );
         assert_eq!(restored.content_length, Some(12345));
         assert!(!restored.supports("content_length"));
         assert!(restored.supports("etag"));

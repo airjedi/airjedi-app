@@ -146,7 +146,9 @@ impl Plugin for DataIngestPlugin {
 }
 
 /// Build the list of data providers based on the current DataIngestConfig.
-fn build_providers(config: &crate::config::DataIngestConfig) -> Vec<Arc<dyn provider::DataProvider>> {
+fn build_providers(
+    config: &crate::config::DataIngestConfig,
+) -> Vec<Arc<dyn provider::DataProvider>> {
     let mut providers: Vec<Arc<dyn provider::DataProvider>> = vec![];
 
     if config.metar.enabled {
@@ -182,7 +184,9 @@ fn build_providers(config: &crate::config::DataIngestConfig) -> Vec<Arc<dyn prov
     }
 
     if config.faa_airspace.enabled {
-        providers.push(Arc::new(providers::faa_adds_airspace::FaaClassAirspaceProvider));
+        providers.push(Arc::new(
+            providers::faa_adds_airspace::FaaClassAirspaceProvider,
+        ));
     }
 
     providers
@@ -190,10 +194,7 @@ fn build_providers(config: &crate::config::DataIngestConfig) -> Vec<Arc<dyn prov
 
 /// Startup system: creates the crossbeam channel, builds the initial
 /// FetchContext from AppConfig, and spawns the background scheduler thread.
-fn start_ingest_scheduler(
-    mut commands: Commands,
-    app_config: Res<crate::config::AppConfig>,
-) {
+fn start_ingest_scheduler(mut commands: Commands, app_config: Res<crate::config::AppConfig>) {
     let (tx, rx) = crossbeam_channel::unbounded();
 
     // Use AppConfig for initial context since MapState may not be inserted yet
@@ -244,8 +245,7 @@ fn drain_ingest_channel(
                 | CanonicalRecord::Airspace(_)
                 | CanonicalRecord::Frequency(_) => nav.push(record),
 
-                CanonicalRecord::Notam(_)
-                | CanonicalRecord::Tfr(_) => notice.push(record),
+                CanonicalRecord::Notam(_) | CanonicalRecord::Tfr(_) => notice.push(record),
             }
         }
 
@@ -281,7 +281,9 @@ fn build_providers_for_key(key: &str) -> Vec<Arc<dyn provider::DataProvider>> {
         "openaip" => vec![Arc::new(providers::openaip::OpenAipProvider::new())],
         "notam" => vec![Arc::new(providers::notams::NotamProvider)],
         "tfr" => vec![Arc::new(providers::tfrs::TfrProvider)],
-        "faa_airspace" => vec![Arc::new(providers::faa_adds_airspace::FaaClassAirspaceProvider)],
+        "faa_airspace" => vec![Arc::new(
+            providers::faa_adds_airspace::FaaClassAirspaceProvider,
+        )],
         _ => vec![],
     }
 }
@@ -343,7 +345,11 @@ fn handle_on_demand_fetch(
                     };
 
                     if !result.records.is_empty() {
-                        info!("On-demand '{}': produced {} records", name, result.records.len());
+                        info!(
+                            "On-demand '{}': produced {} records",
+                            name,
+                            result.records.len()
+                        );
                         save_records_to_file(&name, &result.records);
                         let _ = tx.send(IngestMessage {
                             provider_name: name,
@@ -371,8 +377,12 @@ mod tests {
     struct MockProvider;
 
     impl DataProvider for MockProvider {
-        fn name(&self) -> &str { "mock_provider" }
-        fn schedule(&self) -> &str { "0 */5 * * * *" }
+        fn name(&self) -> &str {
+            "mock_provider"
+        }
+        fn schedule(&self) -> &str {
+            "0 */5 * * * *"
+        }
 
         fn fetch(&self, _ctx: &FetchContext) -> Result<RawFetchResult, ProviderError> {
             Ok(RawFetchResult {
@@ -399,8 +409,12 @@ mod tests {
     struct MockParseStage;
 
     impl PipelineStage for MockParseStage {
-        fn name(&self) -> &str { "mock_parse" }
-        fn phase(&self) -> PipelinePhase { PipelinePhase::Parse }
+        fn name(&self) -> &str {
+            "mock_parse"
+        }
+        fn phase(&self) -> PipelinePhase {
+            PipelinePhase::Parse
+        }
 
         fn execute(&self, data: &mut PipelineData) -> Result<(), PipelineError> {
             data.records.push(CanonicalRecord::Metar(MetarReport {
@@ -461,7 +475,8 @@ mod tests {
         tx.send(IngestMessage {
             provider_name: provider.name().to_string(),
             records: result.records,
-        }).expect("send should succeed");
+        })
+        .expect("send should succeed");
 
         // Receive and classify (simulates drain_ingest_channel)
         let msg = rx.try_recv().expect("should receive message");

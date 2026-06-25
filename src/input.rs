@@ -61,7 +61,8 @@ pub(crate) fn check_egui_wants_input(
         if ctx.wants_keyboard_input() || ctx.wants_pointer_input() {
             // Check if pointer is over the map viewport (allow interaction there)
             let over_map = if let Some(map_rect) = dock_state.map_viewport_rect {
-                ctx.pointer_latest_pos().is_some_and(|pos| map_rect.contains(pos))
+                ctx.pointer_latest_pos()
+                    .is_some_and(|pos| map_rect.contains(pos))
             } else {
                 false
             };
@@ -143,7 +144,7 @@ pub(crate) fn handle_pan_drag(
                 let center_pixel = world_coords_to_world_pixel(
                     &center_ll,
                     crate::constants::DEFAULT_TILE_SIZE,
-                    map_state.zoom_level
+                    map_state.zoom_level,
                 );
 
                 // Calculate new center in world pixels
@@ -155,7 +156,7 @@ pub(crate) fn handle_pan_drag(
                     new_center_x,
                     new_center_y,
                     crate::constants::DEFAULT_TILE_SIZE,
-                    map_state.zoom_level
+                    map_state.zoom_level,
                 );
 
                 // Update map coordinates

@@ -2,20 +2,22 @@
 ///
 /// Groups Coverage, Airspace, Data Sources, Export, and 3D View into a single
 /// tabbed window to reduce floating window clutter.
-
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 use std::path::Path;
 
+use crate::airspace::{AirspaceData, AirspaceDisplayState};
 use crate::coverage::CoverageState;
-use crate::airspace::{AirspaceDisplayState, AirspaceData};
 use crate::data_sources::DataSourceManager;
-use crate::export::{ExportState, ExportFormat};
-use crate::recording::{RecordingState, PlaybackState};
-use crate::view3d::{View3DState, ViewMode, sky::{TimeState, SunState}};
+use crate::export::{ExportFormat, ExportState};
+use crate::recording::{PlaybackState, RecordingState};
 use crate::terrain::TerrainState;
+use crate::theme::{to_egui_color32, to_egui_color32_alpha, AppTheme};
 use crate::tiles::GridOverlay;
-use crate::theme::{AppTheme, to_egui_color32, to_egui_color32_alpha};
+use crate::view3d::{
+    sky::{SunState, TimeState},
+    View3DState, ViewMode,
+};
 
 /// Which tab is currently active in the tools window.
 #[derive(Resource, Default, PartialEq, Eq, Clone, Copy)]
@@ -89,25 +91,46 @@ pub fn render_tools_window(
         .show(ctx, |ui| {
             // Tab bar - always show all tabs
             ui.horizontal(|ui| {
-                if ui.selectable_label(tools_state.active_tab == ToolsTab::Coverage, "Coverage").clicked() {
+                if ui
+                    .selectable_label(tools_state.active_tab == ToolsTab::Coverage, "Coverage")
+                    .clicked()
+                {
                     tools_state.active_tab = ToolsTab::Coverage;
                 }
-                if ui.selectable_label(tools_state.active_tab == ToolsTab::Airspace, "Airspace").clicked() {
+                if ui
+                    .selectable_label(tools_state.active_tab == ToolsTab::Airspace, "Airspace")
+                    .clicked()
+                {
                     tools_state.active_tab = ToolsTab::Airspace;
                 }
-                if ui.selectable_label(tools_state.active_tab == ToolsTab::DataSources, "Sources").clicked() {
+                if ui
+                    .selectable_label(tools_state.active_tab == ToolsTab::DataSources, "Sources")
+                    .clicked()
+                {
                     tools_state.active_tab = ToolsTab::DataSources;
                 }
-                if ui.selectable_label(tools_state.active_tab == ToolsTab::Export, "Export").clicked() {
+                if ui
+                    .selectable_label(tools_state.active_tab == ToolsTab::Export, "Export")
+                    .clicked()
+                {
                     tools_state.active_tab = ToolsTab::Export;
                 }
-                if ui.selectable_label(tools_state.active_tab == ToolsTab::Recording, "Recording").clicked() {
+                if ui
+                    .selectable_label(tools_state.active_tab == ToolsTab::Recording, "Recording")
+                    .clicked()
+                {
                     tools_state.active_tab = ToolsTab::Recording;
                 }
-                if ui.selectable_label(tools_state.active_tab == ToolsTab::View3D, "3D View").clicked() {
+                if ui
+                    .selectable_label(tools_state.active_tab == ToolsTab::View3D, "3D View")
+                    .clicked()
+                {
                     tools_state.active_tab = ToolsTab::View3D;
                 }
-                if ui.selectable_label(tools_state.active_tab == ToolsTab::Ingest, "Ingest").clicked() {
+                if ui
+                    .selectable_label(tools_state.active_tab == ToolsTab::Ingest, "Ingest")
+                    .clicked()
+                {
                     tools_state.active_tab = ToolsTab::Ingest;
                 }
             });
@@ -117,16 +140,28 @@ pub fn render_tools_window(
             // Tab content
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    match tools_state.active_tab {
-                        ToolsTab::Coverage => render_coverage_tab(ui, &mut coverage),
-                        ToolsTab::Airspace => render_airspace_tab(ui, &mut airspace_display, &mut airspace_data),
-                        ToolsTab::DataSources => render_data_sources_tab(ui, &mut datasource_mgr),
-                        ToolsTab::Export => render_export_tab(ui, &mut export_state),
-                        ToolsTab::Recording => render_recording_tab(ui, &mut recording, &mut playback),
-                        ToolsTab::View3D => render_view3d_tab(ui, &mut view3d_state, &mut terrain_state, &mut time_state, &sun_state, grid_overlay.as_deref_mut()),
-                        ToolsTab::Ingest => render_ingest_tab(ui, ingest_status.as_deref(), &mut app_config, ingest_ui.as_deref_mut()),
+                .show(ui, |ui| match tools_state.active_tab {
+                    ToolsTab::Coverage => render_coverage_tab(ui, &mut coverage),
+                    ToolsTab::Airspace => {
+                        render_airspace_tab(ui, &mut airspace_display, &mut airspace_data)
                     }
+                    ToolsTab::DataSources => render_data_sources_tab(ui, &mut datasource_mgr),
+                    ToolsTab::Export => render_export_tab(ui, &mut export_state),
+                    ToolsTab::Recording => render_recording_tab(ui, &mut recording, &mut playback),
+                    ToolsTab::View3D => render_view3d_tab(
+                        ui,
+                        &mut view3d_state,
+                        &mut terrain_state,
+                        &mut time_state,
+                        &sun_state,
+                        grid_overlay.as_deref_mut(),
+                    ),
+                    ToolsTab::Ingest => render_ingest_tab(
+                        ui,
+                        ingest_status.as_deref(),
+                        &mut app_config,
+                        ingest_ui.as_deref_mut(),
+                    ),
                 });
         });
 
@@ -178,7 +213,11 @@ pub fn render_coverage_tab(ui: &mut egui::Ui, coverage: &mut CoverageState) {
     ui.separator();
 
     ui.horizontal(|ui| {
-        let enable_text = if coverage.enabled { "Disable" } else { "Enable" };
+        let enable_text = if coverage.enabled {
+            "Disable"
+        } else {
+            "Enable"
+        };
         if ui.button(enable_text).clicked() {
             coverage.enabled = !coverage.enabled;
         }
@@ -190,7 +229,10 @@ pub fn render_coverage_tab(ui: &mut egui::Ui, coverage: &mut CoverageState) {
     ui.separator();
     ui.horizontal(|ui| {
         ui.label("Receiver:");
-        ui.label(format!("{:.4}, {:.4}", coverage.receiver_location.0, coverage.receiver_location.1));
+        ui.label(format!(
+            "{:.4}, {:.4}",
+            coverage.receiver_location.0, coverage.receiver_location.1
+        ));
     });
 }
 
@@ -206,15 +248,20 @@ pub fn render_airspace_tab(
             airspace_data.load_sample_data();
         }
         ui.label(
-            egui::RichText::new("Note: Full implementation requires\nintegration with FAA/OpenAIP data")
-                .size(11.0)
-                .color(egui::Color32::GRAY),
+            egui::RichText::new(
+                "Note: Full implementation requires\nintegration with FAA/OpenAIP data",
+            )
+            .size(11.0)
+            .color(egui::Color32::GRAY),
         );
     } else {
         if let Some(ref source) = airspace_data.source {
             ui.label(format!("Source: {}", source));
         }
-        ui.label(format!("{} airspaces loaded", airspace_data.airspaces.len()));
+        ui.label(format!(
+            "{} airspaces loaded",
+            airspace_data.airspaces.len()
+        ));
         ui.separator();
         ui.label("Display Options:");
         ui.checkbox(&mut display_state.show_class_b, "Class B");
@@ -260,7 +307,11 @@ pub fn render_data_sources_tab(ui: &mut egui::Ui, manager: &mut DataSourceManage
             .unwrap_or_else(|| "Unknown".to_string());
 
         ui.horizontal(|ui| {
-            let enabled_icon = if source.enabled { "\u{25CF}" } else { "\u{25CB}" };
+            let enabled_icon = if source.enabled {
+                "\u{25CF}"
+            } else {
+                "\u{25CB}"
+            };
             ui.label(enabled_icon);
             ui.label(&source.name);
             ui.label(
@@ -286,9 +337,21 @@ pub fn render_export_tab(ui: &mut egui::Ui, export_state: &mut ExportState) {
     egui::ComboBox::from_id_salt("export_format_tab")
         .selected_text(export_state.format.display_name())
         .show_ui(ui, |ui| {
-            ui.selectable_value(&mut export_state.format, ExportFormat::KML, ExportFormat::KML.display_name());
-            ui.selectable_value(&mut export_state.format, ExportFormat::CSV, ExportFormat::CSV.display_name());
-            ui.selectable_value(&mut export_state.format, ExportFormat::GeoJSON, ExportFormat::GeoJSON.display_name());
+            ui.selectable_value(
+                &mut export_state.format,
+                ExportFormat::KML,
+                ExportFormat::KML.display_name(),
+            );
+            ui.selectable_value(
+                &mut export_state.format,
+                ExportFormat::CSV,
+                ExportFormat::CSV.display_name(),
+            );
+            ui.selectable_value(
+                &mut export_state.format,
+                ExportFormat::GeoJSON,
+                ExportFormat::GeoJSON.display_name(),
+            );
         });
 
     ui.add_space(8.0);
@@ -296,15 +359,10 @@ pub fn render_export_tab(ui: &mut egui::Ui, export_state: &mut ExportState) {
 
     let recordings = crate::export::list_available_recordings();
     if recordings.is_empty() {
-        ui.label(
-            egui::RichText::new("No recordings found in tmp/")
-                .color(egui::Color32::GRAY),
-        );
+        ui.label(egui::RichText::new("No recordings found in tmp/").color(egui::Color32::GRAY));
     } else {
         for recording in &recordings {
-            let name = recording.file_name()
-                .unwrap_or_default()
-                .to_string_lossy();
+            let name = recording.file_name().unwrap_or_default().to_string_lossy();
 
             ui.horizontal(|ui| {
                 ui.label(&*name);
@@ -314,13 +372,19 @@ pub fn render_export_tab(ui: &mut egui::Ui, export_state: &mut ExportState) {
                         name.trim_end_matches(".ndjson"),
                         export_state.format.extension()
                     );
-                    let output_path = recording.parent()
+                    let output_path = recording
+                        .parent()
                         .unwrap_or(Path::new("."))
                         .join(&output_name);
 
-                    match crate::export::export_recording(recording, &output_path, export_state.format) {
+                    match crate::export::export_recording(
+                        recording,
+                        &output_path,
+                        export_state.format,
+                    ) {
                         Ok(()) => {
-                            export_state.status_message = Some(format!("Exported to {}", output_name));
+                            export_state.status_message =
+                                Some(format!("Exported to {}", output_name));
                             export_state.last_export_path = Some(output_path);
                         }
                         Err(e) => {
@@ -343,16 +407,32 @@ pub fn render_export_tab(ui: &mut egui::Ui, export_state: &mut ExportState) {
     }
 }
 
-pub fn render_view3d_tab(ui: &mut egui::Ui, state: &mut View3DState, terrain: &mut TerrainState, time_state: &mut TimeState, sun_state: &SunState, mut grid_overlay: Option<&mut GridOverlay>) {
-    ui.colored_label(egui::Color32::YELLOW, "This feature is in research/prototype stage");
+pub fn render_view3d_tab(
+    ui: &mut egui::Ui,
+    state: &mut View3DState,
+    terrain: &mut TerrainState,
+    time_state: &mut TimeState,
+    sun_state: &SunState,
+    mut grid_overlay: Option<&mut GridOverlay>,
+) {
+    ui.colored_label(
+        egui::Color32::YELLOW,
+        "This feature is in research/prototype stage",
+    );
     ui.separator();
 
     ui.horizontal(|ui| {
         ui.label("View Mode:");
-        if ui.selectable_label(state.mode == ViewMode::Map2D, "2D Map").clicked() {
+        if ui
+            .selectable_label(state.mode == ViewMode::Map2D, "2D Map")
+            .clicked()
+        {
             state.mode = ViewMode::Map2D;
         }
-        if ui.selectable_label(state.mode == ViewMode::Perspective3D, "3D View").clicked() {
+        if ui
+            .selectable_label(state.mode == ViewMode::Perspective3D, "3D View")
+            .clicked()
+        {
             state.mode = ViewMode::Perspective3D;
         }
     });
@@ -388,20 +468,23 @@ pub fn render_view3d_tab(ui: &mut egui::Ui, state: &mut View3DState, terrain: &m
         ui.label(
             egui::RichText::new(format!("Nearest: {}", name))
                 .size(11.0)
-                .color(egui::Color32::LIGHT_BLUE)
+                .color(egui::Color32::LIGHT_BLUE),
         );
     } else {
         ui.label(
             egui::RichText::new("No nearby airport detected")
                 .size(11.0)
-                .color(egui::Color32::GRAY)
+                .color(egui::Color32::GRAY),
         );
     }
 
     ui.horizontal(|ui| {
         ui.label("Elevation:");
         let mut elev = state.ground_elevation_ft as f32;
-        if ui.add(egui::Slider::new(&mut elev, 0.0..=15000.0).suffix(" ft")).changed() {
+        if ui
+            .add(egui::Slider::new(&mut elev, 0.0..=15000.0).suffix(" ft"))
+            .changed()
+        {
             state.ground_elevation_ft = elev as i32;
         }
     });
@@ -414,9 +497,11 @@ pub fn render_view3d_tab(ui: &mut egui::Ui, state: &mut View3DState, terrain: &m
     if state.atmosphere_enabled {
         ui.horizontal(|ui| {
             ui.label("Visibility:");
-            ui.add(egui::Slider::new(&mut state.visibility_range, 1000.0..=20000.0)
-                .suffix(" units")
-                .logarithmic(true));
+            ui.add(
+                egui::Slider::new(&mut state.visibility_range, 1000.0..=20000.0)
+                    .suffix(" units")
+                    .logarithmic(true),
+            );
         });
     }
 
@@ -438,7 +523,10 @@ pub fn render_view3d_tab(ui: &mut egui::Ui, state: &mut View3DState, terrain: &m
             ui.horizontal(|ui| {
                 ui.label("Resolution:");
                 egui::ComboBox::from_id_salt("terrain_res")
-                    .selected_text(format!("{}x{}", terrain.mesh_resolution, terrain.mesh_resolution))
+                    .selected_text(format!(
+                        "{}x{}",
+                        terrain.mesh_resolution, terrain.mesh_resolution
+                    ))
                     .show_ui(ui, |ui| {
                         ui.selectable_value(&mut terrain.mesh_resolution, 16, "16x16");
                         ui.selectable_value(&mut terrain.mesh_resolution, 32, "32x32");
@@ -464,8 +552,12 @@ pub fn render_recording_tab(
                 recording.stop();
             }
             ui.label(
-                egui::RichText::new(format!("{} frames | {}s", recording.frame_count, recording.duration_secs()))
-                    .color(egui::Color32::LIGHT_RED),
+                egui::RichText::new(format!(
+                    "{} frames | {}s",
+                    recording.frame_count,
+                    recording.duration_secs()
+                ))
+                .color(egui::Color32::LIGHT_RED),
             );
         } else {
             if ui.button("Record").clicked() {
@@ -479,9 +571,12 @@ pub fn render_recording_tab(
     if let Some(ref path) = recording.file_path {
         if !recording.is_recording {
             ui.label(
-                egui::RichText::new(format!("Last: {}", path.file_name().unwrap_or_default().to_string_lossy()))
-                    .size(10.0)
-                    .color(egui::Color32::GRAY),
+                egui::RichText::new(format!(
+                    "Last: {}",
+                    path.file_name().unwrap_or_default().to_string_lossy()
+                ))
+                .size(10.0)
+                .color(egui::Color32::GRAY),
             );
         }
     }
@@ -512,7 +607,10 @@ pub fn render_recording_tab(
             ui.label("Speed:");
             for speed in [0.5, 1.0, 2.0, 4.0] {
                 let label = format!("{}x", speed);
-                if ui.selectable_label((playback.speed - speed).abs() < 0.01, &label).clicked() {
+                if ui
+                    .selectable_label((playback.speed - speed).abs() < 0.01, &label)
+                    .clicked()
+                {
                     playback.speed = speed;
                 }
             }
@@ -525,9 +623,12 @@ pub fn render_recording_tab(
 
             let current_secs = playback.current_time_ms / 1000;
             let total_secs = playback.total_duration_ms / 1000;
-            ui.label(format!("{}:{:02} / {}:{:02}",
-                current_secs / 60, current_secs % 60,
-                total_secs / 60, total_secs % 60
+            ui.label(format!(
+                "{}:{:02} / {}:{:02}",
+                current_secs / 60,
+                current_secs % 60,
+                total_secs / 60,
+                total_secs % 60
             ));
         }
     } else {
@@ -539,7 +640,10 @@ pub fn render_recording_tab(
                     let recordings: Vec<_> = entries
                         .filter_map(|e| e.ok())
                         .filter(|e| {
-                            e.path().extension().map(|ext| ext == "ndjson").unwrap_or(false)
+                            e.path()
+                                .extension()
+                                .map(|ext| ext == "ndjson")
+                                .unwrap_or(false)
                         })
                         .collect();
 
@@ -599,19 +703,32 @@ pub fn render_ingest_tab(
             .default_open(true)
             .show(ui, |ui| {
                 for entry in &entries {
-                    let provider_config = get_provider_config_mut(&mut app_config.data_ingest, entry.config_key);
+                    let provider_config =
+                        get_provider_config_mut(&mut app_config.data_ingest, entry.config_key);
 
                     // Status indicator from live IngestStatus (if available)
                     let status_info = ingest_status.and_then(|s| {
-                        s.providers.iter().find(|p| p.config_key == entry.config_key)
+                        s.providers
+                            .iter()
+                            .find(|p| p.config_key == entry.config_key)
                     });
 
                     let (status_color, status_text) = match status_info.map(|s| &s.status) {
-                        Some(ProviderStatus::Idle) | None => (egui::Color32::GRAY, "Idle".to_string()),
-                        Some(ProviderStatus::Fetching) => (egui::Color32::YELLOW, "Fetching...".to_string()),
-                        Some(ProviderStatus::Ok { last_success, record_count }) => {
+                        Some(ProviderStatus::Idle) | None => {
+                            (egui::Color32::GRAY, "Idle".to_string())
+                        }
+                        Some(ProviderStatus::Fetching) => {
+                            (egui::Color32::YELLOW, "Fetching...".to_string())
+                        }
+                        Some(ProviderStatus::Ok {
+                            last_success,
+                            record_count,
+                        }) => {
                             let time = last_success.format("%H:%M").to_string();
-                            (egui::Color32::GREEN, format!("{} ({} records)", time, record_count))
+                            (
+                                egui::Color32::GREEN,
+                                format!("{} ({} records)", time, record_count),
+                            )
                         }
                         Some(ProviderStatus::Error { message, .. }) => {
                             (egui::Color32::RED, format!("Error: {}", message))
@@ -628,14 +745,16 @@ pub fn render_ingest_tab(
 
                         // Play button for on-demand fetch
                         if provider_config.enabled {
-                            let play_btn = ui.add(
-                                egui::Button::new(
-                                    egui::RichText::new("\u{25B6}")
-                                        .size(12.0)
-                                        .color(egui::Color32::from_rgb(80, 200, 80)),
+                            let play_btn = ui
+                                .add(
+                                    egui::Button::new(
+                                        egui::RichText::new("\u{25B6}")
+                                            .size(12.0)
+                                            .color(egui::Color32::from_rgb(80, 200, 80)),
+                                    )
+                                    .min_size(egui::vec2(20.0, 16.0)),
                                 )
-                                .min_size(egui::vec2(20.0, 16.0))
-                            ).on_hover_text("Run now");
+                                .on_hover_text("Run now");
 
                             if play_btn.clicked() {
                                 fetch_keys.push(entry.config_key.to_string());
@@ -662,7 +781,8 @@ pub fn render_ingest_tab(
                             );
 
                             // Schedule selector
-                            let current_preset = SchedulePreset::from_cron(&provider_config.schedule);
+                            let current_preset =
+                                SchedulePreset::from_cron(&provider_config.schedule);
                             ui.horizontal(|ui| {
                                 ui.label("Schedule:");
                                 let combo_id = format!("schedule_{}", entry.config_key);
@@ -673,8 +793,15 @@ pub fn render_ingest_tab(
                                             if *preset == SchedulePreset::Custom {
                                                 continue; // custom shown via text field below
                                             }
-                                            if ui.selectable_label(current_preset == *preset, preset.display_name()).clicked() {
-                                                provider_config.schedule = preset.to_cron().to_string();
+                                            if ui
+                                                .selectable_label(
+                                                    current_preset == *preset,
+                                                    preset.display_name(),
+                                                )
+                                                .clicked()
+                                            {
+                                                provider_config.schedule =
+                                                    preset.to_cron().to_string();
                                                 changed = true;
                                             }
                                         }
@@ -685,7 +812,10 @@ pub fn render_ingest_tab(
                             if current_preset == SchedulePreset::Custom {
                                 ui.horizontal(|ui| {
                                     ui.label("Cron:");
-                                    if ui.text_edit_singleline(&mut provider_config.schedule).lost_focus() {
+                                    if ui
+                                        .text_edit_singleline(&mut provider_config.schedule)
+                                        .lost_focus()
+                                    {
                                         changed = true;
                                     }
                                 });
@@ -695,19 +825,31 @@ pub fn render_ingest_tab(
                             if entry.needs_credentials {
                                 ui.add_space(4.0);
                                 let mut key = provider_config.api_key.clone().unwrap_or_default();
-                                let mut secret = provider_config.api_secret.clone().unwrap_or_default();
+                                let mut secret =
+                                    provider_config.api_secret.clone().unwrap_or_default();
 
                                 ui.horizontal(|ui| {
                                     ui.label("API Key:");
                                     if ui.text_edit_singleline(&mut key).lost_focus() {
-                                        provider_config.api_key = if key.is_empty() { None } else { Some(key.clone()) };
+                                        provider_config.api_key = if key.is_empty() {
+                                            None
+                                        } else {
+                                            Some(key.clone())
+                                        };
                                         changed = true;
                                     }
                                 });
                                 ui.horizontal(|ui| {
                                     ui.label("API Secret:");
-                                    if ui.add(egui::TextEdit::singleline(&mut secret).password(true)).lost_focus() {
-                                        provider_config.api_secret = if secret.is_empty() { None } else { Some(secret.clone()) };
+                                    if ui
+                                        .add(egui::TextEdit::singleline(&mut secret).password(true))
+                                        .lost_focus()
+                                    {
+                                        provider_config.api_secret = if secret.is_empty() {
+                                            None
+                                        } else {
+                                            Some(secret.clone())
+                                        };
                                         changed = true;
                                     }
                                 });
@@ -847,9 +989,9 @@ fn get_provider_config_mut<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use egui_kittest::{Harness, kittest::Queryable};
     use crate::coverage::CoverageState;
     use crate::view3d::{View3DState, ViewMode};
+    use egui_kittest::{kittest::Queryable, Harness};
 
     /// Bundled state for view3d tab tests since render_view3d_tab now
     /// requires View3DState, TimeState, and SunState parameters.
@@ -899,7 +1041,14 @@ mod tests {
     fn test_view3d_tab_shows_pitch_label() {
         let harness = Harness::new_ui_state(
             |ui, state: &mut View3DTabTestState| {
-                render_view3d_tab(ui, &mut state.view3d, &mut state.terrain, &mut state.time, &state.sun, None);
+                render_view3d_tab(
+                    ui,
+                    &mut state.view3d,
+                    &mut state.terrain,
+                    &mut state.time,
+                    &state.sun,
+                    None,
+                );
             },
             View3DTabTestState::default(),
         );
@@ -911,7 +1060,14 @@ mod tests {
     fn test_view3d_tab_shows_altitude_label() {
         let harness = Harness::new_ui_state(
             |ui, state: &mut View3DTabTestState| {
-                render_view3d_tab(ui, &mut state.view3d, &mut state.terrain, &mut state.time, &state.sun, None);
+                render_view3d_tab(
+                    ui,
+                    &mut state.view3d,
+                    &mut state.terrain,
+                    &mut state.time,
+                    &state.sun,
+                    None,
+                );
             },
             View3DTabTestState::default(),
         );
@@ -923,7 +1079,14 @@ mod tests {
     fn test_view3d_tab_shows_mode_selectable_labels() {
         let harness = Harness::new_ui_state(
             |ui, state: &mut View3DTabTestState| {
-                render_view3d_tab(ui, &mut state.view3d, &mut state.terrain, &mut state.time, &state.sun, None);
+                render_view3d_tab(
+                    ui,
+                    &mut state.view3d,
+                    &mut state.terrain,
+                    &mut state.time,
+                    &state.sun,
+                    None,
+                );
             },
             View3DTabTestState::default(),
         );

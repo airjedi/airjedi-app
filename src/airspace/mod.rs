@@ -93,9 +93,9 @@ impl AirspaceClass {
             AirspaceClass::Restricted => Color::srgba(1.0, 0.0, 0.0, 0.3), // Red
             AirspaceClass::Prohibited => Color::srgba(0.8, 0.0, 0.0, 0.4), // Dark red
             AirspaceClass::Warning => Color::srgba(1.0, 0.5, 0.0, 0.3), // Orange
-            AirspaceClass::MOA => Color::srgba(0.6, 0.3, 0.0, 0.2), // Brown
-            AirspaceClass::Alert => Color::srgba(1.0, 1.0, 0.0, 0.2), // Yellow
-            AirspaceClass::TFR => Color::srgba(1.0, 0.0, 0.0, 0.4), // Red, prominent
+            AirspaceClass::MOA => Color::srgba(0.6, 0.3, 0.0, 0.2),    // Brown
+            AirspaceClass::Alert => Color::srgba(1.0, 1.0, 0.0, 0.2),  // Yellow
+            AirspaceClass::TFR => Color::srgba(1.0, 0.0, 0.0, 0.4),    // Red, prominent
         }
     }
 }
@@ -198,7 +198,12 @@ impl Airspace {
 }
 
 /// Generate a circular polygon approximation from a center point and radius in nm.
-fn generate_circle(center_lat: f64, center_lon: f64, radius_nm: f64, segments: usize) -> Vec<AirspacePoint> {
+fn generate_circle(
+    center_lat: f64,
+    center_lon: f64,
+    radius_nm: f64,
+    segments: usize,
+) -> Vec<AirspacePoint> {
     let mut points = Vec::with_capacity(segments + 1);
     let deg_per_nm_lat = 1.0 / 60.0;
     let deg_per_nm_lon = 1.0 / (60.0 * center_lat.to_radians().cos());
@@ -206,7 +211,10 @@ fn generate_circle(center_lat: f64, center_lon: f64, radius_nm: f64, segments: u
         let angle = 2.0 * std::f64::consts::PI * (i as f64) / (segments as f64);
         let lat = center_lat + radius_nm * deg_per_nm_lat * angle.cos();
         let lon = center_lon + radius_nm * deg_per_nm_lon * angle.sin();
-        points.push(AirspacePoint { latitude: lat, longitude: lon });
+        points.push(AirspacePoint {
+            latitude: lat,
+            longitude: lon,
+        });
     }
     points
 }
@@ -234,7 +242,10 @@ impl AirspaceData {
     pub fn load_from_file(&mut self, _path: &std::path::Path) -> Result<(), String> {
         // Stub implementation
         warn!("Airspace loading not yet implemented");
-        Err("Airspace loading not yet implemented. Data sources to consider: OpenAIP, FAA NASR".to_string())
+        Err(
+            "Airspace loading not yet implemented. Data sources to consider: OpenAIP, FAA NASR"
+                .to_string(),
+        )
     }
 
     /// Load sample airspace data for testing - realistic KICT Class C tiers.
@@ -268,12 +279,18 @@ impl AirspaceData {
         self.loaded = true;
         self.dirty = true;
         self.source = Some("Sample Data (KICT)".to_string());
-        info!("Loaded {} sample airspace definitions", self.airspaces.len());
+        info!(
+            "Loaded {} sample airspace definitions",
+            self.airspaces.len()
+        );
     }
 
     /// Find airspaces containing a point
     pub fn find_at_point(&self, lat: f64, lon: f64) -> Vec<&Airspace> {
-        self.airspaces.iter().filter(|a| a.contains_point(lat, lon)).collect()
+        self.airspaces
+            .iter()
+            .filter(|a| a.contains_point(lat, lon))
+            .collect()
     }
 }
 
@@ -392,7 +409,14 @@ pub fn toggle_airspace_display(
     if keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight) {
         if keyboard.just_pressed(KeyCode::KeyA) {
             display_state.enabled = !display_state.enabled;
-            info!("Airspace display: {}", if display_state.enabled { "enabled" } else { "disabled" });
+            info!(
+                "Airspace display: {}",
+                if display_state.enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                }
+            );
         }
     }
 }
@@ -426,15 +450,20 @@ pub fn render_airspace_panel(
                 }
 
                 ui.label(
-                    egui::RichText::new("Note: Full implementation requires\nintegration with FAA/OpenAIP data")
-                        .size(11.0)
-                        .color(egui::Color32::GRAY)
+                    egui::RichText::new(
+                        "Note: Full implementation requires\nintegration with FAA/OpenAIP data",
+                    )
+                    .size(11.0)
+                    .color(egui::Color32::GRAY),
                 );
             } else {
                 if let Some(ref source) = airspace_data.source {
                     ui.label(format!("Source: {}", source));
                 }
-                ui.label(format!("{} airspaces loaded", airspace_data.airspaces.len()));
+                ui.label(format!(
+                    "{} airspaces loaded",
+                    airspace_data.airspaces.len()
+                ));
 
                 ui.separator();
                 ui.label("Display Options:");
@@ -471,7 +500,10 @@ pub fn consume_airspace_data(
             .collect();
 
         if !airspaces.is_empty() {
-            info!("Loaded {} airspace definitions from data ingest", airspaces.len());
+            info!(
+                "Loaded {} airspace definitions from data ingest",
+                airspaces.len()
+            );
             airspace_data.airspaces = airspaces;
             airspace_data.loaded = true;
             airspace_data.dirty = true;
@@ -536,7 +568,10 @@ fn build_wall_mesh(
 ) -> Mesh {
     let n = boundary.len();
     if n < 3 {
-        return Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+        return Mesh::new(
+            PrimitiveTopology::TriangleList,
+            RenderAssetUsages::default(),
+        );
     }
 
     // Pre-compute 2D positions for all boundary points
@@ -632,7 +667,10 @@ fn build_wall_mesh(
         indices.push(bot_center_idx + 1 + i as u32);
     }
 
-    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
@@ -641,13 +679,13 @@ fn build_wall_mesh(
 }
 
 /// Build a flat polygon mesh for 2D map rendering.
-fn build_flat_polygon_mesh(
-    boundary: &[AirspacePoint],
-    converter: &CoordinateConverter,
-) -> Mesh {
+fn build_flat_polygon_mesh(boundary: &[AirspacePoint], converter: &CoordinateConverter) -> Mesh {
     let n = boundary.len();
     if n < 3 {
-        return Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+        return Mesh::new(
+            PrimitiveTopology::TriangleList,
+            RenderAssetUsages::default(),
+        );
     }
 
     // Simple fan triangulation from centroid
@@ -682,7 +720,10 @@ fn build_flat_polygon_mesh(
         indices.push((j + 1) as u32);
     }
 
-    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
@@ -789,16 +830,17 @@ pub fn update_airspace_meshes(
         airspace_data.dirty = false;
     }
 
-    let despawn_all = |commands: &mut Commands,
-                       existing_query: &Query<(Entity, &AirspaceMeshMarker)>,
-                       outline_query: &Query<(Entity, &AirspaceOutlineMarker)>| {
-        for (entity, _) in existing_query.iter() {
-            commands.entity(entity).despawn();
-        }
-        for (entity, _) in outline_query.iter() {
-            commands.entity(entity).despawn();
-        }
-    };
+    let despawn_all =
+        |commands: &mut Commands,
+         existing_query: &Query<(Entity, &AirspaceMeshMarker)>,
+         outline_query: &Query<(Entity, &AirspaceOutlineMarker)>| {
+            for (entity, _) in existing_query.iter() {
+                commands.entity(entity).despawn();
+            }
+            for (entity, _) in outline_query.iter() {
+                commands.entity(entity).despawn();
+            }
+        };
 
     if !display_state.enabled {
         despawn_all(&mut commands, &existing_query, &outline_query);
@@ -836,7 +878,9 @@ pub fn update_airspace_meshes(
     let visible_ids: std::collections::HashSet<&str> = airspace_data
         .airspaces
         .iter()
-        .filter(|a| display_state.is_class_visible(&a.class) && is_in_range(a, camera_lat, camera_lon))
+        .filter(|a| {
+            display_state.is_class_visible(&a.class) && is_in_range(a, camera_lat, camera_lon)
+        })
         .map(|a| a.id.as_str())
         .collect();
 
@@ -856,7 +900,11 @@ pub fn update_airspace_meshes(
     // Spawn meshes for newly visible airspaces
     trace!(
         "Airspace refresh: {} airspaces, camera ({:.4}, {:.4}), is_3d={}, spawned={}",
-        airspace_data.airspaces.len(), camera_lat, camera_lon, is_3d, spawned.ids.len()
+        airspace_data.airspaces.len(),
+        camera_lat,
+        camera_lon,
+        is_3d,
+        spawned.ids.len()
     );
     for airspace in &airspace_data.airspaces {
         if spawned.ids.contains(&airspace.id) {
@@ -915,7 +963,8 @@ pub fn update_airspace_meshes(
             ));
 
             // Spawn outline as a line mesh on the same render layer
-            let outline_mesh = build_outline_mesh(&airspace.boundary, floor_z, ceiling_z, &converter);
+            let outline_mesh =
+                build_outline_mesh(&airspace.boundary, floor_z, ceiling_z, &converter);
             let mut outline_color = airspace.class.color();
             outline_color.set_alpha((display_state.opacity * 3.0).min(0.6));
             let outline_material = materials.add(StandardMaterial {
@@ -942,10 +991,12 @@ pub fn update_airspace_meshes(
         }
 
         spawned.ids.insert(airspace.id.clone());
-        debug!("  Spawned airspace mesh: {} (floor={} ceil={} is_3d={})", airspace.id, floor_ft, ceiling_ft, is_3d);
+        debug!(
+            "  Spawned airspace mesh: {} (floor={} ceil={} is_3d={})",
+            airspace.id, floor_ft, ceiling_ft, is_3d
+        );
     }
 }
-
 
 /// Draw airspace boundaries as gizmo lines in 2D mode.
 pub fn draw_airspace_gizmos(
@@ -1022,12 +1073,15 @@ impl Plugin for AirspacePlugin {
             .init_resource::<AirspaceDisplayState>()
             .init_resource::<SpawnedAirspaces>()
             .init_resource::<AirspaceRefreshTimer>()
-            .add_systems(Update, (
-                toggle_airspace_display,
-                consume_airspace_data,
-                update_airspace_meshes,
-                draw_airspace_gizmos,
-            ));
+            .add_systems(
+                Update,
+                (
+                    toggle_airspace_display,
+                    consume_airspace_data,
+                    update_airspace_meshes,
+                    draw_airspace_gizmos,
+                ),
+            );
         // Airspace panel is rendered via the consolidated Tools window (tools_window.rs)
     }
 }

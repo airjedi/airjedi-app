@@ -8,7 +8,6 @@
 ///
 /// Bundle detection (`is_bundled`, `assets_dir`) is still used for Bevy's
 /// AssetPlugin, which needs to find `assets/` relative to the executable.
-
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -31,7 +30,9 @@ fn init(paths: AppPaths) {
 }
 
 fn get_paths() -> &'static AppPaths {
-    PATHS.get().expect("paths::init was not called before accessing paths")
+    PATHS
+        .get()
+        .expect("paths::init was not called before accessing paths")
 }
 
 /// Build default OS-standard paths for the current platform.
@@ -299,7 +300,8 @@ mod tests {
         let paths = parse_args(vec![
             "--base-dir".to_string(),
             "/tmp/airjedi-test".to_string(),
-        ]).unwrap();
+        ])
+        .unwrap();
         assert_eq!(paths.config, PathBuf::from("/tmp/airjedi-test/config"));
         assert_eq!(paths.cache, PathBuf::from("/tmp/airjedi-test/cache"));
         assert_eq!(paths.data, PathBuf::from("/tmp/airjedi-test/data"));
@@ -311,7 +313,8 @@ mod tests {
         let paths = parse_args(vec![
             "--config-dir".to_string(),
             "/tmp/my-config".to_string(),
-        ]).unwrap();
+        ])
+        .unwrap();
         assert_eq!(paths.config, PathBuf::from("/tmp/my-config"));
         let defaults = os_defaults();
         assert_eq!(paths.cache, defaults.cache);
@@ -324,7 +327,8 @@ mod tests {
             "/tmp/base".to_string(),
             "--config-dir".to_string(),
             "/tmp/special-config".to_string(),
-        ]).unwrap();
+        ])
+        .unwrap();
         assert_eq!(paths.config, PathBuf::from("/tmp/special-config"));
         assert_eq!(paths.cache, PathBuf::from("/tmp/base/cache"));
     }
@@ -332,11 +336,16 @@ mod tests {
     #[test]
     fn test_parse_args_all_individual_overrides() {
         let paths = parse_args(vec![
-            "--config-dir".to_string(), "/tmp/c".to_string(),
-            "--cache-dir".to_string(), "/tmp/ca".to_string(),
-            "--data-dir".to_string(), "/tmp/d".to_string(),
-            "--log-dir".to_string(), "/tmp/l".to_string(),
-        ]).unwrap();
+            "--config-dir".to_string(),
+            "/tmp/c".to_string(),
+            "--cache-dir".to_string(),
+            "/tmp/ca".to_string(),
+            "--data-dir".to_string(),
+            "/tmp/d".to_string(),
+            "--log-dir".to_string(),
+            "/tmp/l".to_string(),
+        ])
+        .unwrap();
         assert_eq!(paths.config, PathBuf::from("/tmp/c"));
         assert_eq!(paths.cache, PathBuf::from("/tmp/ca"));
         assert_eq!(paths.data, PathBuf::from("/tmp/d"));

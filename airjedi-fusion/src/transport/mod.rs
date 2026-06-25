@@ -2,8 +2,8 @@ pub mod messages;
 #[cfg(feature = "nats")]
 pub mod nats;
 
-use std::time::Duration;
 use crate::sensor::FusionTier;
+use std::time::Duration;
 
 #[derive(Debug, Clone)]
 pub struct NatsTransportConfig {

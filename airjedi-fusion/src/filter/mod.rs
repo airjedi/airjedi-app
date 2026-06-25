@@ -1,12 +1,12 @@
 pub mod ekf;
 pub mod oosm;
 
-use crate::prelude_imports::*;
-use nalgebra::{DMatrix, DVector};
-use std::collections::VecDeque;
 use crate::coord;
+use crate::prelude_imports::*;
 use crate::sensor::SensorObservation;
 use crate::types::{StateVectorType, Timestamp};
+use nalgebra::{DMatrix, DVector};
+use std::collections::VecDeque;
 
 #[derive(Debug, Clone)]
 pub struct Innovation {

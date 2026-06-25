@@ -3,12 +3,11 @@
 /// Renders a compact heads-up display in the top-right corner of the map viewport
 /// showing compass heading, pitch/tilt, and altitude. Only visible in 3D mode
 /// when enabled (toggle with H key).
-
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 
 use crate::dock::DockTreeState;
-use crate::theme::{AppTheme, to_egui_color32, to_egui_color32_alpha};
+use crate::theme::{to_egui_color32, to_egui_color32_alpha, AppTheme};
 use crate::view3d::View3DState;
 
 #[derive(Resource)]
@@ -139,13 +138,16 @@ fn paint_compass(
     accent_color: egui::Color32,
 ) {
     let size = COMPASS_RADIUS * 2.0 + 8.0;
-    let (response, painter) =
-        ui.allocate_painter(egui::vec2(size, size), egui::Sense::hover());
+    let (response, painter) = ui.allocate_painter(egui::vec2(size, size), egui::Sense::hover());
     let center = response.rect.center();
     let r = COMPASS_RADIUS;
 
     // Background circle
-    painter.circle_filled(center, r, egui::Color32::from_rgba_unmultiplied(0, 0, 0, 80));
+    painter.circle_filled(
+        center,
+        r,
+        egui::Color32::from_rgba_unmultiplied(0, 0, 0, 80),
+    );
     painter.circle_stroke(center, r, egui::Stroke::new(1.0, dim_color));
 
     // Fixed heading reference tick at top
@@ -165,13 +167,13 @@ fn paint_compass(
 
     for (label, bearing) in cardinals {
         let effective = bearing.to_radians() - yaw.to_radians();
-        let pos = center
-            + egui::vec2(
-                r * 0.7 * effective.sin(),
-                -r * 0.7 * effective.cos(),
-            );
+        let pos = center + egui::vec2(r * 0.7 * effective.sin(), -r * 0.7 * effective.cos());
 
-        let color = if label == "N" { accent_color } else { text_color };
+        let color = if label == "N" {
+            accent_color
+        } else {
+            text_color
+        };
         let font_size = if label == "N" { 11.0 } else { 9.0 };
         painter.text(
             pos,
@@ -182,17 +184,10 @@ fn paint_compass(
         );
 
         // Tick mark at the edge
-        let tick_inner = center
-            + egui::vec2(
-                (r - 4.0) * effective.sin(),
-                -(r - 4.0) * effective.cos(),
-            );
-        let tick_outer = center
-            + egui::vec2(r * effective.sin(), -r * effective.cos());
-        painter.line_segment(
-            [tick_inner, tick_outer],
-            egui::Stroke::new(1.5, color),
-        );
+        let tick_inner =
+            center + egui::vec2((r - 4.0) * effective.sin(), -(r - 4.0) * effective.cos());
+        let tick_outer = center + egui::vec2(r * effective.sin(), -r * effective.cos());
+        painter.line_segment([tick_inner, tick_outer], egui::Stroke::new(1.5, color));
     }
 
     // Minor ticks every 30 degrees (skip cardinals)
@@ -202,17 +197,10 @@ fn paint_compass(
             continue;
         }
         let effective = bearing.to_radians() - yaw.to_radians();
-        let tick_inner = center
-            + egui::vec2(
-                (r - 3.0) * effective.sin(),
-                -(r - 3.0) * effective.cos(),
-            );
-        let tick_outer = center
-            + egui::vec2(r * effective.sin(), -r * effective.cos());
-        painter.line_segment(
-            [tick_inner, tick_outer],
-            egui::Stroke::new(1.0, dim_color),
-        );
+        let tick_inner =
+            center + egui::vec2((r - 3.0) * effective.sin(), -(r - 3.0) * effective.cos());
+        let tick_outer = center + egui::vec2(r * effective.sin(), -r * effective.cos());
+        painter.line_segment([tick_inner, tick_outer], egui::Stroke::new(1.0, dim_color));
     }
 }
 
@@ -254,10 +242,8 @@ fn paint_horizon(
     // Ground region (below horizon)
     let ground_color = egui::Color32::from_rgba_unmultiplied(80, 60, 40, 100);
     if horizon_y < rect.bottom() {
-        let ground_rect = egui::Rect::from_min_max(
-            egui::pos2(rect.left(), horizon_y.max(rect.top())),
-            rect.max,
-        );
+        let ground_rect =
+            egui::Rect::from_min_max(egui::pos2(rect.left(), horizon_y.max(rect.top())), rect.max);
         painter.rect_filled(ground_rect, egui::CornerRadius::ZERO, ground_color);
     }
 

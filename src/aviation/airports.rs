@@ -2,9 +2,9 @@ use bevy::prelude::*;
 use bevy_slippy_tiles::*;
 
 use super::{Airport, AirportFilter, AviationData, LoadingState};
-use crate::MapState;
 use crate::constants;
-use crate::geo::{CoordinateConverter, haversine_distance_nm};
+use crate::geo::{haversine_distance_nm, CoordinateConverter};
+use crate::MapState;
 
 /// Component marking an airport entity
 #[derive(Component)]
@@ -121,11 +121,8 @@ pub fn update_airport_positions(
     };
 
     // Build a lookup map for airports
-    let airport_map: std::collections::HashMap<i64, &Airport> = aviation_data
-        .airports
-        .iter()
-        .map(|a| (a.id, a))
-        .collect();
+    let airport_map: std::collections::HashMap<i64, &Airport> =
+        aviation_data.airports.iter().map(|a| (a.id, a)).collect();
 
     for (marker, mut transform) in airport_query.iter_mut() {
         if let Some(airport) = airport_map.get(&marker.airport_id) {
@@ -158,11 +155,8 @@ pub fn update_airport_visibility(
     let center_lon = map_state.longitude;
 
     // Build a lookup map for airport coordinates
-    let airport_map: std::collections::HashMap<i64, &Airport> = aviation_data
-        .airports
-        .iter()
-        .map(|a| (a.id, a))
-        .collect();
+    let airport_map: std::collections::HashMap<i64, &Airport> =
+        aviation_data.airports.iter().map(|a| (a.id, a)).collect();
 
     for (marker, mut visibility) in airport_query.iter_mut() {
         let in_range = if let Some(airport) = airport_map.get(&marker.airport_id) {

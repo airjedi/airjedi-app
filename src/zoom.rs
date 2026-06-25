@@ -5,12 +5,12 @@ use bevy::prelude::*;
 use bevy_egui::EguiContexts;
 use bevy_slippy_tiles::*;
 
+use crate::camera::MapCamera;
 use crate::constants::{self, ZOOM_DOWNGRADE_THRESHOLD, ZOOM_UPGRADE_THRESHOLD};
 use crate::dock;
 use crate::map::{MapState, ZoomState};
-use crate::view3d;
 use crate::tiles::{request_tiles_at_location, SpawnedTiles, TileFadeState};
-use crate::camera::MapCamera;
+use crate::view3d;
 use crate::{clamp_latitude, clamp_longitude, ZoomDebugLogger};
 
 pub(crate) struct ZoomPlugin;
@@ -32,12 +32,8 @@ impl Plugin for ZoomPlugin {
 /// Returns positive for zoom in, negative for zoom out.
 fn calculate_zoom_delta(event: &MouseWheel) -> f32 {
     match event.unit {
-        bevy::input::mouse::MouseScrollUnit::Line => {
-            event.y * constants::ZOOM_SENSITIVITY_LINE
-        }
-        bevy::input::mouse::MouseScrollUnit::Pixel => {
-            event.y * constants::ZOOM_SENSITIVITY_PIXEL
-        }
+        bevy::input::mouse::MouseScrollUnit::Line => event.y * constants::ZOOM_SENSITIVITY_LINE,
+        bevy::input::mouse::MouseScrollUnit::Pixel => event.y * constants::ZOOM_SENSITIVITY_PIXEL,
     }
 }
 
@@ -240,8 +236,16 @@ pub(crate) fn handle_zoom(
     for event in scroll_events.read() {
         log_info!("=== SCROLL EVENT START ===");
         log_info!("Event: unit={:?}, y={}", event.unit, event.y);
-        log_info!("Before: camera_zoom={}, zoom_level={}", zoom_state.camera_zoom, map_state.zoom_level.to_u8());
-        log_info!("Before: map center=({:.6}, {:.6})", map_state.latitude, map_state.longitude);
+        log_info!(
+            "Before: camera_zoom={}, zoom_level={}",
+            zoom_state.camera_zoom,
+            map_state.zoom_level.to_u8()
+        );
+        log_info!(
+            "Before: map center=({:.6}, {:.6})",
+            map_state.latitude,
+            map_state.longitude
+        );
 
         // === Calculate zoom delta from scroll event ===
         let zoom_delta = calculate_zoom_delta(event);
@@ -254,7 +258,11 @@ pub(crate) fn handle_zoom(
             continue;
         };
 
-        log_info!("Cursor position: ({:.2}, {:.2})", cursor_viewport_pos.x, cursor_viewport_pos.y);
+        log_info!(
+            "Cursor position: ({:.2}, {:.2})",
+            cursor_viewport_pos.x,
+            cursor_viewport_pos.y
+        );
 
         // Save old camera zoom BEFORE applying scroll zoom (needed for zoom-to-cursor)
         let camera_zoom_before_scroll = zoom_state.camera_zoom;
@@ -262,10 +270,14 @@ pub(crate) fn handle_zoom(
         // Update camera zoom (multiplicative for smooth feel)
         // Positive scroll (up/forward) = zoom in, negative = zoom out
         let zoom_factor = 1.0 + zoom_delta;
-        let new_camera_zoom = (zoom_state.camera_zoom * zoom_factor)
-            .clamp(zoom_state.min_zoom, zoom_state.max_zoom);
+        let new_camera_zoom =
+            (zoom_state.camera_zoom * zoom_factor).clamp(zoom_state.min_zoom, zoom_state.max_zoom);
 
-        log_info!("Camera zoom: {} -> {}", zoom_state.camera_zoom, new_camera_zoom);
+        log_info!(
+            "Camera zoom: {} -> {}",
+            zoom_state.camera_zoom,
+            new_camera_zoom
+        );
         zoom_state.camera_zoom = new_camera_zoom;
 
         // === Check for zoom level transitions ===
@@ -273,14 +285,21 @@ pub(crate) fn handle_zoom(
             check_zoom_level_transition(&mut zoom_state, &mut map_state);
 
         if zoom_level_changed {
-            log_info!("*** ZOOM LEVEL TRANSITION: {} -> {} ***",
-                old_tile_zoom.to_u8(), map_state.zoom_level.to_u8());
+            log_info!(
+                "*** ZOOM LEVEL TRANSITION: {} -> {} ***",
+                old_tile_zoom.to_u8(),
+                map_state.zoom_level.to_u8()
+            );
         }
 
         // === Calculate new center (zoom-to-cursor) ===
         log_info!("--- Zoom-to-cursor calculation ---");
-        log_info!("  old_zoom_level={}, new_zoom_level={}, zoom_level_changed={}",
-            old_tile_zoom.to_u8(), map_state.zoom_level.to_u8(), zoom_level_changed);
+        log_info!(
+            "  old_zoom_level={}, new_zoom_level={}, zoom_level_changed={}",
+            old_tile_zoom.to_u8(),
+            map_state.zoom_level.to_u8(),
+            zoom_level_changed
+        );
 
         let old_lat = map_state.latitude;
         let old_lon = map_state.longitude;
@@ -295,7 +314,13 @@ pub(crate) fn handle_zoom(
         );
         map_state.latitude = clamp_latitude(new_lat);
         map_state.longitude = clamp_longitude(new_lon);
-        log_info!("  Map center updated: ({:.6}, {:.6}) -> ({:.6}, {:.6})", old_lat, old_lon, map_state.latitude, map_state.longitude);
+        log_info!(
+            "  Map center updated: ({:.6}, {:.6}) -> ({:.6}, {:.6})",
+            old_lat,
+            old_lon,
+            map_state.latitude,
+            map_state.longitude
+        );
 
         // === Handle zoom level transition (scale old tiles, request new) ===
         if zoom_level_changed {
@@ -307,11 +332,16 @@ pub(crate) fn handle_zoom(
                 &mut download_events,
                 &mut download_status,
             );
-            log_info!("  Requested new tiles at zoom level {}", map_state.zoom_level.to_u8());
+            log_info!(
+                "  Requested new tiles at zoom level {}",
+                map_state.zoom_level.to_u8()
+            );
         }
 
-        log_info!("=== SCROLL EVENT END ===
-");
+        log_info!(
+            "=== SCROLL EVENT END ===
+"
+        );
     }
 }
 
@@ -359,8 +389,8 @@ pub(crate) fn handle_pinch_zoom(
 
         // Apply pinch directly as a multiplicative factor
         let zoom_factor = 1.0 + event.0;
-        zoom_state.camera_zoom = (zoom_state.camera_zoom * zoom_factor)
-            .clamp(zoom_state.min_zoom, zoom_state.max_zoom);
+        zoom_state.camera_zoom =
+            (zoom_state.camera_zoom * zoom_factor).clamp(zoom_state.min_zoom, zoom_state.max_zoom);
 
         // Zoom-to-cursor: keep the point under cursor stationary
         if let Some(cursor_viewport_pos) = window.cursor_position() {

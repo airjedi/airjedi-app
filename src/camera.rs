@@ -138,7 +138,7 @@ fn update_camera_position(
         let reference_pixel = world_coords_to_world_pixel(
             &reference_ll,
             crate::constants::DEFAULT_TILE_SIZE,
-            zoom_level
+            zoom_level,
         );
 
         let center_ll = LatitudeLongitudeCoordinates {
@@ -148,7 +148,7 @@ fn update_camera_position(
         let center_pixel = world_coords_to_world_pixel(
             &center_ll,
             crate::constants::DEFAULT_TILE_SIZE,
-            zoom_level
+            zoom_level,
         );
 
         let offset_x = center_pixel.0 - reference_pixel.0;
@@ -156,10 +156,18 @@ fn update_camera_position(
 
         if let Some(ref log) = logger {
             if map_state.is_changed() {
-                log.log(&format!("=== CAMERA POS UPDATE (zoom: {}) ===", zoom_level.to_u8()));
-                log.log(&format!("  center: ({:.6}, {:.6}) -> pixel ({:.2}, {:.2})",
-                    map_state.latitude, map_state.longitude, center_pixel.0, center_pixel.1));
-                log.log(&format!("  camera offset: ({:.2}, {:.2})", offset_x, offset_y));
+                log.log(&format!(
+                    "=== CAMERA POS UPDATE (zoom: {}) ===",
+                    zoom_level.to_u8()
+                ));
+                log.log(&format!(
+                    "  center: ({:.6}, {:.6}) -> pixel ({:.2}, {:.2})",
+                    map_state.latitude, map_state.longitude, center_pixel.0, center_pixel.1
+                ));
+                log.log(&format!(
+                    "  camera offset: ({:.2}, {:.2})",
+                    offset_x, offset_y
+                ));
             }
         }
 
@@ -172,9 +180,30 @@ fn update_camera_position(
 /// In 3D mode, update_3d_camera handles both cameras directly.
 fn sync_aircraft_camera(
     view3d_state: Res<view3d::View3DState>,
-    camera_2d: Query<(&Transform, &Projection), (With<MapCamera>, Without<AircraftCamera>, Without<AircraftCamera2d>)>,
-    mut camera_3d: Query<(&mut Transform, &mut Projection), (With<AircraftCamera>, Without<AircraftCamera2d>, Without<Camera2d>)>,
-    mut camera_ac2d: Query<(&mut Transform, &mut Projection), (With<AircraftCamera2d>, Without<AircraftCamera>, Without<MapCamera>)>,
+    camera_2d: Query<
+        (&Transform, &Projection),
+        (
+            With<MapCamera>,
+            Without<AircraftCamera>,
+            Without<AircraftCamera2d>,
+        ),
+    >,
+    mut camera_3d: Query<
+        (&mut Transform, &mut Projection),
+        (
+            With<AircraftCamera>,
+            Without<AircraftCamera2d>,
+            Without<Camera2d>,
+        ),
+    >,
+    mut camera_ac2d: Query<
+        (&mut Transform, &mut Projection),
+        (
+            With<AircraftCamera2d>,
+            Without<AircraftCamera>,
+            Without<MapCamera>,
+        ),
+    >,
 ) {
     // In 3D mode or during transitions, update_3d_camera owns both cameras
     if view3d_state.is_3d_active() || view3d_state.is_transitioning() {
@@ -244,7 +273,11 @@ pub(crate) fn update_aircraft_positions(
     tile_settings: Res<SlippyTilesSettings>,
     config: Res<crate::config::AppConfig>,
     view3d_state: Res<view3d::View3DState>,
-    mut aircraft_query: Query<(&Aircraft, Option<&crate::aircraft::InterpolationState>, &mut Transform)>,
+    mut aircraft_query: Query<(
+        &Aircraft,
+        Option<&crate::aircraft::InterpolationState>,
+        &mut Transform,
+    )>,
 ) {
     let zoom = view3d_state.effective_zoom(map_state.zoom_level);
     let converter = geo::CoordinateConverter::new(&tile_settings, zoom);
@@ -253,7 +286,11 @@ pub(crate) fn update_aircraft_positions(
         // Use interpolated display position if available and enabled, otherwise raw ADS-B
         let (lat, lon, heading) = if config.interpolation_enabled {
             if let Some(interp) = interp_opt {
-                (interp.display_lat, interp.display_lon, interp.display_heading)
+                (
+                    interp.display_lat,
+                    interp.display_lon,
+                    interp.display_heading,
+                )
             } else {
                 (aircraft.latitude, aircraft.longitude, aircraft.heading)
             }
@@ -298,7 +335,10 @@ fn update_aircraft_labels(
 fn cull_offscreen_aircraft(
     camera_query: Query<(&Transform, &Projection), With<MapCamera>>,
     mut aircraft_query: Query<(&Transform, &mut Visibility), (With<Aircraft>, Without<MapCamera>)>,
-    mut label_query: Query<(&AircraftLabel, &mut Visibility), (Without<Aircraft>, Without<MapCamera>)>,
+    mut label_query: Query<
+        (&AircraftLabel, &mut Visibility),
+        (Without<Aircraft>, Without<MapCamera>),
+    >,
     window_query: Query<&Window>,
     view3d_state: Res<view3d::View3DState>,
 ) {
@@ -332,7 +372,11 @@ fn cull_offscreen_aircraft(
         let dy = (transform.translation.y - cam_y).abs();
         let in_view = dx < half_w && dy < half_h;
 
-        let target = if in_view { Visibility::Inherited } else { Visibility::Hidden };
+        let target = if in_view {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
         if *visibility != target {
             *visibility = target;
         }
@@ -343,7 +387,11 @@ fn cull_offscreen_aircraft(
             let dx = (ac_tf.translation.x - cam_x).abs();
             let dy = (ac_tf.translation.y - cam_y).abs();
             let in_view = dx < half_w && dy < half_h;
-            let target = if in_view { Visibility::Inherited } else { Visibility::Hidden };
+            let target = if in_view {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            };
             if *visibility != target {
                 *visibility = target;
             }

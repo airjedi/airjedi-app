@@ -11,11 +11,14 @@ impl Plugin for WeatherPlugin {
         app.init_resource::<WeatherState>()
             .init_resource::<MetarCache>()
             .init_resource::<MetarFetchResults>()
-            .add_systems(Update, (
-                fetch_metar_for_visible_airports,
-                render_weather_indicators,
-                update_weather_indicator_positions,
-                toggle_weather_overlay,
-            ));
+            .add_systems(
+                Update,
+                (
+                    fetch_metar_for_visible_airports,
+                    render_weather_indicators,
+                    update_weather_indicator_positions,
+                    toggle_weather_overlay,
+                ),
+            );
     }
 }

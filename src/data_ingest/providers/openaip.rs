@@ -128,10 +128,13 @@ impl PipelineStage for OpenAirParseStage {
     }
 
     fn execute(&self, data: &mut PipelineData) -> Result<(), PipelineError> {
-        let raw = data.raw_bytes.take().ok_or_else(|| PipelineError::StageError {
-            stage: self.name().to_string(),
-            message: "no raw bytes".to_string(),
-        })?;
+        let raw = data
+            .raw_bytes
+            .take()
+            .ok_or_else(|| PipelineError::StageError {
+                stage: self.name().to_string(),
+                message: "no raw bytes".to_string(),
+            })?;
 
         let text = String::from_utf8_lossy(&raw);
         let airspaces = parse_openair(&text);
@@ -166,14 +169,8 @@ impl AirspaceBuilder {
         }
 
         let airspace_type = classify_airspace_type(&class);
-        let lower_limit_ft = self
-            .lower_limit
-            .as_deref()
-            .and_then(parse_altitude);
-        let upper_limit_ft = self
-            .upper_limit
-            .as_deref()
-            .and_then(parse_altitude);
+        let lower_limit_ft = self.lower_limit.as_deref().and_then(parse_altitude);
+        let upper_limit_ft = self.upper_limit.as_deref().and_then(parse_altitude);
 
         Some(CanonicalRecord::Airspace(AirspaceInfo {
             name,
@@ -287,10 +284,9 @@ fn parse_openair_coord(s: &str) -> Option<(f64, f64)> {
             if last_a.is_ascii_digit() && (last_b.is_ascii_digit() || last_b == '.') {
                 // Attempt to split on the FIRST colon that separates lat:lon
                 // Handle negative coordinates like "39.2975:-94.7139"
-                if let (Ok(lat), Ok(lon)) = (
-                    colon_parts[0].parse::<f64>(),
-                    colon_parts[1].parse::<f64>(),
-                ) {
+                if let (Ok(lat), Ok(lon)) =
+                    (colon_parts[0].parse::<f64>(), colon_parts[1].parse::<f64>())
+                {
                     if (-90.0..=90.0).contains(&lat) && (-180.0..=180.0).contains(&lon) {
                         return Some((lat, lon));
                     }

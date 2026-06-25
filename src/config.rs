@@ -10,7 +10,9 @@ use crate::theme::{AppTheme, ThemeRegistry};
 
 const CONFIG_FILE: &str = "config.toml";
 
-fn default_interpolation_enabled() -> bool { true }
+fn default_interpolation_enabled() -> bool {
+    true
+}
 
 /// Available basemap styles for the map display
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -29,7 +31,9 @@ impl BasemapStyle {
             BasemapStyle::CartoDark => "https://basemaps.cartocdn.com/dark_all",
             BasemapStyle::CartoLight => "https://basemaps.cartocdn.com/light_all",
             BasemapStyle::OpenStreetMap => "https://tile.openstreetmap.org",
-            BasemapStyle::EsriSatellite => "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile",
+            BasemapStyle::EsriSatellite => {
+                "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile"
+            }
         }
     }
 
@@ -239,28 +243,68 @@ pub struct DataIngestConfig {
 
 impl DataIngestConfig {
     fn default_metar() -> ProviderConfig {
-        ProviderConfig { enabled: true, schedule: "0 */5 * * * *".into(), api_key: None, api_secret: None }
+        ProviderConfig {
+            enabled: true,
+            schedule: "0 */5 * * * *".into(),
+            api_key: None,
+            api_secret: None,
+        }
     }
     fn default_taf() -> ProviderConfig {
-        ProviderConfig { enabled: true, schedule: "0 */15 * * * *".into(), api_key: None, api_secret: None }
+        ProviderConfig {
+            enabled: true,
+            schedule: "0 */15 * * * *".into(),
+            api_key: None,
+            api_secret: None,
+        }
     }
     fn default_ourairports() -> ProviderConfig {
-        ProviderConfig { enabled: true, schedule: "0 0 3 * * *".into(), api_key: None, api_secret: None }
+        ProviderConfig {
+            enabled: true,
+            schedule: "0 0 3 * * *".into(),
+            api_key: None,
+            api_secret: None,
+        }
     }
     fn default_faa_nasr() -> ProviderConfig {
-        ProviderConfig { enabled: false, schedule: "0 0 4 * * *".into(), api_key: None, api_secret: None }
+        ProviderConfig {
+            enabled: false,
+            schedule: "0 0 4 * * *".into(),
+            api_key: None,
+            api_secret: None,
+        }
     }
     fn default_openaip() -> ProviderConfig {
-        ProviderConfig { enabled: false, schedule: "0 0 4 * * *".into(), api_key: None, api_secret: None }
+        ProviderConfig {
+            enabled: false,
+            schedule: "0 0 4 * * *".into(),
+            api_key: None,
+            api_secret: None,
+        }
     }
     fn default_notam() -> ProviderConfig {
-        ProviderConfig { enabled: false, schedule: "0 */30 * * * *".into(), api_key: None, api_secret: None }
+        ProviderConfig {
+            enabled: false,
+            schedule: "0 */30 * * * *".into(),
+            api_key: None,
+            api_secret: None,
+        }
     }
     fn default_tfr() -> ProviderConfig {
-        ProviderConfig { enabled: true, schedule: "0 */15 * * * *".into(), api_key: None, api_secret: None }
+        ProviderConfig {
+            enabled: true,
+            schedule: "0 */15 * * * *".into(),
+            api_key: None,
+            api_secret: None,
+        }
     }
     fn default_faa_airspace() -> ProviderConfig {
-        ProviderConfig { enabled: true, schedule: "0 0 4 * * *".into(), api_key: None, api_secret: None }
+        ProviderConfig {
+            enabled: true,
+            schedule: "0 0 4 * * *".into(),
+            api_key: None,
+            api_secret: None,
+        }
     }
 }
 
@@ -406,42 +450,59 @@ impl SettingsUiState {
         // Check for host:port format
         let parts: Vec<&str> = endpoint.split(':').collect();
         if parts.len() != 2 {
-            return Err("Endpoint must be in host:port format (e.g., 192.168.1.1:30003)".to_string());
+            return Err(
+                "Endpoint must be in host:port format (e.g., 192.168.1.1:30003)".to_string(),
+            );
         }
         if parts[1].parse::<u16>().is_err() {
             return Err("Port must be a valid number (1-65535)".to_string());
         }
 
         // Validate refresh interval
-        let refresh_ms: u64 = self.refresh_interval_ms.trim().parse()
+        let refresh_ms: u64 = self
+            .refresh_interval_ms
+            .trim()
+            .parse()
             .map_err(|_| "Refresh interval must be a number")?;
         if refresh_ms < 100 || refresh_ms > 60000 {
             return Err("Refresh interval must be 100-60000 ms".to_string());
         }
 
         // Validate latitude
-        let lat: f64 = self.default_latitude.trim().parse()
+        let lat: f64 = self
+            .default_latitude
+            .trim()
+            .parse()
             .map_err(|_| "Latitude must be a number")?;
         if lat < -90.0 || lat > 90.0 {
             return Err("Latitude must be -90 to 90".to_string());
         }
 
         // Validate longitude
-        let lon: f64 = self.default_longitude.trim().parse()
+        let lon: f64 = self
+            .default_longitude
+            .trim()
+            .parse()
             .map_err(|_| "Longitude must be a number")?;
         if lon < -180.0 || lon > 180.0 {
             return Err("Longitude must be -180 to 180".to_string());
         }
 
         // Validate zoom
-        let zoom: u8 = self.default_zoom.trim().parse()
+        let zoom: u8 = self
+            .default_zoom
+            .trim()
+            .parse()
             .map_err(|_| "Zoom must be a number")?;
         if zoom > 19 {
             return Err("Zoom must be 0-19".to_string());
         }
 
         // Validate trails max age
-        let trails_max_age: u64 = self.trails_max_age.trim().parse()
+        let trails_max_age: u64 = self
+            .trails_max_age
+            .trim()
+            .parse()
             .map_err(|_| "Trail max age must be a number")?;
         if trails_max_age < 30 || trails_max_age > 3600 {
             return Err("Trail max age must be 30-3600 seconds".to_string());
@@ -528,11 +589,7 @@ pub fn render_settings_pane_content(
             .selected_text(ui_state.basemap_style.display_name())
             .show_ui(ui, |ui| {
                 for style in BasemapStyle::all() {
-                    ui.selectable_value(
-                        &mut ui_state.basemap_style,
-                        *style,
-                        style.display_name(),
-                    );
+                    ui.selectable_value(&mut ui_state.basemap_style, *style, style.display_name());
                 }
             });
         ui.add_space(8.0);
@@ -564,9 +621,11 @@ pub fn render_settings_pane_content(
     ui.collapsing("Aircraft", |ui| {
         ui.checkbox(&mut ui_state.interpolation_enabled, "Smooth Interpolation");
         ui.label(
-            egui::RichText::new("Predict aircraft positions between ADS-B updates for smooth motion")
-                .size(10.0)
-                .color(egui::Color32::GRAY),
+            egui::RichText::new(
+                "Predict aircraft positions between ADS-B updates for smooth motion",
+            )
+            .size(10.0)
+            .color(egui::Color32::GRAY),
         );
     });
 
@@ -719,7 +778,10 @@ pub fn apply_basemap_changes(
 
     let new_style = app_config.map.basemap_style;
     if current_state.style != new_style {
-        info!("Basemap changed from {:?} to {:?}", current_state.style, new_style);
+        info!(
+            "Basemap changed from {:?} to {:?}",
+            current_state.style, new_style
+        );
         current_state.style = new_style;
         tile_settings.endpoint = new_style.endpoint_url().to_string();
         tile_settings.tile_format = new_style.tile_format();
@@ -748,6 +810,13 @@ impl Plugin for ConfigPlugin {
             .insert_resource(registry)
             .insert_resource(initial_theme)
             .init_resource::<SettingsUiState>()
-            .add_systems(Update, (toggle_settings_panel, sync_config_to_render_states, apply_basemap_changes));
+            .add_systems(
+                Update,
+                (
+                    toggle_settings_panel,
+                    sync_config_to_render_states,
+                    apply_basemap_changes,
+                ),
+            );
     }
 }

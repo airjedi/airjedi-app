@@ -75,9 +75,9 @@ impl Airport {
     /// Get color based on airport size
     pub fn color(&self) -> Color {
         match self.airport_type {
-            AirportType::LargeAirport => Color::srgb(1.0, 0.2, 0.2),   // Red
+            AirportType::LargeAirport => Color::srgb(1.0, 0.2, 0.2), // Red
             AirportType::MediumAirport => Color::srgb(1.0, 0.6, 0.2), // Orange
-            _ => Color::srgb(0.6, 0.6, 0.6),                          // Gray
+            _ => Color::srgb(0.6, 0.6, 0.6),                         // Gray
         }
     }
 }

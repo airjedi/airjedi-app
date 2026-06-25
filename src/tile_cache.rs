@@ -3,7 +3,6 @@
 /// Stores map tiles in the platform cache directory (`~/Library/Caches/airjedi/tiles`
 /// on macOS) and symlinks them into the Bevy assets directory so the AssetServer
 /// can load them transparently.
-
 use bevy::prelude::*;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -26,7 +25,10 @@ pub fn setup_tile_cache() {
 
     // Create the cache directory if it doesn't exist
     if let Err(e) = fs::create_dir_all(&cache_dir) {
-        warn!("Failed to create tile cache directory {:?}: {}", cache_dir, e);
+        warn!(
+            "Failed to create tile cache directory {:?}: {}",
+            cache_dir, e
+        );
         return;
     }
 
@@ -38,11 +40,17 @@ pub fn setup_tile_cache() {
         if assets_tiles.symlink_metadata().is_ok() {
             if let Ok(target) = fs::read_link(&assets_tiles) {
                 if target == cache_dir {
-                    info!("Tile cache symlink already correct: {:?} -> {:?}", assets_tiles, cache_dir);
+                    info!(
+                        "Tile cache symlink already correct: {:?} -> {:?}",
+                        assets_tiles, cache_dir
+                    );
                     return;
                 }
                 // Symlink points elsewhere, remove and recreate
-                warn!("Tile cache symlink points to {:?}, updating to {:?}", target, cache_dir);
+                warn!(
+                    "Tile cache symlink points to {:?}, updating to {:?}",
+                    target, cache_dir
+                );
                 let _ = fs::remove_file(&assets_tiles);
             } else {
                 // It's a real directory, not a symlink — migrate any existing tiles
@@ -62,7 +70,10 @@ pub fn setup_tile_cache() {
     #[cfg(unix)]
     {
         if let Err(e) = std::os::unix::fs::symlink(&cache_dir, &assets_tiles) {
-            warn!("Failed to create tile cache symlink {:?} -> {:?}: {}", assets_tiles, cache_dir, e);
+            warn!(
+                "Failed to create tile cache symlink {:?} -> {:?}: {}",
+                assets_tiles, cache_dir, e
+            );
             return;
         }
     }
@@ -70,7 +81,10 @@ pub fn setup_tile_cache() {
     #[cfg(windows)]
     {
         if let Err(e) = std::os::windows::fs::symlink_dir(&cache_dir, &assets_tiles) {
-            warn!("Failed to create tile cache symlink {:?} -> {:?}: {}", assets_tiles, cache_dir, e);
+            warn!(
+                "Failed to create tile cache symlink {:?} -> {:?}: {}",
+                assets_tiles, cache_dir, e
+            );
             return;
         }
     }
@@ -106,7 +120,10 @@ pub fn clear_tile_cache() {
         }
     }
 
-    info!("Cleared {} tile(s) from cache at {:?}", deleted_count, cache_dir);
+    info!(
+        "Cleared {} tile(s) from cache at {:?}",
+        deleted_count, cache_dir
+    );
 }
 
 /// Also clear any legacy tiles sitting directly in `assets/` from before
@@ -150,7 +167,7 @@ pub fn remove_invalid_tiles() {
     }
 
     let png_signature: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
-    let jpg_signature: [u8; 2] = [0xFF, 0xD8];              // JPEG SOI
+    let jpg_signature: [u8; 2] = [0xFF, 0xD8]; // JPEG SOI
     let mut removed = 0;
 
     if let Ok(entries) = fs::read_dir(&cache_dir) {
@@ -188,16 +205,29 @@ pub fn remove_invalid_tiles() {
                 _ => true,
             };
             if !valid {
-                let hex_header: String = bytes.iter().take(16)
+                let hex_header: String = bytes
+                    .iter()
+                    .take(16)
                     .map(|b| format!("{:02x}", b))
                     .collect::<Vec<_>>()
                     .join(" ");
-                let ascii_preview: String = bytes.iter().take(64)
-                    .map(|&b| if b.is_ascii_graphic() || b == b' ' { b as char } else { '.' })
+                let ascii_preview: String = bytes
+                    .iter()
+                    .take(64)
+                    .map(|&b| {
+                        if b.is_ascii_graphic() || b == b' ' {
+                            b as char
+                        } else {
+                            '.'
+                        }
+                    })
                     .collect();
                 warn!(
                     "Invalid tile at startup: {} size={} bytes, header=[{}], preview=[{}]",
-                    filename, bytes.len(), hex_header, ascii_preview
+                    filename,
+                    bytes.len(),
+                    hex_header,
+                    ascii_preview
                 );
                 let _ = fs::remove_file(&path);
                 removed += 1;
@@ -226,10 +256,7 @@ pub fn validate_and_remove_if_corrupt(path: &Path) -> bool {
         }
     };
 
-    let filename = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("");
+    let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
     let png_signature: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
     let jpg_signature: [u8; 2] = [0xFF, 0xD8];
@@ -247,16 +274,29 @@ pub fn validate_and_remove_if_corrupt(path: &Path) -> bool {
 
     if !valid {
         // Log diagnostic details to help identify the corruption source
-        let hex_header: String = bytes.iter().take(16)
+        let hex_header: String = bytes
+            .iter()
+            .take(16)
             .map(|b| format!("{:02x}", b))
             .collect::<Vec<_>>()
             .join(" ");
-        let ascii_preview: String = bytes.iter().take(64)
-            .map(|&b| if b.is_ascii_graphic() || b == b' ' { b as char } else { '.' })
+        let ascii_preview: String = bytes
+            .iter()
+            .take(64)
+            .map(|&b| {
+                if b.is_ascii_graphic() || b == b' ' {
+                    b as char
+                } else {
+                    '.'
+                }
+            })
             .collect();
         warn!(
             "Corrupt tile: {:?} size={} bytes, header=[{}], preview=[{}]",
-            path, bytes.len(), hex_header, ascii_preview
+            path,
+            bytes.len(),
+            hex_header,
+            ascii_preview
         );
         let _ = fs::remove_file(path);
         true
@@ -273,13 +313,14 @@ pub fn remove_corrupt_cached_tile(asset_path: &Path) {
     // is a symlink to the cache directory, resolve to the actual cache path.
     let cache_dir = tile_cache_dir();
     // Strip the leading "tiles/" component to get just the filename
-    let filename = asset_path
-        .file_name()
-        .unwrap_or(asset_path.as_os_str());
+    let filename = asset_path.file_name().unwrap_or(asset_path.as_os_str());
     let cache_path = cache_dir.join(filename);
 
     if validate_and_remove_if_corrupt(&cache_path) {
-        info!("Removed corrupt cached tile {:?}, will re-download on next request", cache_path);
+        info!(
+            "Removed corrupt cached tile {:?}, will re-download on next request",
+            cache_path
+        );
     }
 }
 
@@ -297,7 +338,10 @@ pub fn terrain_cache_dir() -> PathBuf {
 pub fn setup_terrain_cache() {
     let cache_dir = terrain_cache_dir();
     if let Err(e) = fs::create_dir_all(&cache_dir) {
-        warn!("Failed to create terrain cache directory {:?}: {}", cache_dir, e);
+        warn!(
+            "Failed to create terrain cache directory {:?}: {}",
+            cache_dir, e
+        );
         return;
     }
     info!("Terrain cache: {:?}", cache_dir);

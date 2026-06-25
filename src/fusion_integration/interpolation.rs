@@ -1,7 +1,7 @@
-use bevy::prelude::*;
-use airjedi_fusion::TrackerState;
 use crate::aircraft::components::FusionTrackLink;
 use crate::aircraft::InterpolationState;
+use airjedi_fusion::TrackerState;
+use bevy::prelude::*;
 
 /// Sub-frame interpolation between fusion updates.
 ///

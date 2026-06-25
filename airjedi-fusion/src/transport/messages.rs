@@ -1,4 +1,3 @@
-use serde::{Deserialize, Serialize};
 use crate::classification::TargetClassification;
 use crate::coord;
 use crate::filter::TrackerState;
@@ -7,6 +6,7 @@ use crate::track::{Track, TrackQuality, TrackStatus};
 use crate::types::*;
 use chrono::{TimeZone, Utc};
 use nalgebra::DMatrix;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FusedTrackMessage {
@@ -498,22 +498,20 @@ mod tests {
         // Convert back to observation
         let obs = message_to_observation(&msg, Utc::now());
         assert_eq!(obs.sensor_id.kind, SensorKind::UpstreamFusedTrack);
-        assert!(matches!(
-            obs.measurement,
-            Measurement::FusedEstimate { .. }
-        ));
-        assert_eq!(
-            obs.target_id.as_ref().unwrap().id,
-            "ABC123"
-        );
+        assert!(matches!(obs.measurement, Measurement::FusedEstimate { .. }));
+        assert_eq!(obs.target_id.as_ref().unwrap().id, "ABC123");
     }
 
     #[test]
     fn covariance_round_trip() {
         let (track, tracker, quality, classification) = make_test_track();
         let msg = track_to_message(
-            &track, &tracker, &quality, &classification,
-            "node", FusionTier::Edge,
+            &track,
+            &tracker,
+            &quality,
+            &classification,
+            "node",
+            FusionTier::Edge,
         );
 
         let obs = message_to_observation(&msg, Utc::now());
@@ -535,8 +533,12 @@ mod tests {
     fn state_vector_round_trip() {
         let (track, tracker, quality, classification) = make_test_track();
         let msg = track_to_message(
-            &track, &tracker, &quality, &classification,
-            "node", FusionTier::Regional,
+            &track,
+            &tracker,
+            &quality,
+            &classification,
+            "node",
+            FusionTier::Regional,
         );
 
         let original_state = tracker.variant.state_vec();
@@ -593,16 +595,19 @@ mod tests {
     fn bincode_serialization_round_trip() {
         let (track, tracker, quality, classification) = make_test_track();
         let msg = track_to_message(
-            &track, &tracker, &quality, &classification,
-            "bincode-test", FusionTier::Regional,
+            &track,
+            &tracker,
+            &quality,
+            &classification,
+            "bincode-test",
+            FusionTier::Regional,
         );
 
         let bytes = bincode::serialize(&msg).expect("serialize failed");
         assert!(bytes.len() > 0);
         assert!(bytes.len() < 2000); // sanity check: message should be compact
 
-        let decoded: FusedTrackMessage =
-            bincode::deserialize(&bytes).expect("deserialize failed");
+        let decoded: FusedTrackMessage = bincode::deserialize(&bytes).expect("deserialize failed");
         assert_eq!(decoded.node_id, "bincode-test");
         assert_eq!(decoded.state.values.len(), 6);
         assert_eq!(decoded.cooperative_ids[0].id, "ABC123");

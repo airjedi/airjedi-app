@@ -214,8 +214,7 @@ mod tests {
         let az = 0.0_f64;
         let el = 0.0_f64;
         let range = 10_000.0;
-        let target_ecef =
-            spherical_to_ecef(range, az, el, &sensor_ecef, sensor_lat, sensor_lon);
+        let target_ecef = spherical_to_ecef(range, az, el, &sensor_ecef, sensor_lat, sensor_lon);
         let (t_lat, t_lon, _) = ecef_to_geodetic(&target_ecef);
         assert!(t_lat > sensor_lat);
         assert_relative_eq!(t_lon, sensor_lon, epsilon = 0.01);

@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use crate::aviation::{AirportRenderState, AviationData};
-use crate::{MapState, ZoomState};
 use crate::geo::CoordinateConverter;
+use crate::{MapState, ZoomState};
 use bevy_slippy_tiles::*;
 
 /// Flight category based on visibility and ceiling
@@ -27,10 +27,10 @@ impl FlightCategory {
     /// Get color for this flight category
     pub fn color(&self) -> Color {
         match self {
-            FlightCategory::Vfr => Color::srgb(0.0, 0.8, 0.0),    // Green
-            FlightCategory::Mvfr => Color::srgb(0.0, 0.5, 1.0),   // Blue
-            FlightCategory::Ifr => Color::srgb(1.0, 0.0, 0.0),    // Red
-            FlightCategory::Lifr => Color::srgb(1.0, 0.0, 1.0),   // Magenta
+            FlightCategory::Vfr => Color::srgb(0.0, 0.8, 0.0), // Green
+            FlightCategory::Mvfr => Color::srgb(0.0, 0.5, 1.0), // Blue
+            FlightCategory::Ifr => Color::srgb(1.0, 0.0, 0.0), // Red
+            FlightCategory::Lifr => Color::srgb(1.0, 0.0, 1.0), // Magenta
         }
     }
 
@@ -161,10 +161,9 @@ impl MetarJson {
 
         // Find ceiling (lowest BKN or OVC layer)
         let ceiling_ft = self.clouds.as_ref().and_then(|clouds| {
-            clouds.iter()
-                .filter(|c| {
-                    matches!(c.cover.as_deref(), Some("BKN") | Some("OVC"))
-                })
+            clouds
+                .iter()
+                .filter(|c| matches!(c.cover.as_deref(), Some("BKN") | Some("OVC")))
                 .filter_map(|c| c.base)
                 .min()
         });
@@ -322,8 +321,12 @@ pub fn fetch_metar_for_visible_airports(
     }
 
     // Get visible airports (weather is independent of airport display)
-    let Some(aviation_data) = aviation_data else { return };
-    let Some(_airport_state) = airport_state else { return };
+    let Some(aviation_data) = aviation_data else {
+        return;
+    };
+    let Some(_airport_state) = airport_state else {
+        return;
+    };
 
     // Only fetch if zoomed in enough
     let zoom_level: u8 = map_state.zoom_level.to_u8();
@@ -341,10 +344,14 @@ pub fn fetch_metar_for_visible_airports(
     let max_lon = map_state.longitude + lon_range;
 
     // Find airports that need METAR fetch (major airports with scheduled service)
-    let icaos_to_fetch: Vec<String> = aviation_data.airports.iter()
+    let icaos_to_fetch: Vec<String> = aviation_data
+        .airports
+        .iter()
         .filter(|a| {
-            a.latitude_deg >= min_lat && a.latitude_deg <= max_lat
-                && a.longitude_deg >= min_lon && a.longitude_deg <= max_lon
+            a.latitude_deg >= min_lat
+                && a.latitude_deg <= max_lat
+                && a.longitude_deg >= min_lon
+                && a.longitude_deg <= max_lon
         })
         .filter(|a| a.has_scheduled_service() || a.is_major())
         .filter(|a| {
@@ -397,9 +404,7 @@ fn fetch_metar_batch(icaos: &str) -> Vec<MetarData> {
         }
     };
 
-    json.iter()
-        .filter_map(|m| m.to_metar_data())
-        .collect()
+    json.iter().filter_map(|m| m.to_metar_data()).collect()
 }
 
 /// Render weather indicators for airports with METAR data
@@ -422,7 +427,9 @@ pub fn render_weather_indicators(
         return;
     }
 
-    let Some(aviation_data) = aviation_data else { return };
+    let Some(aviation_data) = aviation_data else {
+        return;
+    };
 
     // Only show if zoomed in enough
     let zoom_level: u8 = map_state.zoom_level.to_u8();
@@ -450,8 +457,10 @@ pub fn render_weather_indicators(
     // Create indicators for visible airports with METAR data
     for airport in aviation_data.airports.iter() {
         // Check if in view
-        if airport.latitude_deg < min_lat || airport.latitude_deg > max_lat
-            || airport.longitude_deg < min_lon || airport.longitude_deg > max_lon
+        if airport.latitude_deg < min_lat
+            || airport.latitude_deg > max_lat
+            || airport.longitude_deg < min_lon
+            || airport.longitude_deg > max_lon
         {
             // Remove if out of view
             if let Some(entity) = existing_icaos.get(&airport.ident) {
@@ -527,6 +536,13 @@ pub fn toggle_weather_overlay(
 
     if keyboard.just_pressed(KeyCode::KeyW) {
         weather_state.enabled = !weather_state.enabled;
-        info!("Weather overlay: {}", if weather_state.enabled { "enabled" } else { "disabled" });
+        info!(
+            "Weather overlay: {}",
+            if weather_state.enabled {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
     }
 }

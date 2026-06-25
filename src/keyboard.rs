@@ -1,12 +1,12 @@
 use bevy::prelude::*;
 use bevy_egui::EguiContexts;
 
-use crate::aircraft::{AircraftListState, DetailPanelState, CameraFollowState, StatsPanelState};
+use crate::aircraft::{AircraftListState, CameraFollowState, DetailPanelState, StatsPanelState};
 use crate::config::{AppConfig, SettingsUiState};
 use crate::debug_3d_hud::Debug3DHudState;
 use crate::hud::HudState;
-use crate::ui_panels::{UiPanelManager, PanelId};
-use crate::{MapState, ZoomState, Aircraft};
+use crate::ui_panels::{PanelId, UiPanelManager};
+use crate::{Aircraft, MapState, ZoomState};
 
 /// Resource for help overlay visibility
 #[derive(Resource, Default)]
@@ -167,14 +167,14 @@ pub fn handle_keyboard_shortcuts(
 
     // + or = (same key, shift for +) - Zoom in
     if keyboard.just_pressed(KeyCode::Equal) || keyboard.just_pressed(KeyCode::NumpadAdd) {
-        zoom_state.camera_zoom = (zoom_state.camera_zoom * 1.2)
-            .clamp(zoom_state.min_zoom, zoom_state.max_zoom);
+        zoom_state.camera_zoom =
+            (zoom_state.camera_zoom * 1.2).clamp(zoom_state.min_zoom, zoom_state.max_zoom);
     }
 
     // - (minus) - Zoom out
     if keyboard.just_pressed(KeyCode::Minus) || keyboard.just_pressed(KeyCode::NumpadSubtract) {
-        zoom_state.camera_zoom = (zoom_state.camera_zoom / 1.2)
-            .clamp(zoom_state.min_zoom, zoom_state.max_zoom);
+        zoom_state.camera_zoom =
+            (zoom_state.camera_zoom / 1.2).clamp(zoom_state.min_zoom, zoom_state.max_zoom);
     }
 
     // R - Reset view to default (only when Ctrl is NOT pressed, so Ctrl+R goes to recording)
@@ -191,8 +191,9 @@ pub fn toggle_overlays_keyboard(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut airport_state: Option<ResMut<crate::aviation::AirportRenderState>>,
     mut trail_config: Option<ResMut<crate::aircraft::TrailConfig>>,
-    #[cfg(feature = "fusion")]
-    mut estimated_track_config: Option<ResMut<crate::fusion_integration::estimated_track::EstimatedTrackConfig>>,
+    #[cfg(feature = "fusion")] mut estimated_track_config: Option<
+        ResMut<crate::fusion_integration::estimated_track::EstimatedTrackConfig>,
+    >,
     mut contexts: EguiContexts,
 ) {
     // Check if egui wants keyboard input
@@ -259,28 +260,44 @@ pub fn sync_panel_manager_to_resources(
     }
 
     let v = panels.is_open(PanelId::AircraftList);
-    if list_state.expanded != v { list_state.expanded = v; }
+    if list_state.expanded != v {
+        list_state.expanded = v;
+    }
 
     let v = panels.is_open(PanelId::AircraftDetail);
-    if detail_state.open != v { detail_state.open = v; }
+    if detail_state.open != v {
+        detail_state.open = v;
+    }
 
     let v = panels.is_open(PanelId::Bookmarks);
-    if bookmarks_state.open != v { bookmarks_state.open = v; }
+    if bookmarks_state.open != v {
+        bookmarks_state.open = v;
+    }
 
     let v = panels.is_open(PanelId::Statistics);
-    if stats_state.expanded != v { stats_state.expanded = v; }
+    if stats_state.expanded != v {
+        stats_state.expanded = v;
+    }
 
     let v = panels.is_open(PanelId::Help);
-    if help_state.visible != v { help_state.visible = v; }
+    if help_state.visible != v {
+        help_state.visible = v;
+    }
 
     let v = panels.is_open(PanelId::Measurement);
-    if measurement_state.active != v { measurement_state.active = v; }
+    if measurement_state.active != v {
+        measurement_state.active = v;
+    }
 
     let v = panels.is_open(PanelId::Debug);
-    if debug_state.open != v { debug_state.open = v; }
+    if debug_state.open != v {
+        debug_state.open = v;
+    }
 
     let v = panels.is_open(PanelId::Inspector);
-    if inspector_state.open != v { inspector_state.open = v; }
+    if inspector_state.open != v {
+        inspector_state.open = v;
+    }
 }
 
 /// Sync per-module resource changes back to UiPanelManager.
@@ -372,31 +389,33 @@ Ctrl+R  Record/Stop recording
     let bg_color = theme.bg_secondary().with_alpha(0.95);
     let text_color = theme.text_primary();
 
-    commands.spawn((
-        Node {
-            position_type: PositionType::Absolute,
-            top: Val::Percent(50.0),
-            left: Val::Percent(50.0),
-            margin: UiRect {
-                left: Val::Px(-150.0),
-                top: Val::Px(-180.0),
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Percent(50.0),
+                left: Val::Percent(50.0),
+                margin: UiRect {
+                    left: Val::Px(-150.0),
+                    top: Val::Px(-180.0),
+                    ..default()
+                },
+                width: Val::Px(300.0),
+                padding: UiRect::all(Val::Px(20.0)),
+                flex_direction: FlexDirection::Column,
                 ..default()
             },
-            width: Val::Px(300.0),
-            padding: UiRect::all(Val::Px(20.0)),
-            flex_direction: FlexDirection::Column,
-            ..default()
-        },
-        BackgroundColor(bg_color),
-        HelpOverlay,
-    )).with_children(|parent| {
-        parent.spawn((
-            Text::new(help_text),
-            TextFont {
-                font_size: 14.0,
-                ..default()
-            },
-            TextColor(text_color),
-        ));
-    });
+            BackgroundColor(bg_color),
+            HelpOverlay,
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                Text::new(help_text),
+                TextFont {
+                    font_size: 14.0,
+                    ..default()
+                },
+                TextColor(text_color),
+            ));
+        });
 }

@@ -1,4 +1,4 @@
-use airjedi_fusion::{TrackQuality, TrackStatus, TargetClassification};
+use airjedi_fusion::{TargetClassification, TrackQuality, TrackStatus};
 use bevy_egui::egui;
 
 pub fn fusion_status_text(quality: &TrackQuality) -> &'static str {

@@ -3,14 +3,13 @@ use std::ops::DerefMut;
 
 use bevy::ecs::system::SystemState;
 use bevy::prelude::*;
-use bevy_egui::{EguiContext, PrimaryEguiContext, egui};
+use bevy_egui::{egui, EguiContext, PrimaryEguiContext};
 use egui_tiles::{Behavior, SimplificationOptions, TabState, TileId, Tiles, UiResponse};
 
 use crate::aircraft::{
+    list_panel::render_aircraft_list_pane_content, stats_panel::render_stats_pane_content,
     AircraftDisplayList, AircraftListState, AircraftTypeInfo, CameraFollowState, DetailPanelState,
     SessionClock, StatsPanelState, TrailHistory,
-    list_panel::render_aircraft_list_pane_content,
-    stats_panel::render_stats_pane_content,
 };
 use crate::airspace::{AirspaceData, AirspaceDisplayState};
 use crate::bookmarks::{self, BookmarksPanelState};
@@ -21,11 +20,11 @@ use crate::debug_panel::{self, DebugPanelState};
 use crate::export::ExportState;
 use crate::inspector;
 use crate::recording::{PlaybackState, RecordingState};
-use crate::theme::{AppTheme, ThemeRegistry, to_egui_color32, to_egui_color32_alpha};
+use crate::theme::{to_egui_color32, to_egui_color32_alpha, AppTheme, ThemeRegistry};
 use crate::tools_window;
 use crate::ui_panels::{PanelId, UiPanelManager};
+use crate::view3d::sky::{SunState, TimeState};
 use crate::view3d::View3DState;
-use crate::view3d::sky::{TimeState, SunState};
 use crate::{Aircraft, MapState, ZoomState};
 
 // =============================================================================
@@ -308,12 +307,7 @@ const TAB_H_PAD: f32 = 10.0;
 const TAB_GAP: f32 = 3.0;
 
 impl<'a> Behavior<DockPane> for DockBehavior<'a> {
-    fn pane_ui(
-        &mut self,
-        ui: &mut egui::Ui,
-        _tile_id: TileId,
-        pane: &mut DockPane,
-    ) -> UiResponse {
+    fn pane_ui(&mut self, ui: &mut egui::Ui, _tile_id: TileId, pane: &mut DockPane) -> UiResponse {
         let bg = self.colors.bg_primary;
 
         match pane {
@@ -370,11 +364,23 @@ impl<'a> Behavior<DockPane> for DockBehavior<'a> {
                         Res<AircraftDisplayList>,
                         Res<AppConfig>,
                         Res<SessionClock>,
-                        Query<(&'static Aircraft, &'static TrailHistory, Option<&'static AircraftTypeInfo>)>,
+                        Query<(
+                            &'static Aircraft,
+                            &'static TrailHistory,
+                            Option<&'static AircraftTypeInfo>,
+                        )>,
                         Res<AppTheme>,
                     )>::new(world);
-                    let (mut list, mut detail, mut follow, display, app_config, clock, query, theme) =
-                        state.get_mut(world);
+                    let (
+                        mut list,
+                        mut detail,
+                        mut follow,
+                        display,
+                        app_config,
+                        clock,
+                        query,
+                        theme,
+                    ) = state.get_mut(world);
                     render_aircraft_list_pane_content(
                         ui,
                         &mut list,
@@ -477,10 +483,8 @@ impl<'a> Behavior<DockPane> for DockBehavior<'a> {
             DockPane::Recording => {
                 let world = &mut *self.world;
                 render_pane_with_bg(bg, ui, |ui| {
-                    let mut state = SystemState::<(
-                        ResMut<RecordingState>,
-                        ResMut<PlaybackState>,
-                    )>::new(world);
+                    let mut state =
+                        SystemState::<(ResMut<RecordingState>, ResMut<PlaybackState>)>::new(world);
                     let (mut recording, mut playback) = state.get_mut(world);
                     tools_window::render_recording_tab(ui, &mut recording, &mut playback);
                 });
@@ -497,7 +501,14 @@ impl<'a> Behavior<DockPane> for DockBehavior<'a> {
                         Option<ResMut<crate::tiles::GridOverlay>>,
                     )>::new(world);
                     let (mut view3d, mut terrain, mut time, sun, mut grid) = state.get_mut(world);
-                    tools_window::render_view3d_tab(ui, &mut view3d, &mut terrain, &mut time, &sun, grid.as_deref_mut());
+                    tools_window::render_view3d_tab(
+                        ui,
+                        &mut view3d,
+                        &mut terrain,
+                        &mut time,
+                        &sun,
+                        grid.as_deref_mut(),
+                    );
                 });
             }
 
@@ -627,10 +638,8 @@ impl<'a> Behavior<DockPane> for DockBehavior<'a> {
         let tab_h = ui.available_height();
         let tab_w = text_w + 2.0 * TAB_H_PAD + close_w + TAB_GAP;
 
-        let (tab_rect, mut response) = ui.allocate_exact_size(
-            egui::vec2(tab_w, tab_h),
-            egui::Sense::click_and_drag(),
-        );
+        let (tab_rect, mut response) =
+            ui.allocate_exact_size(egui::vec2(tab_w, tab_h), egui::Sense::click_and_drag());
 
         // Inset the visual tab rect by the gap so there's space between tabs
         let visual_rect = egui::Rect::from_min_max(
@@ -667,18 +676,11 @@ impl<'a> Behavior<DockPane> for DockBehavior<'a> {
                     )
                 };
                 let pts = build_rounded_top_tab(visual_rect, TAB_CORNER_RADIUS);
-                painter.add(egui::Shape::convex_polygon(
-                    pts,
-                    fill,
-                    egui::Stroke::NONE,
-                ));
+                painter.add(egui::Shape::convex_polygon(pts, fill, egui::Stroke::NONE));
             }
 
             // Paint title text (vertically centered, left-padded)
-            let text_pos = egui::pos2(
-                visual_rect.left() + TAB_H_PAD,
-                visual_rect.center().y,
-            );
+            let text_pos = egui::pos2(visual_rect.left() + TAB_H_PAD, visual_rect.center().y);
             painter.text(
                 text_pos,
                 egui::Align2::LEFT_CENTER,
@@ -778,7 +780,10 @@ pub fn render_dock_tree(world: &mut World) {
             for &(panel_id, dock_pane) in PANEL_DOCK_MAP {
                 if let Some(&tile_id) = dock_state.pane_tile_ids.get(&dock_pane) {
                     let should_be_visible = panels.is_open(panel_id);
-                    dock_state.tree.tiles.set_visible(tile_id, should_be_visible);
+                    dock_state
+                        .tree
+                        .tiles
+                        .set_visible(tile_id, should_be_visible);
                 }
             }
         }

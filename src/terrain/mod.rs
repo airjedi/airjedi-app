@@ -4,10 +4,10 @@
 //! replacing flat tile quads with heightmap-displaced geometry in 3D mode.
 //! Uses AWS Terrain Tiles (Terrarium PNG format) as the elevation data source.
 
-pub(crate) mod provider;
 pub(crate) mod heightmap;
 pub(crate) mod material;
 pub(crate) mod mesh;
+pub(crate) mod provider;
 
 use std::collections::HashMap;
 
@@ -17,7 +17,7 @@ use bevy_slippy_tiles::MapTile;
 use crate::constants;
 use crate::map::MapState;
 use crate::tiles::{TileFadeState, TileMeshQuad};
-use crate::view3d::{self, View3DState, TransitionState};
+use crate::view3d::{self, TransitionState, View3DState};
 
 use heightmap::{HeightmapCache, TileKey};
 use mesh::{generate_terrain_mesh, resolution_for_zoom_offset, NeighborLod};
@@ -85,7 +85,9 @@ impl TerrainMeshCache {
 
         self.meshes.retain(|&(zoom, _, _), _| {
             let keep = zoom >= min_zoom && zoom <= current_zoom;
-            if !keep { removed += 1; }
+            if !keep {
+                removed += 1;
+            }
             keep
         });
 
@@ -209,10 +211,7 @@ impl Plugin for TerrainPlugin {
             .insert_resource(HeightmapCache::new(TerrainProvider::default()))
             .register_type::<TerrainState>()
             .add_systems(Startup, setup_terrain_grid_mesh)
-            .add_systems(
-                Update,
-                heightmap::poll_heightmap_completions,
-            )
+            .add_systems(Update, heightmap::poll_heightmap_completions)
             .add_systems(
                 Update,
                 heightmap::request_heightmaps_for_tiles
@@ -220,28 +219,20 @@ impl Plugin for TerrainPlugin {
             )
             .add_systems(
                 Update,
-                create_terrain_meshes
-                    .after(heightmap::request_heightmaps_for_tiles),
+                create_terrain_meshes.after(heightmap::request_heightmaps_for_tiles),
+            )
+            .add_systems(Update, evict_terrain_caches.after(create_terrain_meshes))
+            .add_systems(
+                Update,
+                update_ground_elevation.after(heightmap::poll_heightmap_completions),
             )
             .add_systems(
                 Update,
-                evict_terrain_caches
-                    .after(create_terrain_meshes),
+                animate_terrain_displacement.after(crate::tiles::sync_tile_mesh_transforms),
             )
             .add_systems(
                 Update,
-                update_ground_elevation
-                    .after(heightmap::poll_heightmap_completions),
-            )
-            .add_systems(
-                Update,
-                animate_terrain_displacement
-                    .after(crate::tiles::sync_tile_mesh_transforms),
-            )
-            .add_systems(
-                Update,
-                create_gpu_terrain_tiles
-                    .after(heightmap::request_heightmaps_for_tiles),
+                create_gpu_terrain_tiles.after(heightmap::request_heightmaps_for_tiles),
             )
             .add_systems(
                 Update,
@@ -303,7 +294,8 @@ fn create_terrain_meshes(
     let altitude_scale = view3d::PIXEL_SCALE * view3d_state.altitude_scale;
 
     for (tile_entity, transform, fade_state, mesh_quad) in tiles_to_upgrade.iter() {
-        let tile_key = tile_key_from_transform(transform, fade_state, &tile_settings, map_state.zoom_level);
+        let tile_key =
+            tile_key_from_transform(transform, fade_state, &tile_settings, map_state.zoom_level);
 
         let zoom_offset = current_zoom.saturating_sub(fade_state.tile_zoom);
         let resolution = resolution_for_zoom_offset(zoom_offset as u32);
@@ -327,7 +319,13 @@ fn create_terrain_meshes(
                     &neighbor_lod,
                 );
                 let handle = meshes.add(terrain_mesh);
-                terrain_mesh_cache.meshes.insert(tile_key, CachedTerrainMesh { handle: handle.clone(), resolution });
+                terrain_mesh_cache.meshes.insert(
+                    tile_key,
+                    CachedTerrainMesh {
+                        handle: handle.clone(),
+                        resolution,
+                    },
+                );
                 handle
             }
         } else {
@@ -347,7 +345,13 @@ fn create_terrain_meshes(
             );
 
             let handle = meshes.add(terrain_mesh);
-            terrain_mesh_cache.meshes.insert(tile_key, CachedTerrainMesh { handle: handle.clone(), resolution });
+            terrain_mesh_cache.meshes.insert(
+                tile_key,
+                CachedTerrainMesh {
+                    handle: handle.clone(),
+                    resolution,
+                },
+            );
             handle
         };
 
@@ -385,7 +389,10 @@ fn evict_terrain_caches(
     if hm_removed > 0 || mesh_removed > 0 {
         debug!(
             "Terrain cache eviction: {} heightmaps, {} meshes removed (remaining: {} hm, {} mesh)",
-            hm_removed, mesh_removed, heightmap_cache.len(), mesh_cache.meshes.len()
+            hm_removed,
+            mesh_removed,
+            heightmap_cache.len(),
+            mesh_cache.meshes.len()
         );
     }
 }
@@ -418,11 +425,9 @@ fn update_ground_elevation(
         heightmap_cache.request(center_key);
     }
 
-    if let Some(elevation_m) = heightmap_cache.sample_elevation(
-        map_state.latitude,
-        map_state.longitude,
-        zoom_level,
-    ) {
+    if let Some(elevation_m) =
+        heightmap_cache.sample_elevation(map_state.latitude, map_state.longitude, zoom_level)
+    {
         let elevation_ft = (elevation_m * 3.28084) as i32;
         view3d_state.ground_elevation_ft = elevation_ft;
     }
@@ -489,9 +494,12 @@ struct GpuTerrainCompanion {
 fn setup_terrain_grid_mesh(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
     // 64x64 grid — same resolution as the highest CPU LOD tier.
     // Vertex displacement happens in the shader, so one mesh fits all tiles.
-    let mesh = Mesh::from(Plane3d::new(Vec3::Y, Vec2::splat(constants::DEFAULT_TILE_PIXELS / 2.0)))
-        .with_generated_tangents()
-        .expect("Plane3d tangent generation");
+    let mesh = Mesh::from(Plane3d::new(
+        Vec3::Y,
+        Vec2::splat(constants::DEFAULT_TILE_PIXELS / 2.0),
+    ))
+    .with_generated_tangents()
+    .expect("Plane3d tangent generation");
     commands.insert_resource(TerrainGridMesh(meshes.add(mesh)));
 }
 
@@ -516,9 +524,15 @@ fn create_gpu_terrain_tiles(
         (Entity, &Sprite, &Transform, &TileFadeState, &TileMeshQuad),
         (With<MapTile>, Without<GpuTerrainTile>),
     >,
-    mut mesh_query: Query<(&mut Mesh3d, &mut MeshMaterial3d<bevy::pbr::StandardMaterial>)>,
+    mut mesh_query: Query<(
+        &mut Mesh3d,
+        &mut MeshMaterial3d<bevy::pbr::StandardMaterial>,
+    )>,
     // Existing GPU terrain tiles — for cleanup (has Sprite via MapTile)
-    mut gpu_tiles: Query<(Entity, &TileMeshQuad, &mut TileFadeState, &mut Sprite), (With<MapTile>, With<GpuTerrainTile>)>,
+    mut gpu_tiles: Query<
+        (Entity, &TileMeshQuad, &mut TileFadeState, &mut Sprite),
+        (With<MapTile>, With<GpuTerrainTile>),
+    >,
     // GPU terrain companion entities to despawn on cleanup
     gpu_companions: Query<Entity, With<GpuTerrainCompanion>>,
     quad_mesh: Option<Res<crate::tiles::TileQuadMesh>>,
@@ -544,7 +558,9 @@ fn create_gpu_terrain_tiles(
     let altitude_scale = view3d::PIXEL_SCALE * view3d_state.altitude_scale;
     let transition_factor = match view3d_state.transition {
         TransitionState::Idle => 1.0,
-        TransitionState::TransitioningTo3D { progress } => progress * progress * (3.0 - 2.0 * progress),
+        TransitionState::TransitioningTo3D { progress } => {
+            progress * progress * (3.0 - 2.0 * progress)
+        }
         TransitionState::TransitioningTo2D { progress } => {
             let s = 1.0 - progress;
             s * s * (3.0 - 2.0 * s)
@@ -558,7 +574,8 @@ fn create_gpu_terrain_tiles(
             continue;
         }
 
-        let tile_key = tile_key_from_transform(transform, fade_state, &tile_settings, map_state.zoom_level);
+        let tile_key =
+            tile_key_from_transform(transform, fade_state, &tile_settings, map_state.zoom_level);
 
         // Need heightmap data for this tile
         let Some(heightmap) = heightmap_cache.get(&tile_key) else {
@@ -566,7 +583,8 @@ fn create_gpu_terrain_tiles(
         };
 
         // Get or create GPU texture for this heightmap
-        let heightmap_handle = heightmap_textures.textures
+        let heightmap_handle = heightmap_textures
+            .textures
             .entry(tile_key)
             .or_insert_with(|| images.add(heightmap.to_gpu_image()))
             .clone();
@@ -590,11 +608,16 @@ fn create_gpu_terrain_tiles(
         let pos_yup = view3d::zup_to_yup(transform.translation);
 
         commands.spawn((
-            GpuTerrainCompanion { source_tile: tile_entity },
+            GpuTerrainCompanion {
+                source_tile: tile_entity,
+            },
             Mesh3d(grid_mesh.0.clone()),
             MeshMaterial3d(terrain_mat),
-            Transform::from_translation(pos_yup)
-                .with_scale(Vec3::new(transform.scale.x, 1.0, transform.scale.x)),
+            Transform::from_translation(pos_yup).with_scale(Vec3::new(
+                transform.scale.x,
+                1.0,
+                transform.scale.x,
+            )),
             Pickable::IGNORE,
             bevy::camera::visibility::RenderLayers::layer(crate::RenderCategory::TILES_3D),
         ));
@@ -611,11 +634,14 @@ fn sync_gpu_terrain_transforms(
     mut transforms: Query<&mut Transform, Without<MapTile>>,
 ) {
     // Collect source positions first to avoid borrow conflicts
-    let updates: Vec<(Entity, Vec3, Vec3)> = companions.iter().filter_map(|(comp, comp_entity)| {
-        let (tile_tf, mesh_quad) = tile_query.get(comp.source_tile).ok()?;
-        let source_tf = transforms.get(mesh_quad.0).ok()?;
-        Some((comp_entity, source_tf.translation, source_tf.scale))
-    }).collect();
+    let updates: Vec<(Entity, Vec3, Vec3)> = companions
+        .iter()
+        .filter_map(|(comp, comp_entity)| {
+            let (tile_tf, mesh_quad) = tile_query.get(comp.source_tile).ok()?;
+            let source_tf = transforms.get(mesh_quad.0).ok()?;
+            Some((comp_entity, source_tf.translation, source_tf.scale))
+        })
+        .collect();
 
     for (comp_entity, translation, scale) in updates {
         if let Ok(mut tf) = transforms.get_mut(comp_entity) {

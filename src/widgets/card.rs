@@ -114,11 +114,9 @@ impl<'a> Card<'a> {
             }
 
             // Body content with margin
-            egui::Frame::new()
-                .inner_margin(10.0)
-                .show(ui, |ui| {
-                    add_contents(ui);
-                });
+            egui::Frame::new().inner_margin(10.0).show(ui, |ui| {
+                add_contents(ui);
+            });
         })
     }
 }

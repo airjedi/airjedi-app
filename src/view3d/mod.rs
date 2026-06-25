@@ -25,9 +25,9 @@ pub(crate) fn yup_to_zup(v: Vec3) -> Vec3 {
 pub(crate) fn zup_to_yup_rotation() -> Quat {
     Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)
 }
-use bevy::pbr::{DistanceFog, FogFalloff};
-use bevy::input::mouse::{MouseMotion, MouseWheel};
 use bevy::input::gestures::PinchGesture;
+use bevy::input::mouse::{MouseMotion, MouseWheel};
+use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy_egui::{egui, EguiContexts};
 
 // Constants for 3D view
@@ -60,8 +60,12 @@ pub enum ViewMode {
 pub enum TransitionState {
     #[default]
     Idle,
-    TransitioningTo3D { progress: f32 },
-    TransitioningTo2D { progress: f32 },
+    TransitioningTo3D {
+        progress: f32,
+    },
+    TransitioningTo2D {
+        progress: f32,
+    },
 }
 
 /// Resource for 3D view state
@@ -156,7 +160,10 @@ impl View3DState {
     /// Get the zoom level to use for coordinate conversion. In 3D mode,
     /// returns the fixed rendering zoom to prevent position jumps. In 2D,
     /// returns None (callers should use map_state.zoom_level).
-    pub fn effective_zoom(&self, map_zoom: bevy_slippy_tiles::ZoomLevel) -> bevy_slippy_tiles::ZoomLevel {
+    pub fn effective_zoom(
+        &self,
+        map_zoom: bevy_slippy_tiles::ZoomLevel,
+    ) -> bevy_slippy_tiles::ZoomLevel {
         self.rendering_zoom
             .and_then(|z| bevy_slippy_tiles::ZoomLevel::try_from(z).ok())
             .unwrap_or(map_zoom)
@@ -213,8 +220,10 @@ impl View3DState {
     fn calculate_chase_transform_yup(&self, center: Vec3) -> Transform {
         let yaw_rad = self.camera_yaw.to_radians();
 
-        let behind_dist = CHASE_OFFSET_BEHIND_FT * 0.3048 / 1000.0 * PIXEL_SCALE * self.altitude_scale;
-        let above_dist = CHASE_OFFSET_ABOVE_FT * 0.3048 / 1000.0 * PIXEL_SCALE * self.altitude_scale;
+        let behind_dist =
+            CHASE_OFFSET_BEHIND_FT * 0.3048 / 1000.0 * PIXEL_SCALE * self.altitude_scale;
+        let above_dist =
+            CHASE_OFFSET_ABOVE_FT * 0.3048 / 1000.0 * PIXEL_SCALE * self.altitude_scale;
 
         // Camera position: behind along yaw direction, above center
         // At yaw=0, camera is south (+Z in Y-up), looking north (-Z)
@@ -246,7 +255,8 @@ pub fn toggle_3d_view(
     map_state: Res<crate::MapState>,
     aviation_data: Res<crate::aviation::AviationData>,
 ) {
-    let egui_wants_input = contexts.ctx_mut()
+    let egui_wants_input = contexts
+        .ctx_mut()
         .map(|ctx| ctx.wants_keyboard_input())
         .unwrap_or(false);
 
@@ -264,10 +274,8 @@ pub fn toggle_3d_view(
             ViewMode::Map2D => {
                 // Save current 2D camera center before transitioning
                 if let Ok(cam_transform) = camera_query.single() {
-                    state.saved_2d_center = Vec2::new(
-                        cam_transform.translation.x,
-                        cam_transform.translation.y,
-                    );
+                    state.saved_2d_center =
+                        Vec2::new(cam_transform.translation.x, cam_transform.translation.y);
                 }
 
                 // Save the 2D zoom level so we can restore it when returning
@@ -277,7 +285,8 @@ pub fn toggle_3d_view(
                 // the 2D zoom might be 7-10 - using the 2D zoom would make
                 // everything appear compressed.
                 let adaptive = crate::tiles::altitude_to_zoom_level(
-                    state.camera_altitude, map_state.zoom_level.to_u8(),
+                    state.camera_altitude,
+                    map_state.zoom_level.to_u8(),
                 );
                 state.rendering_zoom = Some(adaptive);
 
@@ -285,7 +294,10 @@ pub fn toggle_3d_view(
                 detect_ground_elevation(&mut state, &map_state, &aviation_data);
 
                 state.transition = TransitionState::TransitioningTo3D { progress: 0.0 };
-                info!("Starting transition to 3D view (ground elevation: {} ft)", state.ground_elevation_ft);
+                info!(
+                    "Starting transition to 3D view (ground elevation: {} ft)",
+                    state.ground_elevation_ft
+                );
             }
             ViewMode::Perspective3D => {
                 state.transition = TransitionState::TransitioningTo2D { progress: 0.0 };
@@ -311,7 +323,12 @@ fn detect_ground_elevation(
     let mut best_name: Option<String> = None;
 
     for airport in &aviation_data.airports {
-        let dist = haversine_distance_nm(center_lat, center_lon, airport.latitude_deg, airport.longitude_deg);
+        let dist = haversine_distance_nm(
+            center_lat,
+            center_lon,
+            airport.latitude_deg,
+            airport.longitude_deg,
+        );
         if dist < best_dist && dist <= 50.0 {
             best_dist = dist;
             best_elevation = airport.elevation_ft.unwrap_or(0);
@@ -364,11 +381,14 @@ pub fn render_time_of_day_section(
 
         ui.horizontal(|ui| {
             ui.label("Time:");
-            if ui.add(
-                egui::Slider::new(&mut hour, 0.0..=23.99)
-                    .text(time_label)
-                    .step_by(1.0 / 60.0),
-            ).changed() {
+            if ui
+                .add(
+                    egui::Slider::new(&mut hour, 0.0..=23.99)
+                        .text(time_label)
+                        .step_by(1.0 / 60.0),
+                )
+                .changed()
+            {
                 time_state.set_hour(hour);
             }
         });
@@ -417,10 +437,7 @@ pub fn render_time_of_day_section(
 }
 
 /// System to animate the view transition
-pub fn animate_view_transition(
-    time: Res<Time>,
-    mut state: ResMut<View3DState>,
-) {
+pub fn animate_view_transition(time: Res<Time>, mut state: ResMut<View3DState>) {
     let delta = time.delta_secs() / TRANSITION_DURATION;
 
     match state.transition {
@@ -431,7 +448,9 @@ pub fn animate_view_transition(
                 state.transition = TransitionState::Idle;
                 info!("Transition to 3D complete");
             } else {
-                state.transition = TransitionState::TransitioningTo3D { progress: new_progress };
+                state.transition = TransitionState::TransitioningTo3D {
+                    progress: new_progress,
+                };
             }
         }
         TransitionState::TransitioningTo2D { progress } => {
@@ -439,7 +458,9 @@ pub fn animate_view_transition(
             // Don't finalize here — let update_3d_camera reset the camera
             // before clearing the transition state, avoiding the one-frame
             // race where the early return skips the camera reset.
-            state.transition = TransitionState::TransitioningTo2D { progress: new_progress };
+            state.transition = TransitionState::TransitioningTo2D {
+                progress: new_progress,
+            };
         }
         TransitionState::Idle => {}
     }
@@ -492,13 +513,11 @@ pub fn update_3d_camera(
     let center_2d = converter.latlon_to_world(map_state.latitude, map_state.longitude);
 
     // When following an aircraft, orbit around its altitude instead of ground.
-    let orbit_alt_ft = state.follow_altitude_ft.unwrap_or(state.ground_elevation_ft);
+    let orbit_alt_ft = state
+        .follow_altitude_ft
+        .unwrap_or(state.ground_elevation_ft);
     let orbit_alt = state.altitude_to_z(orbit_alt_ft);
-    let center_yup = zup_to_yup(Vec3::new(
-        center_2d.x,
-        center_2d.y,
-        orbit_alt,
-    ));
+    let center_yup = zup_to_yup(Vec3::new(center_2d.x, center_2d.y, orbit_alt));
     let orbit_yup = if state.chase_active {
         let t = smooth_step(state.chase_transition);
         let orbit = state.calculate_camera_transform_yup(center_yup);
@@ -643,7 +662,8 @@ pub fn handle_3d_camera_controls(
     }
 
     // Read shift state from egui's input (bevy_egui absorbs modifier keys from ButtonInput)
-    let shift_held = contexts.ctx_mut()
+    let shift_held = contexts
+        .ctx_mut()
         .map(|ctx| ctx.input(|i| i.modifiers.shift))
         .unwrap_or(false);
 
@@ -651,7 +671,8 @@ pub fn handle_3d_camera_controls(
     if let Ok(ctx) = contexts.ctx_mut() {
         if ctx.is_pointer_over_area() {
             let over_map = if let Some(map_rect) = dock_state.map_viewport_rect {
-                ctx.pointer_latest_pos().is_some_and(|pos| map_rect.contains(pos))
+                ctx.pointer_latest_pos()
+                    .is_some_and(|pos| map_rect.contains(pos))
             } else {
                 false
             };
@@ -688,8 +709,12 @@ pub fn handle_3d_camera_controls(
                     state.chase_orbit_override = true;
                 }
                 state.camera_yaw += event.delta.x * ORBIT_SENSITIVITY;
-                if state.camera_yaw < 0.0 { state.camera_yaw += 360.0; }
-                if state.camera_yaw >= 360.0 { state.camera_yaw -= 360.0; }
+                if state.camera_yaw < 0.0 {
+                    state.camera_yaw += 360.0;
+                }
+                if state.camera_yaw >= 360.0 {
+                    state.camera_yaw -= 360.0;
+                }
                 state.camera_pitch = (state.camera_pitch - event.delta.y * ORBIT_SENSITIVITY)
                     .clamp(MIN_PITCH, MAX_PITCH);
             } else {
@@ -742,8 +767,7 @@ pub fn handle_3d_camera_controls(
                     state.chase_orbit_override = true;
                 }
                 let pitch_delta = scroll_y * 0.05;
-                state.camera_pitch = (state.camera_pitch + pitch_delta)
-                    .clamp(MIN_PITCH, MAX_PITCH);
+                state.camera_pitch = (state.camera_pitch + pitch_delta).clamp(MIN_PITCH, MAX_PITCH);
             }
         }
     } else {
@@ -756,7 +780,8 @@ pub fn handle_3d_camera_controls(
             if state.chase_active && !state.chase_orbit_override {
                 state.chase_orbit_override = true;
             }
-            state.camera_altitude = (state.camera_altitude - scroll_y * ALTITUDE_SCROLL_SENSITIVITY)
+            state.camera_altitude = (state.camera_altitude
+                - scroll_y * ALTITUDE_SCROLL_SENSITIVITY)
                 .clamp(MIN_CAMERA_ALTITUDE, MAX_CAMERA_ALTITUDE);
         }
     }
@@ -810,7 +835,10 @@ fn sync_center_to_map_state(
 pub fn update_tile_elevation(
     state: Res<View3DState>,
     map_state: Res<crate::MapState>,
-    mut tile_query: Query<(&mut Transform, &crate::tiles::TileFadeState), With<bevy_slippy_tiles::MapTile>>,
+    mut tile_query: Query<
+        (&mut Transform, &crate::tiles::TileFadeState),
+        With<bevy_slippy_tiles::MapTile>,
+    >,
 ) {
     if state.is_3d_active() {
         let ground_z = state.altitude_to_z(state.ground_elevation_ft);
@@ -833,7 +861,14 @@ pub fn update_tile_elevation(
 pub fn update_aircraft_3d_transform(
     state: Res<View3DState>,
     config: Res<crate::config::AppConfig>,
-    mut aircraft_query: Query<(&crate::Aircraft, Option<&crate::aircraft::InterpolationState>, &mut Transform), Without<crate::AircraftLabel>>,
+    mut aircraft_query: Query<
+        (
+            &crate::Aircraft,
+            Option<&crate::aircraft::InterpolationState>,
+            &mut Transform,
+        ),
+        Without<crate::AircraftLabel>,
+    >,
     mut label_query: Query<(&crate::AircraftLabel, &mut Visibility)>,
 ) {
     if state.is_3d_active() {
@@ -863,8 +898,7 @@ pub fn update_aircraft_3d_transform(
 
             let base_rot = crate::camera::BASE_ROT_YUP;
             if let Some(heading) = heading {
-                transform.rotation =
-                    Quat::from_rotation_y((-heading).to_radians()) * base_rot;
+                transform.rotation = Quat::from_rotation_y((-heading).to_radians()) * base_rot;
             } else {
                 transform.rotation = base_rot;
             }
@@ -889,7 +923,10 @@ pub fn update_aircraft_3d_transform(
 pub fn fade_distant_sprites(
     state: Res<View3DState>,
     camera_query: Query<&Transform, With<crate::MapCamera>>,
-    mut aircraft_query: Query<(&Transform, &mut Sprite), (With<crate::Aircraft>, Without<crate::MapCamera>)>,
+    mut aircraft_query: Query<
+        (&Transform, &mut Sprite),
+        (With<crate::Aircraft>, Without<crate::MapCamera>),
+    >,
 ) {
     if !state.is_3d_active() {
         // Reset aircraft alpha when leaving 3D mode
@@ -964,7 +1001,13 @@ fn fix_aircraft_model_materials(
 ) {
     let want_unlit = !state.is_3d_active();
     for children in aircraft_query.iter() {
-        fix_materials_in_hierarchy(children, &children_query, &mesh_query, &mut materials, want_unlit);
+        fix_materials_in_hierarchy(
+            children,
+            &children_query,
+            &mesh_query,
+            &mut materials,
+            want_unlit,
+        );
     }
 }
 
@@ -977,11 +1020,9 @@ fn fix_materials_in_hierarchy(
 ) {
     for child in children.iter() {
         if let Ok(mat_handle) = mesh_query.get(child) {
-            let needs_fix = materials
-                .get(mat_handle.id())
-                .is_some_and(|m| {
-                    !matches!(m.alpha_mode, AlphaMode::Opaque) || m.unlit != want_unlit
-                });
+            let needs_fix = materials.get(mat_handle.id()).is_some_and(|m| {
+                !matches!(m.alpha_mode, AlphaMode::Opaque) || m.unlit != want_unlit
+            });
             if needs_fix {
                 if let Some(material) = materials.get_mut(mat_handle.id()) {
                     material.alpha_mode = AlphaMode::Opaque;
@@ -990,7 +1031,13 @@ fn fix_materials_in_hierarchy(
             }
         }
         if let Ok(grandchildren) = children_query.get(child) {
-            fix_materials_in_hierarchy(grandchildren, children_query, mesh_query, materials, want_unlit);
+            fix_materials_in_hierarchy(
+                grandchildren,
+                children_query,
+                mesh_query,
+                materials,
+                want_unlit,
+            );
         }
     }
 }
@@ -1008,41 +1055,72 @@ impl Plugin for View3DPlugin {
             .init_resource::<sky::MoonState>()
             .init_resource::<sky::TimeState>()
             .add_systems(Startup, sky::setup_sky)
-            .add_systems(Update, (
-                toggle_3d_view,
-                animate_view_transition,
-                handle_3d_camera_controls,
-                update_3d_camera
+            .add_systems(
+                Update,
+                (
+                    toggle_3d_view,
+                    animate_view_transition,
+                    handle_3d_camera_controls,
+                    update_3d_camera
+                        .after(animate_view_transition)
+                        .after(crate::ZoomSet::Change),
+                ),
+            )
+            .add_systems(
+                Update,
+                update_tile_elevation
                     .after(animate_view_transition)
                     .after(crate::ZoomSet::Change),
-            ))
-            .add_systems(Update, update_tile_elevation
-                .after(animate_view_transition)
-                .after(crate::ZoomSet::Change))
-            .add_systems(Update, update_aircraft_3d_transform
-                .after(crate::camera::update_aircraft_positions))
+            )
+            .add_systems(
+                Update,
+                update_aircraft_3d_transform.after(crate::camera::update_aircraft_positions),
+            )
             .add_systems(Update, fix_aircraft_model_materials)
             .add_systems(Update, sky::update_sky_visibility)
             .add_systems(Update, sky::sync_sky_camera.after(update_3d_camera))
             .add_systems(Update, sky::sync_time_offset)
-            .add_systems(Update, sky::update_sun_position.after(sky::sync_time_offset))
-            .add_systems(Update, sky::update_moon_position.after(sky::sync_time_offset))
+            .add_systems(
+                Update,
+                sky::update_sun_position.after(sky::sync_time_offset),
+            )
+            .add_systems(
+                Update,
+                sky::update_moon_position.after(sky::sync_time_offset),
+            )
             .add_systems(Update, sky::update_star_visibility)
-            .add_systems(Update, sky::manage_camera_mode
-                .after(animate_view_transition)
-                .after(update_3d_camera)
-                .after(sky::update_sun_position))
+            .add_systems(
+                Update,
+                sky::manage_camera_mode
+                    .after(animate_view_transition)
+                    .after(update_3d_camera)
+                    .after(sky::update_sun_position),
+            )
             .add_systems(Update, sky::sync_ground_plane.after(update_3d_camera))
             .add_systems(Update, sky::sync_sky_dome.after(update_3d_camera))
-            .add_systems(Update, sky::update_sky_dome_colors.after(sky::update_sun_position))
-            .add_systems(Update, sky::update_ground_plane_color.after(sky::update_sun_position))
-            .add_systems(Update, sky::update_exposure_for_time.after(sky::update_sun_position))
-            .add_systems(Update, sky::update_fog_color_for_time.after(sky::update_sun_position))
-            .add_systems(Update, fade_distant_sprites
-                .after(update_3d_camera)
-                .after(update_tile_elevation))
-            .add_systems(Update, update_distance_fog
-                .after(animate_view_transition))
+            .add_systems(
+                Update,
+                sky::update_sky_dome_colors.after(sky::update_sun_position),
+            )
+            .add_systems(
+                Update,
+                sky::update_ground_plane_color.after(sky::update_sun_position),
+            )
+            .add_systems(
+                Update,
+                sky::update_exposure_for_time.after(sky::update_sun_position),
+            )
+            .add_systems(
+                Update,
+                sky::update_fog_color_for_time.after(sky::update_sun_position),
+            )
+            .add_systems(
+                Update,
+                fade_distant_sprites
+                    .after(update_3d_camera)
+                    .after(update_tile_elevation),
+            )
+            .add_systems(Update, update_distance_fog.after(animate_view_transition))
             .add_systems(Update, crate::hud::render_camera_hud)
             .init_resource::<crate::debug_3d_hud::Debug3DHudState>()
             .add_systems(Update, crate::debug_3d_hud::render_debug_3d_hud);

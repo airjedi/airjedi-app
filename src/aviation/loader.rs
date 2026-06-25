@@ -2,8 +2,8 @@ use bevy::prelude::*;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use crate::data::{cache_path, is_cache_fresh, download_file_blocking, DataFile};
-use super::types::{Airport, Runway, Navaid};
+use super::types::{Airport, Navaid, Runway};
+use crate::data::{cache_path, download_file_blocking, is_cache_fresh, DataFile};
 
 /// Resource containing all aviation data
 #[derive(Resource, Default)]
@@ -61,8 +61,8 @@ impl AviationData {
 /// Load airports from cached CSV
 fn load_airports() -> Result<Vec<Airport>, String> {
     let path = cache_path(DataFile::Airports.filename());
-    let mut rdr = csv::Reader::from_path(&path)
-        .map_err(|e| format!("Failed to open airports.csv: {}", e))?;
+    let mut rdr =
+        csv::Reader::from_path(&path).map_err(|e| format!("Failed to open airports.csv: {}", e))?;
 
     let mut airports = Vec::new();
     for result in rdr.deserialize() {
@@ -80,8 +80,8 @@ fn load_airports() -> Result<Vec<Airport>, String> {
 /// Load runways from cached CSV
 fn load_runways() -> Result<Vec<Runway>, String> {
     let path = cache_path(DataFile::Runways.filename());
-    let mut rdr = csv::Reader::from_path(&path)
-        .map_err(|e| format!("Failed to open runways.csv: {}", e))?;
+    let mut rdr =
+        csv::Reader::from_path(&path).map_err(|e| format!("Failed to open runways.csv: {}", e))?;
 
     let mut runways = Vec::new();
     for result in rdr.deserialize() {
@@ -98,8 +98,8 @@ fn load_runways() -> Result<Vec<Runway>, String> {
 /// Load navaids from cached CSV
 fn load_navaids() -> Result<Vec<Navaid>, String> {
     let path = cache_path(DataFile::Navaids.filename());
-    let mut rdr = csv::Reader::from_path(&path)
-        .map_err(|e| format!("Failed to open navaids.csv: {}", e))?;
+    let mut rdr =
+        csv::Reader::from_path(&path).map_err(|e| format!("Failed to open navaids.csv: {}", e))?;
 
     let mut navaids = Vec::new();
     for result in rdr.deserialize() {
@@ -125,8 +125,7 @@ pub fn start_aviation_data_loading(
     aviation_data.loading_state = LoadingState::Downloading;
     info!("Starting aviation data loading in background thread...");
 
-    let result_handle: Arc<Mutex<Option<Result<LoadedData, String>>>> =
-        Arc::new(Mutex::new(None));
+    let result_handle: Arc<Mutex<Option<Result<LoadedData, String>>>> = Arc::new(Mutex::new(None));
     let handle = result_handle.clone();
 
     std::thread::spawn(move || {
@@ -139,7 +138,11 @@ pub fn start_aviation_data_loading(
                         error!("Failed to acquire lock for aviation data loading");
                         return;
                     };
-                    *lock = Some(Err(format!("Failed to download {}: {}", file.filename(), e)));
+                    *lock = Some(Err(format!(
+                        "Failed to download {}: {}",
+                        file.filename(),
+                        e
+                    )));
                     return;
                 }
             }

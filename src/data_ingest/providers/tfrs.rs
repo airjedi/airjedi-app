@@ -35,10 +35,7 @@ impl DataProvider for TfrProvider {
     }
 
     fn pipeline_stages(&self) -> Vec<Box<dyn PipelineStage>> {
-        vec![
-            Box::new(TfrParseStage),
-            Box::new(TfrValidateStage),
-        ]
+        vec![Box::new(TfrParseStage), Box::new(TfrValidateStage)]
     }
 
     fn metadata(&self) -> ProviderMeta {
@@ -150,7 +147,8 @@ fn parse_tfr_feature(feature: &Value, fetched_at: chrono::DateTime<Utc>) -> Opti
         .get("LAST_MODIFICATION_DATETIME")
         .and_then(|v| parse_tfr_compact_datetime(v))
         .or_else(|| {
-            props.get("EFFECTIVE")
+            props
+                .get("EFFECTIVE")
                 .or_else(|| props.get("effective"))
                 .and_then(|v| parse_tfr_datetime(v))
         })
@@ -477,10 +475,8 @@ mod tests {
             ..Default::default()
         };
 
-        let stages: Vec<Box<dyn PipelineStage>> = vec![
-            Box::new(TfrParseStage),
-            Box::new(TfrValidateStage),
-        ];
+        let stages: Vec<Box<dyn PipelineStage>> =
+            vec![Box::new(TfrParseStage), Box::new(TfrValidateStage)];
         let result = run_pipeline(&stages, data).unwrap();
 
         assert_eq!(result.records.len(), 1);

@@ -4,8 +4,8 @@
 //! Each tile gets its own mesh with heights baked into vertex positions.
 
 use bevy::asset::RenderAssetUsages;
-use bevy::prelude::*;
 use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::prelude::*;
 
 use super::heightmap::HeightmapData;
 
@@ -86,12 +86,7 @@ pub(crate) fn generate_terrain_mesh(
     // For each edge where the neighbor has fewer subdivisions, intermediate
     // vertices are linearly interpolated between the coarser grid points.
     // This eliminates T-junction cracks at LOD boundaries.
-    stitch_edge_vertices(
-        &mut positions,
-        resolution,
-        verts_per_side,
-        neighbor_lod,
-    );
+    stitch_edge_vertices(&mut positions, resolution, verts_per_side, neighbor_lod);
 
     // Generate triangle indices: two triangles per grid cell.
     let quad_count = (resolution * resolution) as usize;
@@ -128,7 +123,10 @@ pub(crate) fn generate_terrain_mesh(
         );
     }
 
-    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
@@ -219,9 +217,7 @@ fn stitch_edge_vertices(
     // For a given edge, `our_count` = resolution + 1 vertices.
     // The neighbor has `neighbor_res + 1` vertices along the same edge.
     // We only stitch when the neighbor is strictly coarser (lower resolution).
-    let stitch_edge = |positions: &mut [[f32; 3]],
-                       edge_indices: &[u32],
-                       neighbor_res: u32| {
+    let stitch_edge = |positions: &mut [[f32; 3]], edge_indices: &[u32], neighbor_res: u32| {
         if neighbor_res >= resolution || neighbor_res == 0 || resolution % neighbor_res != 0 {
             return; // Same/higher res or not evenly divisible — skip.
         }

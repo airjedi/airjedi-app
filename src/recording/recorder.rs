@@ -123,7 +123,10 @@ impl RecordingState {
         self.writer = None;
 
         if let Some(ref path) = self.file_path {
-            info!("Stopped recording. {} frames saved to {:?}", self.frame_count, path);
+            info!(
+                "Stopped recording. {} frames saved to {:?}",
+                self.frame_count, path
+            );
         }
     }
 
@@ -166,17 +169,12 @@ impl RecordingState {
 
     /// Get recording duration in seconds
     pub fn duration_secs(&self) -> u64 {
-        self.start_time
-            .map(|t| t.elapsed().as_secs())
-            .unwrap_or(0)
+        self.start_time.map(|t| t.elapsed().as_secs()).unwrap_or(0)
     }
 }
 
 /// System to record aircraft positions each frame
-pub fn record_frame(
-    mut recording: ResMut<RecordingState>,
-    aircraft_query: Query<&Aircraft>,
-) {
+pub fn record_frame(mut recording: ResMut<RecordingState>, aircraft_query: Query<&Aircraft>) {
     if !recording.is_recording {
         return;
     }
@@ -215,4 +213,3 @@ pub fn toggle_recording(
         }
     }
 }
-

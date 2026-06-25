@@ -1,9 +1,9 @@
 pub mod gnn;
 pub mod spatial_index;
 
-use std::collections::HashMap;
 use crate::prelude_imports::*;
 use crate::types::TargetCategory;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct Assignment {
@@ -67,6 +67,8 @@ impl Default for AssociatorConfig {
 impl AssociatorConfig {
     #[must_use]
     pub fn gate_for(&self, category: &TargetCategory) -> &GateParams {
-        self.gate_profiles.get(category).unwrap_or(&self.default_gate)
+        self.gate_profiles
+            .get(category)
+            .unwrap_or(&self.default_gate)
     }
 }

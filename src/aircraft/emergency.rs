@@ -1,13 +1,13 @@
 use bevy::prelude::*;
 use bevy_slippy_tiles::*;
 
-use crate::{Aircraft, MapState};
 use crate::geo::CoordinateConverter;
+use crate::{Aircraft, MapState};
 
 /// Emergency squawk codes
-pub const SQUAWK_HIJACK: &str = "7500";      // Aircraft hijacking
-pub const SQUAWK_RADIO_FAIL: &str = "7600";  // Radio failure
-pub const SQUAWK_EMERGENCY: &str = "7700";   // General emergency
+pub const SQUAWK_HIJACK: &str = "7500"; // Aircraft hijacking
+pub const SQUAWK_RADIO_FAIL: &str = "7600"; // Radio failure
+pub const SQUAWK_EMERGENCY: &str = "7700"; // General emergency
 
 /// Resource to track active emergency alerts
 #[derive(Resource, Default)]
@@ -30,9 +30,9 @@ pub struct EmergencyInfo {
 /// Type of emergency based on squawk code
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EmergencyType {
-    Hijack,     // 7500
-    RadioFail,  // 7600
-    General,    // 7700
+    Hijack,    // 7500
+    RadioFail, // 7600
+    General,   // 7700
 }
 
 impl EmergencyType {
@@ -55,9 +55,9 @@ impl EmergencyType {
 
     pub fn color(&self) -> Color {
         match self {
-            EmergencyType::Hijack => Color::srgb(1.0, 0.0, 0.0),     // Bright red
-            EmergencyType::RadioFail => Color::srgb(1.0, 0.5, 0.0),  // Orange
-            EmergencyType::General => Color::srgb(1.0, 0.2, 0.2),    // Red
+            EmergencyType::Hijack => Color::srgb(1.0, 0.0, 0.0), // Bright red
+            EmergencyType::RadioFail => Color::srgb(1.0, 0.5, 0.0), // Orange
+            EmergencyType::General => Color::srgb(1.0, 0.2, 0.2), // Red
         }
     }
 }
@@ -161,30 +161,32 @@ pub fn update_emergency_banner(
     }
 
     // Create emergency banner at top of screen
-    commands.spawn((
-        Node {
-            position_type: PositionType::Absolute,
-            top: Val::Px(40.0),
-            left: Val::Percent(50.0),
-            margin: UiRect::left(Val::Px(-200.0)), // Center the 400px wide banner
-            width: Val::Px(400.0),
-            padding: UiRect::all(Val::Px(10.0)),
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            ..default()
-        },
-        BackgroundColor(theme.text_error().with_alpha(0.9)),
-        EmergencyBanner,
-    )).with_children(|parent| {
-        parent.spawn((
-            Text::new("EMERGENCY ALERT"),
-            TextFont {
-                font_size: 18.0,
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(40.0),
+                left: Val::Percent(50.0),
+                margin: UiRect::left(Val::Px(-200.0)), // Center the 400px wide banner
+                width: Val::Px(400.0),
+                padding: UiRect::all(Val::Px(10.0)),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
                 ..default()
             },
-            TextColor(Color::WHITE),
-        ));
-    });
+            BackgroundColor(theme.text_error().with_alpha(0.9)),
+            EmergencyBanner,
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                Text::new("EMERGENCY ALERT"),
+                TextFont {
+                    font_size: 18.0,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+            ));
+        });
 }
 
 /// System to update emergency banner text with current emergencies
@@ -201,11 +203,17 @@ pub fn update_emergency_banner_text(
         for child in children.iter() {
             if let Ok(mut text) = text_query.get_mut(child) {
                 // Build emergency text
-                let emergency_text: Vec<String> = alert_state.active_emergencies
+                let emergency_text: Vec<String> = alert_state
+                    .active_emergencies
                     .iter()
                     .map(|e| {
                         let callsign = e.callsign.as_deref().unwrap_or(&e.icao);
-                        format!("{}: {} ({})", e.emergency_type.description(), callsign, e.squawk)
+                        format!(
+                            "{}: {} ({})",
+                            e.emergency_type.description(),
+                            callsign,
+                            e.squawk
+                        )
                     })
                     .collect();
 

@@ -1,22 +1,32 @@
-use bevy::prelude::*;
-use bevy::camera::visibility::RenderLayers;
-use airjedi_fusion::{Track, TrackerState, TrackQuality, TrackStatus, TargetClassification};
-use airjedi_fusion::types::{TargetCategory, IdentifierType};
-use crate::aircraft::components::{Aircraft, AircraftLabel, FusionTrackLink};
-use crate::aircraft::{TrailHistory, InterpolationState};
-use crate::aircraft::picking::{on_aircraft_click, on_aircraft_hover, on_aircraft_out};
 use crate::adsb::sync::AircraftModelRegistry;
+use crate::aircraft::components::{Aircraft, AircraftLabel, FusionTrackLink};
+use crate::aircraft::picking::{on_aircraft_click, on_aircraft_hover, on_aircraft_out};
+use crate::aircraft::{InterpolationState, TrailHistory};
 use crate::constants;
-use crate::RenderCategory;
 use crate::theme::AppTheme;
+use crate::RenderCategory;
+use airjedi_fusion::types::{IdentifierType, TargetCategory};
+use airjedi_fusion::{TargetClassification, Track, TrackQuality, TrackStatus, TrackerState};
+use bevy::camera::visibility::RenderLayers;
+use bevy::prelude::*;
 
 pub fn sync_tracks_to_visuals(
     mut commands: Commands,
     fusion_tracks: Query<
-        (Entity, &Track, &TrackerState, &TrackQuality, &TargetClassification),
+        (
+            Entity,
+            &Track,
+            &TrackerState,
+            &TrackQuality,
+            &TargetClassification,
+        ),
         Changed<TrackerState>,
     >,
-    mut visuals: Query<(&FusionTrackLink, &mut Aircraft, Option<&mut InterpolationState>)>,
+    mut visuals: Query<(
+        &FusionTrackLink,
+        &mut Aircraft,
+        Option<&mut InterpolationState>,
+    )>,
     visual_lookup: Query<(Entity, &FusionTrackLink)>,
     label_query: Query<(Entity, &AircraftLabel)>,
     model_registry: Option<Res<AircraftModelRegistry>>,
@@ -82,7 +92,8 @@ pub fn sync_tracks_to_visuals(
                     if let Some(mut interp) = interp_opt {
                         crate::aircraft::interpolation::update_interpolation_on_adsb(
                             &mut interp,
-                            lat, lon,
+                            lat,
+                            lon,
                             Some(alt_ft),
                             heading.map(|h| h as f32),
                             Some(speed_kts),
@@ -94,20 +105,20 @@ pub fn sync_tracks_to_visuals(
                 }
             }
         } else if is_air_target(classification.category) {
-            let icao = track.cooperative_ids
+            let icao = track
+                .cooperative_ids
                 .iter()
                 .find(|id| id.id_type == IdentifierType::Icao)
                 .map(|id| id.id.clone())
                 .unwrap_or_else(|| format!("TRK-{}", &track.id.0.to_string()[..8]));
 
-            let callsign = track.cooperative_ids
+            let callsign = track
+                .cooperative_ids
                 .iter()
                 .find(|id| id.id_type == IdentifierType::Callsign)
                 .map(|id| id.id.clone());
 
-            let type_info = type_db
-                .as_ref()
-                .and_then(|db| db.lookup(&icao));
+            let type_info = type_db.as_ref().and_then(|db| db.lookup(&icao));
 
             let type_code = type_info.as_ref().and_then(|i| i.type_code.clone());
             let registration = type_info.as_ref().and_then(|i| i.registration.clone());
@@ -115,7 +126,8 @@ pub fn sync_tracks_to_visuals(
             let model_handle = model_registry.get_model(type_code.as_deref());
             let correction = model_registry.get_correction(type_code.as_deref());
 
-            let display_name = callsign.as_deref()
+            let display_name = callsign
+                .as_deref()
                 .filter(|s| !s.trim().is_empty())
                 .or(registration.as_deref())
                 .unwrap_or(&icao);
@@ -148,7 +160,8 @@ pub fn sync_tracks_to_visuals(
                 },
                 TrailHistory::default(),
                 InterpolationState::new(
-                    lat, lon,
+                    lat,
+                    lon,
                     Some(alt_ft),
                     heading.map(|h| h as f32),
                     Some(speed_kts),
@@ -166,11 +179,7 @@ pub fn sync_tracks_to_visuals(
                 .observe(on_aircraft_out)
                 .id();
 
-            let label_text = format!(
-                "{}\n{}",
-                display_name,
-                format!("{} ft", alt_ft),
-            );
+            let label_text = format!("{}\n{}", display_name, format!("{} ft", alt_ft),);
 
             commands.spawn((
                 Name::new(format!("Label: {}", aircraft_name)),
@@ -199,7 +208,12 @@ fn is_air_target(category: TargetCategory) -> bool {
     )
 }
 
-fn compute_heading_from_ecef(lat_deg: f64, lon_deg: f64, vel_ecef: &[f64; 3], speed_mps: f64) -> Option<f64> {
+fn compute_heading_from_ecef(
+    lat_deg: f64,
+    lon_deg: f64,
+    vel_ecef: &[f64; 3],
+    speed_mps: f64,
+) -> Option<f64> {
     if speed_mps < 1.0 {
         return None;
     }
@@ -214,7 +228,8 @@ fn compute_heading_from_ecef(lat_deg: f64, lon_deg: f64, vel_ecef: &[f64; 3], sp
 
     // ECEF to ENU rotation
     let ve = -sin_lon * vel_ecef[0] + cos_lon * vel_ecef[1];
-    let vn = -sin_lat * cos_lon * vel_ecef[0] - sin_lat * sin_lon * vel_ecef[1] + cos_lat * vel_ecef[2];
+    let vn =
+        -sin_lat * cos_lon * vel_ecef[0] - sin_lat * sin_lon * vel_ecef[1] + cos_lat * vel_ecef[2];
 
     let heading = ve.atan2(vn).to_degrees();
     Some(((heading % 360.0) + 360.0) % 360.0)

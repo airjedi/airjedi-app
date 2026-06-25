@@ -36,7 +36,8 @@ impl DataProvider for FaaClassAirspaceProvider {
         // Fetch all Class B/C + SUA using pagination (200 features per page)
         // to avoid overwhelming reqwest with the full 28+ MB response.
         let where_clause = "CLASS%20IN%20(%27B%27%2C%27C%27)%20OR%20TYPE_CODE%20IN%20(%27R%27%2C%27MOA%27%2C%27W%27%2C%27A%27)";
-        let fields = "IDENT,NAME,CLASS,TYPE_CODE,LOCAL_TYPE,UPPER_VAL,UPPER_CODE,LOWER_VAL,LOWER_CODE";
+        let fields =
+            "IDENT,NAME,CLASS,TYPE_CODE,LOCAL_TYPE,UPPER_VAL,UPPER_CODE,LOWER_VAL,LOWER_CODE";
         let page_size = 200;
 
         let client = reqwest::blocking::Client::builder()
@@ -53,14 +54,20 @@ impl DataProvider for FaaClassAirspaceProvider {
                 FAA_ADDS_AIRSPACE_URL, where_clause, fields, page_size, offset,
             );
 
-            let response = client.get(&url).send()
-                .map_err(|e| ProviderError::Network(format!("FAA ADDS fetch failed (offset {}): {}", offset, e)))?;
+            let response = client.get(&url).send().map_err(|e| {
+                ProviderError::Network(format!("FAA ADDS fetch failed (offset {}): {}", offset, e))
+            })?;
 
-            let bytes = response.bytes()
-                .map_err(|e| ProviderError::Network(format!("Failed to read response (offset {}): {}", offset, e)))?;
+            let bytes = response.bytes().map_err(|e| {
+                ProviderError::Network(format!(
+                    "Failed to read response (offset {}): {}",
+                    offset, e
+                ))
+            })?;
 
-            let page: serde_json::Value = serde_json::from_slice(&bytes)
-                .map_err(|e| ProviderError::Parse(format!("Invalid JSON (offset {}): {}", offset, e)))?;
+            let page: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| {
+                ProviderError::Parse(format!("Invalid JSON (offset {}): {}", offset, e))
+            })?;
 
             let features = page["features"].as_array();
             let count = features.map(|f| f.len()).unwrap_or(0);
@@ -69,8 +76,12 @@ impl DataProvider for FaaClassAirspaceProvider {
                 all_features.extend(feats.iter().cloned());
             }
 
-            info!("FAA ADDS airspace: fetched {} features (offset {}, total so far {})",
-                count, offset, all_features.len());
+            info!(
+                "FAA ADDS airspace: fetched {} features (offset {}, total so far {})",
+                count,
+                offset,
+                all_features.len()
+            );
 
             if count < page_size {
                 break; // last page
@@ -84,10 +95,16 @@ impl DataProvider for FaaClassAirspaceProvider {
             "features": all_features,
         });
 
-        let data = serde_json::to_vec(&geojson)
-            .map_err(|e| ProviderError::Parse(format!("Failed to serialize combined GeoJSON: {}", e)))?;
+        let data = serde_json::to_vec(&geojson).map_err(|e| {
+            ProviderError::Parse(format!("Failed to serialize combined GeoJSON: {}", e))
+        })?;
 
-        let source = format!("{}?where={} ({} features)", FAA_ADDS_AIRSPACE_URL, where_clause, all_features.len());
+        let source = format!(
+            "{}?where={} ({} features)",
+            FAA_ADDS_AIRSPACE_URL,
+            where_clause,
+            all_features.len()
+        );
 
         Ok(RawFetchResult {
             data,
@@ -116,14 +133,23 @@ impl PipelineStage for FaaAirspaceParseStage {
         let bytes = data
             .raw_bytes
             .as_ref()
-            .ok_or_else(|| PipelineError::StageError { stage: "faa_adds_airspace_parse".into(), message: "No raw data to parse".into() })?;
+            .ok_or_else(|| PipelineError::StageError {
+                stage: "faa_adds_airspace_parse".into(),
+                message: "No raw data to parse".into(),
+            })?;
 
-        let geojson: Value = serde_json::from_slice(bytes)
-            .map_err(|e| PipelineError::StageError { stage: "faa_adds_airspace_parse".into(), message: format!("Invalid JSON: {}", e) })?;
+        let geojson: Value =
+            serde_json::from_slice(bytes).map_err(|e| PipelineError::StageError {
+                stage: "faa_adds_airspace_parse".into(),
+                message: format!("Invalid JSON: {}", e),
+            })?;
 
         let features = geojson["features"]
             .as_array()
-            .ok_or_else(|| PipelineError::StageError { stage: "faa_adds_airspace_parse".into(), message: "No 'features' array in GeoJSON".into() })?;
+            .ok_or_else(|| PipelineError::StageError {
+                stage: "faa_adds_airspace_parse".into(),
+                message: "No 'features' array in GeoJSON".into(),
+            })?;
 
         let now = Utc::now();
         let mut records = Vec::new();

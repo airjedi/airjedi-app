@@ -93,10 +93,7 @@ fn inject_obs(app: &mut App, obs: SensorObservation) {
 }
 
 fn track_count(app: &mut App) -> usize {
-    app.world_mut()
-        .query::<&Track>()
-        .iter(app.world())
-        .count()
+    app.world_mut().query::<&Track>().iter(app.world()).count()
 }
 
 fn get_track_positions(app: &mut App) -> Vec<(f64, f64, f64)> {
@@ -246,7 +243,10 @@ fn continuous_updates_without_nats() {
     }
 
     let count = track_count(&mut app);
-    assert!(count >= 1, "Should maintain at least 1 track over 50 cycles");
+    assert!(
+        count >= 1,
+        "Should maintain at least 1 track over 50 cycles"
+    );
 }
 
 // ============================================================================
@@ -447,8 +447,12 @@ fn upstream_fused_track_enters_local_pipeline() {
     let classification = TargetClassification::default();
 
     let msg = messages::track_to_message(
-        &track, &tracker, &quality, &classification,
-        "upstream-node", FusionTier::Global,
+        &track,
+        &tracker,
+        &quality,
+        &classification,
+        "upstream-node",
+        FusionTier::Global,
     );
 
     // Convert to observation and inject into local pipeline
@@ -494,8 +498,12 @@ fn mixed_local_and_upstream_observations() {
     let classification = TargetClassification::default();
 
     let msg = messages::track_to_message(
-        &track, &tracker, &quality, &classification,
-        "remote", FusionTier::Regional,
+        &track,
+        &tracker,
+        &quality,
+        &classification,
+        "remote",
+        FusionTier::Regional,
     );
     let upstream_obs = messages::message_to_observation(&msg, Utc::now());
     inject_obs(&mut app, upstream_obs);
@@ -591,10 +599,17 @@ fn empty_update_cycles_are_safe() {
     // Run 100 empty cycles - no observations, no NATS
     run_updates(&mut app, 100);
 
-    assert_eq!(track_count(&mut app), 0, "No tracks should exist with no input");
+    assert_eq!(
+        track_count(&mut app),
+        0,
+        "No tracks should exist with no input"
+    );
 
     // Now inject one and verify it still works
     inject_obs(&mut app, make_obs(37.0, -97.0, "LATE_START"));
     run_updates(&mut app, 10);
-    assert!(track_count(&mut app) >= 1, "Pipeline should still work after idle period");
+    assert!(
+        track_count(&mut app) >= 1,
+        "Pipeline should still work after idle period"
+    );
 }

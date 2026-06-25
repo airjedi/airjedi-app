@@ -2,13 +2,15 @@ use bevy::prelude::*;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use crate::data::{cache_path, is_cache_fresh, download_file_blocking, DataFile};
-use super::typeinfo::{AircraftTypeRecord, AircraftTypeInfo, AircraftTypeDatabase, LoadingState};
 use super::components::Aircraft;
+use super::typeinfo::{AircraftTypeDatabase, AircraftTypeInfo, AircraftTypeRecord, LoadingState};
+use crate::data::{cache_path, download_file_blocking, is_cache_fresh, DataFile};
 
 /// Resource holding the shared handle to the background loading thread result.
 #[derive(Resource)]
-pub(crate) struct AircraftTypeLoadHandle(Arc<Mutex<Option<Result<HashMap<String, AircraftTypeRecord>, String>>>>);
+pub(crate) struct AircraftTypeLoadHandle(
+    Arc<Mutex<Option<Result<HashMap<String, AircraftTypeRecord>, String>>>>,
+);
 
 /// Load aircraft type records from the cached CSV
 fn load_aircraft_database() -> Result<HashMap<String, AircraftTypeRecord>, String> {
@@ -38,10 +40,7 @@ fn load_aircraft_database() -> Result<HashMap<String, AircraftTypeRecord>, Strin
 }
 
 /// Startup system: spawns a background thread to download and parse the aircraft type database.
-pub fn start_aircraft_type_loading(
-    mut commands: Commands,
-    mut db: ResMut<AircraftTypeDatabase>,
-) {
+pub fn start_aircraft_type_loading(mut commands: Commands, mut db: ResMut<AircraftTypeDatabase>) {
     if db.loading_state != LoadingState::NotStarted {
         return;
     }
@@ -61,7 +60,11 @@ pub fn start_aircraft_type_loading(
                     error!("Failed to acquire lock for aircraft type loading");
                     return;
                 };
-                *lock = Some(Err(format!("Failed to download {}: {}", file.filename(), e)));
+                *lock = Some(Err(format!(
+                    "Failed to download {}: {}",
+                    file.filename(),
+                    e
+                )));
                 return;
             }
         }

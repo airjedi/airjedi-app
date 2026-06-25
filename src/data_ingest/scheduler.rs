@@ -1,10 +1,10 @@
-use std::sync::{Arc, Mutex};
 use bevy::prelude::*;
 use crossbeam_channel::Sender;
+use std::sync::{Arc, Mutex};
 use tokio_cron_scheduler::{Job, JobScheduler};
 
 use super::canonical::CanonicalRecord;
-use super::pipeline::{PipelineData, run_pipeline};
+use super::pipeline::{run_pipeline, PipelineData};
 use super::provider::{DataProvider, FetchContext};
 use super::IngestMessage;
 
@@ -50,7 +50,8 @@ pub fn spawn_scheduler(
             }
 
             rt.block_on(async move {
-                let sched = JobScheduler::new().await
+                let sched = JobScheduler::new()
+                    .await
                     .expect("failed to create job scheduler");
 
                 for provider in &providers {
@@ -70,7 +71,9 @@ pub fn spawn_scheduler(
                             // starving the scheduler's async executor
                             tokio::task::spawn_blocking(move || {
                                 run_provider(&p, &ctx, &sender);
-                            }).await.ok();
+                            })
+                            .await
+                            .ok();
                         })
                     });
 
@@ -93,7 +96,10 @@ pub fn spawn_scheduler(
                     return;
                 }
 
-                info!("Data ingest scheduler started with {} providers", providers.len());
+                info!(
+                    "Data ingest scheduler started with {} providers",
+                    providers.len()
+                );
 
                 // Keep the scheduler alive
                 loop {
@@ -151,7 +157,11 @@ fn run_provider(
         return;
     }
 
-    info!("Provider '{}': produced {} records", name, result.records.len());
+    info!(
+        "Provider '{}': produced {} records",
+        name,
+        result.records.len()
+    );
 
     // Cache to disk
     super::save_records_to_file(&name, &result.records);

@@ -3,13 +3,12 @@
 /// Shows axis gizmo, side-view schematic, and numerical readouts in the
 /// bottom-left corner of the map viewport. Toggled with F10. Only renders
 /// when 3D mode is active.
-
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 
 use crate::camera::AircraftCamera;
 use crate::dock::DockTreeState;
-use crate::theme::{AppTheme, to_egui_color32, to_egui_color32_alpha};
+use crate::theme::{to_egui_color32, to_egui_color32_alpha, AppTheme};
 use crate::view3d::{TransitionState, View3DState};
 
 #[derive(Resource, Default)]
@@ -119,7 +118,11 @@ fn paint_axis_gizmo(ui: &mut egui::Ui, camera_transform: &Transform) {
 
     // Sort by z (depth): most negative = farthest = draw first
     let mut sorted: Vec<(&str, Vec3, egui::Color32)> = axes.to_vec();
-    sorted.sort_by(|a, b| a.1.z.partial_cmp(&b.1.z).unwrap_or(std::cmp::Ordering::Equal));
+    sorted.sort_by(|a, b| {
+        a.1.z
+            .partial_cmp(&b.1.z)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     for (label, view_dir, color) in &sorted {
         let screen_x = view_dir.x * GIZMO_RADIUS;
@@ -128,10 +131,7 @@ fn paint_axis_gizmo(ui: &mut egui::Ui, camera_transform: &Transform) {
         let endpoint = center + egui::vec2(screen_x, screen_y);
 
         // Line from center to endpoint
-        painter.line_segment(
-            [center, endpoint],
-            egui::Stroke::new(2.0, *color),
-        );
+        painter.line_segment([center, endpoint], egui::Stroke::new(2.0, *color));
 
         // Label at the tip
         let label_pos = center + egui::vec2(screen_x * 1.2, screen_y * 1.2);
@@ -149,11 +149,7 @@ fn paint_axis_gizmo(ui: &mut egui::Ui, camera_transform: &Transform) {
     painter.circle_filled(center, 2.0, origin_color);
 }
 
-fn paint_side_view(
-    ui: &mut egui::Ui,
-    view3d: &View3DState,
-    camera_transform: &Transform,
-) {
+fn paint_side_view(ui: &mut egui::Ui, view3d: &View3DState, camera_transform: &Transform) {
     let (response, painter) = ui.allocate_painter(
         egui::vec2(SIDE_VIEW_WIDTH, SIDE_VIEW_HEIGHT),
         egui::Sense::hover(),
@@ -161,16 +157,14 @@ fn paint_side_view(
     let rect = response.rect;
 
     // Background
-    painter.rect_filled(
-        rect,
-        egui::CornerRadius::same(3),
-        gizmo_bg(),
-    );
+    painter.rect_filled(rect, egui::CornerRadius::same(3), gizmo_bg());
 
     let cam_height = camera_transform.translation.y;
     let ground_y = view3d.altitude_to_z(view3d.ground_elevation_ft);
     let orbit_y = view3d.altitude_to_z(
-        view3d.follow_altitude_ft.unwrap_or(view3d.ground_elevation_ft),
+        view3d
+            .follow_altitude_ft
+            .unwrap_or(view3d.ground_elevation_ft),
     );
 
     // Vertical range for normalization
@@ -206,8 +200,11 @@ fn paint_side_view(
             egui::pos2(rect.left() + 2.0, ground_screen_y),
             egui::pos2(rect.right() - 2.0, rect.bottom() - 2.0),
         );
-        painter.rect_filled(fill_rect, egui::CornerRadius::ZERO,
-            egui::Color32::from_rgba_unmultiplied(60, 45, 30, 80));
+        painter.rect_filled(
+            fill_rect,
+            egui::CornerRadius::ZERO,
+            egui::Color32::from_rgba_unmultiplied(60, 45, 30, 80),
+        );
     }
 
     // Camera position (small triangle)
@@ -226,12 +223,9 @@ fn paint_side_view(
 
     // Orbit center (orange dot)
     let orbit_x = rect.center().x + 8.0;
-    let orbit_screen_y = orbit_screen_y.clamp(rect.top() + margin_top, rect.bottom() - margin_bottom);
-    painter.circle_filled(
-        egui::pos2(orbit_x, orbit_screen_y),
-        3.0,
-        ORBIT_ORANGE,
-    );
+    let orbit_screen_y =
+        orbit_screen_y.clamp(rect.top() + margin_top, rect.bottom() - margin_bottom);
+    painter.circle_filled(egui::pos2(orbit_x, orbit_screen_y), 3.0, ORBIT_ORANGE);
 
     // View direction line from camera toward orbit center
     let dash_color = egui::Color32::from_rgba_unmultiplied(0xcd, 0xd6, 0xf4, 100);
@@ -247,7 +241,10 @@ fn paint_side_view(
     painter.rect_stroke(
         rect,
         egui::CornerRadius::same(3),
-        egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(0x45, 0x47, 0x5a, 120)),
+        egui::Stroke::new(
+            1.0,
+            egui::Color32::from_rgba_unmultiplied(0x45, 0x47, 0x5a, 120),
+        ),
         egui::epaint::StrokeKind::Inside,
     );
 }
@@ -262,7 +259,12 @@ fn paint_readouts(
     let cam = camera_transform.translation;
 
     // CAM section
-    ui.label(egui::RichText::new("CAM").size(LABEL_SIZE).color(dim_color).monospace());
+    ui.label(
+        egui::RichText::new("CAM")
+            .size(LABEL_SIZE)
+            .color(dim_color)
+            .monospace(),
+    );
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         colored_axis_label(ui, "x", AXIS_RED, cam.x);
@@ -277,10 +279,17 @@ fn paint_readouts(
     ui.add_space(2.0);
 
     // ORBIT section
-    let orbit_alt_ft = view3d.follow_altitude_ft.unwrap_or(view3d.ground_elevation_ft);
+    let orbit_alt_ft = view3d
+        .follow_altitude_ft
+        .unwrap_or(view3d.ground_elevation_ft);
     let orbit_y = view3d.altitude_to_z(orbit_alt_ft);
     // Orbit center x/z are approximately 0 relative to camera (derived from map center)
-    ui.label(egui::RichText::new("ORBIT").size(LABEL_SIZE).color(dim_color).monospace());
+    ui.label(
+        egui::RichText::new("ORBIT")
+            .size(LABEL_SIZE)
+            .color(dim_color)
+            .monospace(),
+    );
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         colored_axis_label(ui, "y", AXIS_GREEN, orbit_y);
@@ -289,7 +298,12 @@ fn paint_readouts(
     ui.add_space(2.0);
 
     // STATE section
-    ui.label(egui::RichText::new("STATE").size(LABEL_SIZE).color(dim_color).monospace());
+    ui.label(
+        egui::RichText::new("STATE")
+            .size(LABEL_SIZE)
+            .color(dim_color)
+            .monospace(),
+    );
 
     // Mode
     let (mode_text, mode_color) = if view3d.chase_active {
@@ -302,24 +316,40 @@ fn paint_readouts(
         ("orbit", AXIS_GREEN)
     };
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("MODE ").size(VALUE_SIZE).color(dim_color).monospace());
-        ui.label(egui::RichText::new(mode_text).size(VALUE_SIZE).color(mode_color).monospace());
+        ui.label(
+            egui::RichText::new("MODE ")
+                .size(VALUE_SIZE)
+                .color(dim_color)
+                .monospace(),
+        );
+        ui.label(
+            egui::RichText::new(mode_text)
+                .size(VALUE_SIZE)
+                .color(mode_color)
+                .monospace(),
+        );
     });
 
     // Pitch/Yaw
     ui.label(
-        egui::RichText::new(format!("PIT {:.0}  YAW {:.0}", view3d.camera_pitch, view3d.camera_yaw))
-            .size(VALUE_SIZE)
-            .color(text_color)
-            .monospace(),
+        egui::RichText::new(format!(
+            "PIT {:.0}  YAW {:.0}",
+            view3d.camera_pitch, view3d.camera_yaw
+        ))
+        .size(VALUE_SIZE)
+        .color(text_color)
+        .monospace(),
     );
 
     // Altitude
     ui.label(
-        egui::RichText::new(format!("ALT {} ft", format_number(view3d.camera_altitude as i32)))
-            .size(VALUE_SIZE)
-            .color(text_color)
-            .monospace(),
+        egui::RichText::new(format!(
+            "ALT {} ft",
+            format_number(view3d.camera_altitude as i32)
+        ))
+        .size(VALUE_SIZE)
+        .color(text_color)
+        .monospace(),
     );
 
     // Distance from camera to orbit center
@@ -333,15 +363,23 @@ fn paint_readouts(
 
     // Ground elevation (raw, not exaggerated)
     ui.label(
-        egui::RichText::new(format!("GND {} ft", format_number(view3d.ground_elevation_ft)))
-            .size(VALUE_SIZE)
-            .color(text_color)
-            .monospace(),
+        egui::RichText::new(format!(
+            "GND {} ft",
+            format_number(view3d.ground_elevation_ft)
+        ))
+        .size(VALUE_SIZE)
+        .color(text_color)
+        .monospace(),
     );
 }
 
 fn colored_axis_label(ui: &mut egui::Ui, axis: &str, color: egui::Color32, value: f32) {
-    ui.label(egui::RichText::new(axis).size(VALUE_SIZE).color(color).monospace());
+    ui.label(
+        egui::RichText::new(axis)
+            .size(VALUE_SIZE)
+            .color(color)
+            .monospace(),
+    );
     ui.label(
         egui::RichText::new(format!("{:>7.0} ", value))
             .size(VALUE_SIZE)

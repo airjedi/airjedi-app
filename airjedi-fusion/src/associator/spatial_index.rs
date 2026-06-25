@@ -1,6 +1,6 @@
-use std::collections::{HashMap, HashSet};
 use crate::prelude_imports::*;
 use crate::types::TrackId;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Resource)]
 pub struct SpatialIndex {

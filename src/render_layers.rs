@@ -15,16 +15,16 @@ use bevy::camera::visibility::RenderLayers;
 pub struct RenderCategory;
 
 impl RenderCategory {
-    pub const DEFAULT: usize = 0;      // Aircraft, lights, SceneRoot children
-    pub const TILES_2D: usize = 1;     // Tile sprites (2D rendering)
-    pub const GIZMOS: usize = 2;       // Trails, navaids, runways
-    pub const OVERLAYS_2D: usize = 4;  // Day/night tint, weather overlays
-    pub const LABELS: usize = 5;       // Text2d labels
-    pub const TILES_3D: usize = 6;     // Tile mesh quads (3D rendering)
-    pub const GROUND: usize = 7;       // Ground plane (3D only)
-    pub const SKY: usize = 8;          // Star field (3D only)
-    pub const AIRSPACE: usize = 9;     // Airspace volumes (2D and 3D)
-    pub const UI: usize = 11;          // egui (unchanged)
+    pub const DEFAULT: usize = 0; // Aircraft, lights, SceneRoot children
+    pub const TILES_2D: usize = 1; // Tile sprites (2D rendering)
+    pub const GIZMOS: usize = 2; // Trails, navaids, runways
+    pub const OVERLAYS_2D: usize = 4; // Day/night tint, weather overlays
+    pub const LABELS: usize = 5; // Text2d labels
+    pub const TILES_3D: usize = 6; // Tile mesh quads (3D rendering)
+    pub const GROUND: usize = 7; // Ground plane (3D only)
+    pub const SKY: usize = 8; // Star field (3D only)
+    pub const AIRSPACE: usize = 9; // Airspace volumes (2D and 3D)
+    pub const UI: usize = 11; // egui (unchanged)
 }
 
 /// Layers the Map Camera (Camera2d) subscribes to in 2D mode.
@@ -40,10 +40,7 @@ pub fn layers_2d_map() -> RenderLayers {
 /// Layers the Map Camera (Camera2d) subscribes to in 3D mode.
 /// Only gizmos and labels -- tiles are mesh quads on Camera3d.
 pub fn layers_3d_overlay() -> RenderLayers {
-    RenderLayers::from_layers(&[
-        RenderCategory::GIZMOS,
-        RenderCategory::LABELS,
-    ])
+    RenderLayers::from_layers(&[RenderCategory::GIZMOS, RenderCategory::LABELS])
 }
 
 /// All layers Camera2d might ever need (union of 2D map + 3D overlay).

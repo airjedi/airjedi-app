@@ -1,16 +1,16 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use crossbeam_channel::{Receiver, Sender, TrySendError};
-use futures::StreamExt;
-use crate::prelude_imports::*;
+use super::messages::{self, FusedTrackMessage};
+use super::NatsTransportConfig;
 use crate::classification::TargetClassification;
 use crate::config::FusionConfig;
 use crate::filter::TrackerState;
+use crate::prelude_imports::*;
 use crate::sensor::{FusionTier, SensorObservation};
 use crate::systems::ObservationBuffer;
 use crate::track::{Track, TrackQuality, TrackStatus};
-use super::messages::{self, FusedTrackMessage};
-use super::NatsTransportConfig;
+use crossbeam_channel::{Receiver, Sender, TrySendError};
+use futures::StreamExt;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 #[derive(Resource)]
 pub struct NatsTransport {
@@ -30,11 +30,7 @@ impl NatsTransport {
         let server_url = config.server_url.clone();
         let node_id = config.node_id.clone();
         let tier = config.tier;
-        let publish_subject = format!(
-            "fusion.{}.{}.tracks",
-            tier_str(tier),
-            node_id,
-        );
+        let publish_subject = format!("fusion.{}.{}.tracks", tier_str(tier), node_id,);
         let subscriptions = config.subscriptions.clone();
         let js_config = config.jetstream.clone();
 
@@ -54,9 +50,7 @@ impl NatsTransport {
                 let client = match async_nats::connect(&server_url).await {
                     Ok(c) => c,
                     Err(e) => {
-                        bevy_log::warn!(
-                            "NATS connection failed: {e}. Running in offline mode."
-                        );
+                        bevy_log::warn!("NATS connection failed: {e}. Running in offline mode.");
                         return;
                     }
                 };
@@ -86,10 +80,7 @@ impl NatsTransport {
                 let pub_connected = connected_clone.clone();
                 tokio::spawn(async move {
                     while let Ok(bytes) = pub_rx.recv() {
-                        if let Err(e) = pub_client
-                            .publish(pub_subj.clone(), bytes.into())
-                            .await
-                        {
+                        if let Err(e) = pub_client.publish(pub_subj.clone(), bytes.into()).await {
                             bevy_log::warn!("NATS publish error: {e}");
                             pub_connected.store(false, Ordering::Release);
                         }
@@ -99,40 +90,30 @@ impl NatsTransport {
                 // Subscriber tasks
                 for sub_config in &subscriptions {
                     let sub_tx = sub_tx.clone();
-                    let mut subscriber =
-                        match client.subscribe(sub_config.subject.clone()).await {
-                            Ok(s) => s,
-                            Err(e) => {
-                                bevy_log::warn!(
-                                    "NATS subscribe error for {}: {e}",
-                                    sub_config.subject
-                                );
-                                continue;
-                            }
-                        };
+                    let mut subscriber = match client.subscribe(sub_config.subject.clone()).await {
+                        Ok(s) => s,
+                        Err(e) => {
+                            bevy_log::warn!("NATS subscribe error for {}: {e}", sub_config.subject);
+                            continue;
+                        }
+                    };
 
                     tokio::spawn(async move {
                         while let Some(msg) = subscriber.next().await {
-                            match bincode::deserialize::<FusedTrackMessage>(
-                                msg.payload.as_ref(),
-                            ) {
+                            match bincode::deserialize::<FusedTrackMessage>(msg.payload.as_ref()) {
                                 Ok(update) => {
                                     let obs = messages::message_to_observation(
                                         &update,
                                         chrono::Utc::now(),
                                     );
-                                    if let Err(TrySendError::Full(_)) =
-                                        sub_tx.try_send(obs)
-                                    {
+                                    if let Err(TrySendError::Full(_)) = sub_tx.try_send(obs) {
                                         bevy_log::warn!(
                                             "NATS subscribe buffer full, dropping message"
                                         );
                                     }
                                 }
                                 Err(e) => {
-                                    bevy_log::warn!(
-                                        "Failed to decode NATS message: {e}"
-                                    );
+                                    bevy_log::warn!("Failed to decode NATS message: {e}");
                                 }
                             }
                         }

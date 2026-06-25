@@ -2,20 +2,19 @@ use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 use bevy_slippy_tiles::ZoomLevel;
 
-use crate::config::{AppConfig, AircraftBookmark, LocationBookmark, save_config};
 use crate::aircraft::AircraftListState;
-use crate::theme::{AppTheme, to_egui_color32, to_egui_color32_alpha};
-use crate::{MapState, ZoomState, Aircraft};
+use crate::config::{save_config, AircraftBookmark, AppConfig, LocationBookmark};
+use crate::theme::{to_egui_color32, to_egui_color32_alpha, AppTheme};
+use crate::{Aircraft, MapState, ZoomState};
 
 pub struct BookmarksPlugin;
 
 impl Plugin for BookmarksPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<BookmarksPanelState>()
-            .add_systems(Update, (
-                toggle_bookmarks_panel,
-                highlight_bookmarked_aircraft,
-            ));
+        app.init_resource::<BookmarksPanelState>().add_systems(
+            Update,
+            (toggle_bookmarks_panel, highlight_bookmarked_aircraft),
+        );
     }
 }
 
@@ -73,10 +72,16 @@ pub fn render_bookmarks_panel(
         .show(ctx, |ui| {
             // Tab bar
             ui.horizontal(|ui| {
-                if ui.selectable_label(panel_state.selected_tab == 0, "Locations").clicked() {
+                if ui
+                    .selectable_label(panel_state.selected_tab == 0, "Locations")
+                    .clicked()
+                {
                     panel_state.selected_tab = 0;
                 }
-                if ui.selectable_label(panel_state.selected_tab == 1, "Aircraft").clicked() {
+                if ui
+                    .selectable_label(panel_state.selected_tab == 1, "Aircraft")
+                    .clicked()
+                {
                     panel_state.selected_tab = 1;
                 }
             });
@@ -86,11 +91,25 @@ pub fn render_bookmarks_panel(
             match panel_state.selected_tab {
                 0 => {
                     // Location bookmarks
-                    render_location_bookmarks(ui, &mut panel_state, &mut app_config, &mut map_state, &mut zoom_state, bookmark_color);
+                    render_location_bookmarks(
+                        ui,
+                        &mut panel_state,
+                        &mut app_config,
+                        &mut map_state,
+                        &mut zoom_state,
+                        bookmark_color,
+                    );
                 }
                 1 => {
                     // Aircraft bookmarks
-                    render_aircraft_bookmarks(ui, &mut panel_state, &mut app_config, &list_state, &aircraft_query, bookmark_color);
+                    render_aircraft_bookmarks(
+                        ui,
+                        &mut panel_state,
+                        &mut app_config,
+                        &list_state,
+                        &aircraft_query,
+                        bookmark_color,
+                    );
                 }
                 _ => {}
             }
@@ -120,10 +139,16 @@ pub fn render_bookmarks_pane_content(
 
     // Tab bar
     ui.horizontal(|ui| {
-        if ui.selectable_label(panel_state.selected_tab == 0, "Locations").clicked() {
+        if ui
+            .selectable_label(panel_state.selected_tab == 0, "Locations")
+            .clicked()
+        {
             panel_state.selected_tab = 0;
         }
-        if ui.selectable_label(panel_state.selected_tab == 1, "Aircraft").clicked() {
+        if ui
+            .selectable_label(panel_state.selected_tab == 1, "Aircraft")
+            .clicked()
+        {
             panel_state.selected_tab = 1;
         }
     });
@@ -132,10 +157,24 @@ pub fn render_bookmarks_pane_content(
 
     match panel_state.selected_tab {
         0 => {
-            render_location_bookmarks(ui, panel_state, app_config, map_state, zoom_state, bookmark_color);
+            render_location_bookmarks(
+                ui,
+                panel_state,
+                app_config,
+                map_state,
+                zoom_state,
+                bookmark_color,
+            );
         }
         1 => {
-            render_aircraft_bookmarks(ui, panel_state, app_config, list_state, aircraft_query, bookmark_color);
+            render_aircraft_bookmarks(
+                ui,
+                panel_state,
+                app_config,
+                list_state,
+                aircraft_query,
+                bookmark_color,
+            );
         }
         _ => {}
     }
@@ -185,31 +224,36 @@ fn render_location_bookmarks(
     let mut to_remove: Option<usize> = None;
     let mut to_jump: Option<usize> = None;
 
-    egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
-        for (idx, bookmark) in app_config.bookmarks.locations.iter().enumerate() {
-            ui.horizontal(|ui| {
-                // Bookmark name (clickable to jump)
-                if ui.button(egui::RichText::new(&bookmark.name).color(bookmark_color)).clicked() {
-                    to_jump = Some(idx);
-                }
-
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("X").clicked() {
-                        to_remove = Some(idx);
+    egui::ScrollArea::vertical()
+        .max_height(200.0)
+        .show(ui, |ui| {
+            for (idx, bookmark) in app_config.bookmarks.locations.iter().enumerate() {
+                ui.horizontal(|ui| {
+                    // Bookmark name (clickable to jump)
+                    if ui
+                        .button(egui::RichText::new(&bookmark.name).color(bookmark_color))
+                        .clicked()
+                    {
+                        to_jump = Some(idx);
                     }
-                    ui.label(
-                        egui::RichText::new(format!("z{}", bookmark.zoom))
-                            .size(10.0)
-                            .color(egui::Color32::GRAY),
-                    );
-                });
-            });
-        }
 
-        if app_config.bookmarks.locations.is_empty() {
-            ui.label(egui::RichText::new("No location bookmarks").color(egui::Color32::GRAY));
-        }
-    });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("X").clicked() {
+                            to_remove = Some(idx);
+                        }
+                        ui.label(
+                            egui::RichText::new(format!("z{}", bookmark.zoom))
+                                .size(10.0)
+                                .color(egui::Color32::GRAY),
+                        );
+                    });
+                });
+            }
+
+            if app_config.bookmarks.locations.is_empty() {
+                ui.label(egui::RichText::new("No location bookmarks").color(egui::Color32::GRAY));
+            }
+        });
 
     // Handle actions
     if let Some(idx) = to_jump {
@@ -241,12 +285,17 @@ fn render_aircraft_bookmarks(
     // Add selected aircraft button
     if let Some(ref selected_icao) = list_state.selected_icao {
         // Check if already bookmarked
-        let is_bookmarked = app_config.bookmarks.aircraft.iter().any(|b| &b.icao == selected_icao);
+        let is_bookmarked = app_config
+            .bookmarks
+            .aircraft
+            .iter()
+            .any(|b| &b.icao == selected_icao);
         if !is_bookmarked {
             ui.horizontal(|ui| {
                 if ui.button("+ Bookmark Selected").clicked() {
                     // Find the aircraft to get its callsign
-                    let callsign = aircraft_query.iter()
+                    let callsign = aircraft_query
+                        .iter()
                         .find(|a| &a.icao == selected_icao)
                         .and_then(|a| a.callsign.clone());
 
@@ -269,7 +318,10 @@ fn render_aircraft_bookmarks(
                 ui.text_edit_singleline(&mut panel_state.aircraft_note);
             });
         } else {
-            ui.label(egui::RichText::new(format!("{} is bookmarked", selected_icao)).color(bookmark_color));
+            ui.label(
+                egui::RichText::new(format!("{} is bookmarked", selected_icao))
+                    .color(bookmark_color),
+            );
         }
     } else {
         ui.label(egui::RichText::new("Select an aircraft to bookmark").color(egui::Color32::GRAY));
@@ -282,47 +334,60 @@ fn render_aircraft_bookmarks(
     // List of aircraft bookmarks
     let mut to_remove: Option<usize> = None;
 
-    egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
-        for (idx, bookmark) in app_config.bookmarks.aircraft.iter().enumerate() {
-            // Check if this aircraft is currently visible
-            let is_visible = aircraft_query.iter().any(|a| a.icao == bookmark.icao);
-            let status_color = if is_visible {
-                egui::Color32::from_rgb(100, 200, 100) // Green for visible
-            } else {
-                egui::Color32::GRAY
-            };
+    egui::ScrollArea::vertical()
+        .max_height(200.0)
+        .show(ui, |ui| {
+            for (idx, bookmark) in app_config.bookmarks.aircraft.iter().enumerate() {
+                // Check if this aircraft is currently visible
+                let is_visible = aircraft_query.iter().any(|a| a.icao == bookmark.icao);
+                let status_color = if is_visible {
+                    egui::Color32::from_rgb(100, 200, 100) // Green for visible
+                } else {
+                    egui::Color32::GRAY
+                };
 
-            ui.horizontal(|ui| {
-                // Status indicator
-                ui.label(egui::RichText::new(if is_visible { "[*]" } else { "[ ]" }).color(status_color));
+                ui.horizontal(|ui| {
+                    // Status indicator
+                    ui.label(
+                        egui::RichText::new(if is_visible { "[*]" } else { "[ ]" })
+                            .color(status_color),
+                    );
 
-                // ICAO
-                ui.label(egui::RichText::new(&bookmark.icao).color(bookmark_color).monospace());
+                    // ICAO
+                    ui.label(
+                        egui::RichText::new(&bookmark.icao)
+                            .color(bookmark_color)
+                            .monospace(),
+                    );
 
-                // Callsign if available
-                if let Some(ref callsign) = bookmark.callsign {
-                    ui.label(egui::RichText::new(callsign).color(egui::Color32::LIGHT_GRAY));
-                }
-
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("X").clicked() {
-                        to_remove = Some(idx);
+                    // Callsign if available
+                    if let Some(ref callsign) = bookmark.callsign {
+                        ui.label(egui::RichText::new(callsign).color(egui::Color32::LIGHT_GRAY));
                     }
-                });
-            });
 
-            // Show note if present
-            if let Some(ref note) = bookmark.note {
-                ui.indent("note", |ui| {
-                    ui.label(egui::RichText::new(note).size(10.0).color(egui::Color32::GRAY));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("X").clicked() {
+                            to_remove = Some(idx);
+                        }
+                    });
                 });
+
+                // Show note if present
+                if let Some(ref note) = bookmark.note {
+                    ui.indent("note", |ui| {
+                        ui.label(
+                            egui::RichText::new(note)
+                                .size(10.0)
+                                .color(egui::Color32::GRAY),
+                        );
+                    });
+                }
             }
-        }
 
-        if app_config.bookmarks.aircraft.is_empty() {
-            ui.label(egui::RichText::new("No aircraft bookmarks").color(egui::Color32::GRAY));
-        }
-    });
+            if app_config.bookmarks.aircraft.is_empty() {
+                ui.label(egui::RichText::new("No aircraft bookmarks").color(egui::Color32::GRAY));
+            }
+        });
 
     // Handle removal
     if let Some(idx) = to_remove {

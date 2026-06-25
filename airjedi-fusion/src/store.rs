@@ -1,8 +1,8 @@
-use std::collections::{HashMap, VecDeque};
-use std::time::Duration;
 use crate::prelude_imports::*;
 use crate::sensor::SensorObservation;
-use crate::types::{TrackId, Timestamp};
+use crate::types::{Timestamp, TrackId};
+use std::collections::{HashMap, VecDeque};
+use std::time::Duration;
 
 #[derive(Debug, Clone)]
 pub struct StoredObservation {
@@ -62,10 +62,7 @@ impl TimelineStore {
         let mut obs = self.unassociated_obs.remove(unassociated_idx);
         obs.associated_track = Some(track_id.clone());
 
-        let buffer = self
-            .by_track
-            .entry(track_id.clone())
-            .or_default();
+        let buffer = self.by_track.entry(track_id.clone()).or_default();
 
         if buffer.len() >= self.config.max_observations_per_track {
             buffer.pop_front();
@@ -91,10 +88,7 @@ impl TimelineStore {
     }
 
     #[must_use]
-    pub fn latest_per_sensor(
-        &self,
-        track_id: &TrackId,
-    ) -> HashMap<String, &StoredObservation> {
+    pub fn latest_per_sensor(&self, track_id: &TrackId) -> HashMap<String, &StoredObservation> {
         let mut latest: HashMap<String, &StoredObservation> = HashMap::new();
         if let Some(buf) = self.by_track.get(track_id) {
             for obs in buf.iter().rev() {

@@ -16,32 +16,19 @@ fn load_fixture(filename: &str) -> Vec<u8> {
         .join("fixtures")
         .join("data_ingest")
         .join(filename);
-    std::fs::read(&path).unwrap_or_else(|e| {
-        panic!(
-            "Failed to read fixture file {}: {}",
-            path.display(),
-            e
-        )
-    })
+    std::fs::read(&path)
+        .unwrap_or_else(|e| panic!("Failed to read fixture file {}: {}", path.display(), e))
 }
 
 /// Helper: run raw bytes through a provider's pipeline stages.
-fn run_provider_pipeline(
-    provider: &dyn DataProvider,
-    raw: Vec<u8>,
-) -> Vec<CanonicalRecord> {
+fn run_provider_pipeline(provider: &dyn DataProvider, raw: Vec<u8>) -> Vec<CanonicalRecord> {
     let data = PipelineData {
         raw_bytes: Some(raw),
         ..Default::default()
     };
     let stages = provider.pipeline_stages();
-    let result = run_pipeline(&stages, data).unwrap_or_else(|e| {
-        panic!(
-            "Pipeline failed for provider '{}': {}",
-            provider.name(),
-            e
-        )
-    });
+    let result = run_pipeline(&stages, data)
+        .unwrap_or_else(|e| panic!("Pipeline failed for provider '{}': {}", provider.name(), e));
     result.records
 }
 
@@ -57,7 +44,9 @@ fn real_data_metar_parses_without_error() {
 
     assert_eq!(records.len(), 8, "expected 8 METAR records from fixture");
     assert!(
-        records.iter().all(|r| matches!(r, CanonicalRecord::Metar(_))),
+        records
+            .iter()
+            .all(|r| matches!(r, CanonicalRecord::Metar(_))),
         "all records should be Metar variant"
     );
 }
@@ -68,20 +57,38 @@ fn real_data_metar_kict_fields() {
     let provider = super::providers::aviation_weather::MetarProvider;
     let records = run_provider_pipeline(&provider, raw);
 
-    let kict = records.iter().find_map(|r| {
-        if let CanonicalRecord::Metar(m) = r {
-            if m.icao == "KICT" { Some(m) } else { None }
-        } else {
-            None
-        }
-    }).expect("should find KICT METAR");
+    let kict = records
+        .iter()
+        .find_map(|r| {
+            if let CanonicalRecord::Metar(m) = r {
+                if m.icao == "KICT" {
+                    Some(m)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+        .expect("should find KICT METAR");
 
-    assert_eq!(kict.wind_direction_deg, Some(110), "KICT wdir should be 110");
+    assert_eq!(
+        kict.wind_direction_deg,
+        Some(110),
+        "KICT wdir should be 110"
+    );
     assert_eq!(kict.wind_speed_kt, Some(6), "KICT wspd should be 6");
     assert_eq!(kict.wind_gust_kt, None, "KICT should have no gusts");
-    assert_eq!(kict.visibility_sm, Some(10.0), "KICT visibility should be 10+");
+    assert_eq!(
+        kict.visibility_sm,
+        Some(10.0),
+        "KICT visibility should be 10+"
+    );
     assert!(kict.temperature_c.is_some(), "KICT should have temperature");
-    assert!((kict.temperature_c.unwrap() - 6.1).abs() < 0.1, "KICT temp ~6.1C");
+    assert!(
+        (kict.temperature_c.unwrap() - 6.1).abs() < 0.1,
+        "KICT temp ~6.1C"
+    );
     assert_eq!(kict.flight_category, "IFR", "KICT fltCat should be IFR");
 
     // Altimeter should be converted from hPa (1015.3) to inHg (~29.98)
@@ -106,18 +113,33 @@ fn real_data_metar_kmci_low_visibility() {
     let provider = super::providers::aviation_weather::MetarProvider;
     let records = run_provider_pipeline(&provider, raw);
 
-    let kmci = records.iter().find_map(|r| {
-        if let CanonicalRecord::Metar(m) = r {
-            if m.icao == "KMCI" { Some(m) } else { None }
-        } else {
-            None
-        }
-    }).expect("should find KMCI METAR");
+    let kmci = records
+        .iter()
+        .find_map(|r| {
+            if let CanonicalRecord::Metar(m) = r {
+                if m.icao == "KMCI" {
+                    Some(m)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+        .expect("should find KMCI METAR");
 
     // KMCI has visib: 0.5 (numeric, not string)
-    assert_eq!(kmci.visibility_sm, Some(0.5), "KMCI visibility should be 0.5");
+    assert_eq!(
+        kmci.visibility_sm,
+        Some(0.5),
+        "KMCI visibility should be 0.5"
+    );
     assert_eq!(kmci.flight_category, "LIFR", "KMCI should be LIFR");
-    assert_eq!(kmci.ceiling_ft, Some(200), "KMCI ceiling should be 200 (OVC002)");
+    assert_eq!(
+        kmci.ceiling_ft,
+        Some(200),
+        "KMCI ceiling should be 200 (OVC002)"
+    );
 }
 
 #[test]
@@ -159,15 +181,25 @@ fn real_data_taf_kict_fields() {
     let provider = super::providers::aviation_weather::TafProvider;
     let records = run_provider_pipeline(&provider, raw);
 
-    let kict = records.iter().find_map(|r| {
-        if let CanonicalRecord::Taf(t) = r {
-            if t.icao == "KICT" { Some(t) } else { None }
-        } else {
-            None
-        }
-    }).expect("should find KICT TAF");
+    let kict = records
+        .iter()
+        .find_map(|r| {
+            if let CanonicalRecord::Taf(t) = r {
+                if t.icao == "KICT" {
+                    Some(t)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+        .expect("should find KICT TAF");
 
-    assert!(kict.raw_text.contains("TAF KICT"), "should contain raw TAF text");
+    assert!(
+        kict.raw_text.contains("TAF KICT"),
+        "should contain raw TAF text"
+    );
     // validTimeFrom is epoch seconds 1772517600 = 2026-03-03T06:00:00Z
     assert!(
         kict.valid_from.timestamp() > 0,
@@ -190,9 +222,15 @@ fn real_data_sigmet_parses_without_error() {
     let records = run_provider_pipeline(&provider, raw);
 
     // The fixture has 129 SIGMETs
-    assert!(records.len() > 50, "expected many SIGMET records, got {}", records.len());
     assert!(
-        records.iter().all(|r| matches!(r, CanonicalRecord::Sigmet(_))),
+        records.len() > 50,
+        "expected many SIGMET records, got {}",
+        records.len()
+    );
+    assert!(
+        records
+            .iter()
+            .all(|r| matches!(r, CanonicalRecord::Sigmet(_))),
         "all records should be Sigmet variant"
     );
 }
@@ -204,13 +242,16 @@ fn real_data_sigmet_has_coordinates() {
     let records = run_provider_pipeline(&provider, raw);
 
     // At least some SIGMETs should have polygon coordinates
-    let with_coords = records.iter().filter(|r| {
-        if let CanonicalRecord::Sigmet(s) = r {
-            !s.polygon.is_empty()
-        } else {
-            false
-        }
-    }).count();
+    let with_coords = records
+        .iter()
+        .filter(|r| {
+            if let CanonicalRecord::Sigmet(s) = r {
+                !s.polygon.is_empty()
+            } else {
+                false
+            }
+        })
+        .count();
 
     assert!(
         with_coords > 0,
@@ -247,9 +288,15 @@ fn real_data_airmet_parses_without_error() {
     let records = run_provider_pipeline(&provider, raw);
 
     // The fixture has 31 AIRMETs
-    assert!(records.len() > 20, "expected many AIRMET records, got {}", records.len());
     assert!(
-        records.iter().all(|r| matches!(r, CanonicalRecord::Airmet(_))),
+        records.len() > 20,
+        "expected many AIRMET records, got {}",
+        records.len()
+    );
+    assert!(
+        records
+            .iter()
+            .all(|r| matches!(r, CanonicalRecord::Airmet(_))),
         "all records should be Airmet variant"
     );
 }
@@ -307,9 +354,15 @@ fn real_data_pirep_parses_without_error() {
     let records = run_provider_pipeline(&provider, raw);
 
     // The fixture has 16 PIREPs
-    assert!(records.len() > 10, "expected many PIREP records, got {}", records.len());
     assert!(
-        records.iter().all(|r| matches!(r, CanonicalRecord::Pirep(_))),
+        records.len() > 10,
+        "expected many PIREP records, got {}",
+        records.len()
+    );
+    assert!(
+        records
+            .iter()
+            .all(|r| matches!(r, CanonicalRecord::Pirep(_))),
         "all records should be Pirep variant"
     );
 }
@@ -345,7 +398,10 @@ fn real_data_pirep_flight_level_conversion() {
     // First PIREP: fltLvl=30 should be converted to 3000 ft
     if let CanonicalRecord::Pirep(p) = &records[0] {
         assert_eq!(p.altitude_ft, 3000, "fltLvl 30 should convert to 3000 ft");
-        assert_eq!(p.report_type, "PIREP", "pirepType should map to report_type");
+        assert_eq!(
+            p.report_type, "PIREP",
+            "pirepType should map to report_type"
+        );
         assert!(p.aircraft_type.is_some(), "should have aircraft type");
     } else {
         panic!("expected Pirep record");
@@ -379,9 +435,15 @@ fn real_data_airports_csv_parses_without_error() {
     let records = run_provider_pipeline(&provider, raw);
 
     // The fixture has 51 data rows (header + 51 airports)
-    assert_eq!(records.len(), 50, "expected 50 airport records (header + 50 data rows)");
+    assert_eq!(
+        records.len(),
+        50,
+        "expected 50 airport records (header + 50 data rows)"
+    );
     assert!(
-        records.iter().all(|r| matches!(r, CanonicalRecord::Airport(_))),
+        records
+            .iter()
+            .all(|r| matches!(r, CanonicalRecord::Airport(_))),
         "all records should be Airport variant"
     );
 }
@@ -440,9 +502,15 @@ fn real_data_runways_csv_parses_without_error() {
     let provider = super::providers::our_airports::RunwaysProvider;
     let records = run_provider_pipeline(&provider, raw);
 
-    assert_eq!(records.len(), 50, "expected 50 runway records (header + 50 data rows)");
+    assert_eq!(
+        records.len(),
+        50,
+        "expected 50 runway records (header + 50 data rows)"
+    );
     assert!(
-        records.iter().all(|r| matches!(r, CanonicalRecord::Runway(_))),
+        records
+            .iter()
+            .all(|r| matches!(r, CanonicalRecord::Runway(_))),
         "all records should be Runway variant"
     );
 }
@@ -476,9 +544,15 @@ fn real_data_navaids_csv_parses_without_error() {
     let provider = super::providers::our_airports::NavaidsProvider;
     let records = run_provider_pipeline(&provider, raw);
 
-    assert_eq!(records.len(), 50, "expected 50 navaid records (header + 50 data rows)");
+    assert_eq!(
+        records.len(),
+        50,
+        "expected 50 navaid records (header + 50 data rows)"
+    );
     assert!(
-        records.iter().all(|r| matches!(r, CanonicalRecord::Navaid(_))),
+        records
+            .iter()
+            .all(|r| matches!(r, CanonicalRecord::Navaid(_))),
         "all records should be Navaid variant"
     );
 }
@@ -512,7 +586,10 @@ fn real_data_navaids_empty_airport_filtered() {
     // Second record "1B" Sable Island has no associated airport
     if let CanonicalRecord::Navaid(n) = &records[1] {
         assert_eq!(n.ident, "1B");
-        assert_eq!(n.associated_airport, None, "empty associated_airport should be None");
+        assert_eq!(
+            n.associated_airport, None,
+            "empty associated_airport should be None"
+        );
     } else {
         panic!("expected Navaid record");
     }
@@ -570,12 +647,10 @@ fn real_data_tfr_string_altitudes_parsed() {
 
     // First TFR: LOWALT="SFC" -> 0, HIGHALT="18000 MSL" -> 18000
     if let CanonicalRecord::Tfr(tfr) = &records[0] {
+        assert_eq!(tfr.lower_altitude_ft, Some(0), "SFC should parse to 0");
         assert_eq!(
-            tfr.lower_altitude_ft, Some(0),
-            "SFC should parse to 0"
-        );
-        assert_eq!(
-            tfr.upper_altitude_ft, Some(18000),
+            tfr.upper_altitude_ft,
+            Some(18000),
             "18000 MSL should parse to 18000"
         );
     } else {
@@ -585,7 +660,8 @@ fn real_data_tfr_string_altitudes_parsed() {
     // Third TFR: HIGHALT="FL180" -> 18000
     if let CanonicalRecord::Tfr(tfr) = &records[2] {
         assert_eq!(
-            tfr.upper_altitude_ft, Some(18000),
+            tfr.upper_altitude_ft,
+            Some(18000),
             "FL180 should parse to 18000"
         );
     } else {
@@ -602,7 +678,11 @@ fn real_data_tfr_multipolygon_handled() {
     // Third TFR is a MultiPolygon
     if let CanonicalRecord::Tfr(tfr) = &records[2] {
         assert_eq!(tfr.notam_id, "6/5678");
-        assert_eq!(tfr.polygon.len(), 5, "MultiPolygon outer ring should have 5 points");
+        assert_eq!(
+            tfr.polygon.len(),
+            5,
+            "MultiPolygon outer ring should have 5 points"
+        );
     } else {
         panic!("expected Tfr record");
     }
@@ -650,10 +730,13 @@ fn real_data_notam_parses_without_error() {
         raw_bytes: Some(raw),
         ..Default::default()
     };
-    let result = run_pipeline(&parse_stage_only, data)
-        .expect("NOTAM parse should succeed");
+    let result = run_pipeline(&parse_stage_only, data).expect("NOTAM parse should succeed");
 
-    assert_eq!(result.records.len(), 4, "expected 4 NOTAMs from fixture (before filtering)");
+    assert_eq!(
+        result.records.len(),
+        4,
+        "expected 4 NOTAMs from fixture (before filtering)"
+    );
 }
 
 #[test]
@@ -682,13 +765,20 @@ fn real_data_notam_kict_fields() {
     let provider = super::providers::notams::NotamProvider;
     let records = run_provider_pipeline(&provider, raw);
 
-    let kict_rwy = records.iter().find_map(|r| {
-        if let CanonicalRecord::Notam(n) = r {
-            if n.id == "01/234" { Some(n) } else { None }
-        } else {
-            None
-        }
-    }).expect("should find NOTAM 01/234");
+    let kict_rwy = records
+        .iter()
+        .find_map(|r| {
+            if let CanonicalRecord::Notam(n) = r {
+                if n.id == "01/234" {
+                    Some(n)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+        .expect("should find NOTAM 01/234");
 
     assert_eq!(kict_rwy.location, "ICT");
     assert!(
@@ -713,7 +803,9 @@ fn real_data_airspace_openair_parses_without_error() {
 
     assert_eq!(records.len(), 5, "expected 5 airspaces from fixture");
     assert!(
-        records.iter().all(|r| matches!(r, CanonicalRecord::Airspace(_))),
+        records
+            .iter()
+            .all(|r| matches!(r, CanonicalRecord::Airspace(_))),
         "all records should be Airspace variant"
     );
 }
@@ -724,13 +816,16 @@ fn real_data_airspace_classes() {
     let provider = super::providers::openaip::OpenAipProvider::new();
     let records = run_provider_pipeline(&provider, raw);
 
-    let classes: Vec<&str> = records.iter().filter_map(|r| {
-        if let CanonicalRecord::Airspace(a) = r {
-            Some(a.airspace_class.as_str())
-        } else {
-            None
-        }
-    }).collect();
+    let classes: Vec<&str> = records
+        .iter()
+        .filter_map(|r| {
+            if let CanonicalRecord::Airspace(a) = r {
+                Some(a.airspace_class.as_str())
+            } else {
+                None
+            }
+        })
+        .collect();
 
     assert_eq!(classes, vec!["C", "D", "R", "B", "E"]);
 }

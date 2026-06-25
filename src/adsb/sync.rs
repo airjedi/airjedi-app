@@ -1,20 +1,19 @@
 use bevy::prelude::*;
 use std::collections::HashMap;
 
-use bevy::camera::visibility::RenderLayers;
-use crate::{constants, Aircraft, AircraftLabel, RenderCategory};
-use crate::aircraft::TrailHistory;
-use crate::aircraft::picking::{on_aircraft_click, on_aircraft_hover, on_aircraft_out};
-use crate::aircraft::interpolation::{InterpolationState, update_interpolation_on_adsb};
-use crate::debug_panel::DebugPanelState;
 use super::connection::{AdsbAircraftData, ConnectionStatusText};
+use crate::aircraft::interpolation::{update_interpolation_on_adsb, InterpolationState};
+use crate::aircraft::picking::{on_aircraft_click, on_aircraft_hover, on_aircraft_out};
+use crate::aircraft::TrailHistory;
+use crate::debug_panel::DebugPanelState;
+use crate::{constants, Aircraft, AircraftLabel, RenderCategory};
+use bevy::camera::visibility::RenderLayers;
 
 use crate::theme::AppTheme;
 
 /// Type codes that should use the B737 model
 const B737_TYPES: &[&str] = &[
-    "B731", "B732", "B733", "B734", "B735", "B736", "B737", "B738", "B739",
-    "B37M", "B38M", "B39M",
+    "B731", "B732", "B733", "B734", "B735", "B736", "B737", "B738", "B739", "B37M", "B38M", "B39M",
 ];
 
 /// Correction transform applied to a model's child mesh entities after scene
@@ -115,7 +114,12 @@ pub fn sync_aircraft_from_adsb(
     mut commands: Commands,
     model_registry: Option<Res<AircraftModelRegistry>>,
     adsb_data: Option<Res<AdsbAircraftData>>,
-    mut aircraft_query: Query<(Entity, &mut Aircraft, &mut Transform, Option<&mut InterpolationState>)>,
+    mut aircraft_query: Query<(
+        Entity,
+        &mut Aircraft,
+        &mut Transform,
+        Option<&mut InterpolationState>,
+    )>,
     label_query: Query<(Entity, &AircraftLabel)>,
     mut debug: Option<ResMut<DebugPanelState>>,
     theme: Res<AppTheme>,
@@ -179,7 +183,8 @@ pub fn sync_aircraft_from_adsb(
                     if let Some(mut interp) = interp_opt {
                         update_interpolation_on_adsb(
                             &mut interp,
-                            lat, lon,
+                            lat,
+                            lon,
                             adsb_ac.altitude,
                             adsb_ac.track.map(|t| t as f32),
                             adsb_ac.velocity,
@@ -210,37 +215,38 @@ pub fn sync_aircraft_from_adsb(
             let correction = model_registry.get_correction(type_code.as_deref());
 
             let mut entity_commands = commands.spawn((
-                    Name::new(format!("Aircraft: {}", aircraft_name)),
-                    SceneRoot(model_handle),
-                    Transform::from_xyz(0.0, 0.0, constants::AIRCRAFT_Z_LAYER),
-                    Pickable::default(),
-                    Aircraft {
-                        icao: adsb_ac.icao.clone(),
-                        callsign: adsb_ac.callsign.clone(),
-                        latitude: lat,
-                        longitude: lon,
-                        altitude: adsb_ac.altitude,
-                        heading: adsb_ac.track.map(|t| t as f32),
-                        velocity: adsb_ac.velocity,
-                        vertical_rate: adsb_ac.vertical_rate,
-                        squawk: adsb_ac.squawk.clone(),
-                        is_on_ground: adsb_ac.is_on_ground,
-                        alert: adsb_ac.alert,
-                        emergency: adsb_ac.emergency,
-                        spi: adsb_ac.spi,
-                        last_seen: adsb_ac.last_seen,
-                    },
-                    TrailHistory::default(),
-                    InterpolationState::new(
-                        lat, lon,
-                        adsb_ac.altitude,
-                        adsb_ac.track.map(|t| t as f32),
-                        adsb_ac.velocity,
-                        adsb_ac.vertical_rate,
-                        adsb_ac.is_on_ground,
-                        time.elapsed_secs_f64(),
-                    ),
-                ));
+                Name::new(format!("Aircraft: {}", aircraft_name)),
+                SceneRoot(model_handle),
+                Transform::from_xyz(0.0, 0.0, constants::AIRCRAFT_Z_LAYER),
+                Pickable::default(),
+                Aircraft {
+                    icao: adsb_ac.icao.clone(),
+                    callsign: adsb_ac.callsign.clone(),
+                    latitude: lat,
+                    longitude: lon,
+                    altitude: adsb_ac.altitude,
+                    heading: adsb_ac.track.map(|t| t as f32),
+                    velocity: adsb_ac.velocity,
+                    vertical_rate: adsb_ac.vertical_rate,
+                    squawk: adsb_ac.squawk.clone(),
+                    is_on_ground: adsb_ac.is_on_ground,
+                    alert: adsb_ac.alert,
+                    emergency: adsb_ac.emergency,
+                    spi: adsb_ac.spi,
+                    last_seen: adsb_ac.last_seen,
+                },
+                TrailHistory::default(),
+                InterpolationState::new(
+                    lat,
+                    lon,
+                    adsb_ac.altitude,
+                    adsb_ac.track.map(|t| t as f32),
+                    adsb_ac.velocity,
+                    adsb_ac.vertical_rate,
+                    adsb_ac.is_on_ground,
+                    time.elapsed_secs_f64(),
+                ),
+            ));
             if let Some(corr) = correction {
                 entity_commands.insert(corr);
             }
@@ -267,9 +273,7 @@ pub fn sync_aircraft_from_adsb(
                 },
                 TextColor(theme.text_primary()),
                 Transform::from_xyz(0.0, 0.0, constants::LABEL_Z_LAYER),
-                AircraftLabel {
-                    aircraft_entity,
-                },
+                AircraftLabel { aircraft_entity },
                 RenderLayers::layer(RenderCategory::LABELS),
             ));
         }

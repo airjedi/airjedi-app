@@ -2,8 +2,8 @@ use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 use std::time::Instant;
 
+use crate::theme::{to_egui_color32, to_egui_color32_alpha, AppTheme};
 use crate::Aircraft;
-use crate::theme::{AppTheme, to_egui_color32, to_egui_color32_alpha};
 
 /// State for the statistics panel
 #[derive(Resource)]
@@ -59,7 +59,11 @@ impl AltitudeBandStats {
     }
 
     pub fn total(&self) -> usize {
-        self.ground_to_10k + self.ten_to_25k + self.twentyfive_to_40k + self.above_40k + self.unknown
+        self.ground_to_10k
+            + self.ten_to_25k
+            + self.twentyfive_to_40k
+            + self.above_40k
+            + self.unknown
     }
 }
 
@@ -122,76 +126,102 @@ pub fn render_stats_panel(
         .show(ctx, |ui| {
             // Total aircraft
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Total Aircraft:")
-                    .color(label_color)
-                    .size(11.0));
-                ui.label(egui::RichText::new(format!("{}", total_aircraft))
-                    .color(value_color)
-                    .size(12.0)
-                    .strong()
-                    .monospace());
+                ui.label(
+                    egui::RichText::new("Total Aircraft:")
+                        .color(label_color)
+                        .size(11.0),
+                );
+                ui.label(
+                    egui::RichText::new(format!("{}", total_aircraft))
+                        .color(value_color)
+                        .size(12.0)
+                        .strong()
+                        .monospace(),
+                );
             });
 
             ui.add_space(8.0);
 
             // Altitude bands section
-            ui.label(egui::RichText::new("By Altitude")
-                .color(label_color)
-                .size(10.0));
+            ui.label(
+                egui::RichText::new("By Altitude")
+                    .color(label_color)
+                    .size(10.0),
+            );
 
             egui::Grid::new("altitude_grid")
                 .num_columns(2)
                 .spacing([20.0, 2.0])
                 .show(ui, |ui| {
                     // Ground to 10k
-                    ui.label(egui::RichText::new("0 - 10,000 ft")
-                        .color(alt_low_color)
-                        .size(9.0));
-                    ui.label(egui::RichText::new(format!("{}", altitude_stats.ground_to_10k))
-                        .color(value_color)
-                        .size(10.0)
-                        .monospace());
+                    ui.label(
+                        egui::RichText::new("0 - 10,000 ft")
+                            .color(alt_low_color)
+                            .size(9.0),
+                    );
+                    ui.label(
+                        egui::RichText::new(format!("{}", altitude_stats.ground_to_10k))
+                            .color(value_color)
+                            .size(10.0)
+                            .monospace(),
+                    );
                     ui.end_row();
 
                     // 10k to 25k
-                    ui.label(egui::RichText::new("10,000 - 25,000 ft")
-                        .color(alt_med_color)
-                        .size(9.0));
-                    ui.label(egui::RichText::new(format!("{}", altitude_stats.ten_to_25k))
-                        .color(value_color)
-                        .size(10.0)
-                        .monospace());
+                    ui.label(
+                        egui::RichText::new("10,000 - 25,000 ft")
+                            .color(alt_med_color)
+                            .size(9.0),
+                    );
+                    ui.label(
+                        egui::RichText::new(format!("{}", altitude_stats.ten_to_25k))
+                            .color(value_color)
+                            .size(10.0)
+                            .monospace(),
+                    );
                     ui.end_row();
 
                     // 25k to 40k
-                    ui.label(egui::RichText::new("25,000 - 40,000 ft")
-                        .color(alt_high_color)
-                        .size(9.0));
-                    ui.label(egui::RichText::new(format!("{}", altitude_stats.twentyfive_to_40k))
-                        .color(value_color)
-                        .size(10.0)
-                        .monospace());
+                    ui.label(
+                        egui::RichText::new("25,000 - 40,000 ft")
+                            .color(alt_high_color)
+                            .size(9.0),
+                    );
+                    ui.label(
+                        egui::RichText::new(format!("{}", altitude_stats.twentyfive_to_40k))
+                            .color(value_color)
+                            .size(10.0)
+                            .monospace(),
+                    );
                     ui.end_row();
 
                     // Above 40k
-                    ui.label(egui::RichText::new("40,000+ ft")
-                        .color(alt_ultra_color)
-                        .size(9.0));
-                    ui.label(egui::RichText::new(format!("{}", altitude_stats.above_40k))
-                        .color(value_color)
-                        .size(10.0)
-                        .monospace());
+                    ui.label(
+                        egui::RichText::new("40,000+ ft")
+                            .color(alt_ultra_color)
+                            .size(9.0),
+                    );
+                    ui.label(
+                        egui::RichText::new(format!("{}", altitude_stats.above_40k))
+                            .color(value_color)
+                            .size(10.0)
+                            .monospace(),
+                    );
                     ui.end_row();
 
                     // Unknown
                     if altitude_stats.unknown > 0 {
-                        ui.label(egui::RichText::new("Unknown")
-                            .color(to_egui_color32(theme.bg_overlay()))
-                            .size(9.0));
-                        ui.label(egui::RichText::new(format!("{}", altitude_stats.unknown))
-                            .color(value_color)
-                            .size(10.0)
-                            .monospace());
+                        ui.label(
+                            egui::RichText::new("Unknown")
+                                .color(to_egui_color32(theme.bg_overlay()))
+                                .size(9.0),
+                        );
+                        ui.label(
+                            egui::RichText::new(format!("{}", altitude_stats.unknown))
+                                .color(value_color)
+                                .size(10.0)
+                                .monospace(),
+                        );
                         ui.end_row();
                     }
                 });
@@ -202,23 +232,31 @@ pub fn render_stats_panel(
 
             // Connection info
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Connection:")
-                    .color(label_color)
-                    .size(10.0));
-                ui.label(egui::RichText::new(&connection_status)
-                    .color(value_color)
-                    .size(10.0));
+                ui.label(
+                    egui::RichText::new("Connection:")
+                        .color(label_color)
+                        .size(10.0),
+                );
+                ui.label(
+                    egui::RichText::new(&connection_status)
+                        .color(value_color)
+                        .size(10.0),
+                );
             });
 
             // Session duration
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Session:")
-                    .color(label_color)
-                    .size(10.0));
-                ui.label(egui::RichText::new(format_duration(session_duration))
-                    .color(value_color)
-                    .size(10.0)
-                    .monospace());
+                ui.label(
+                    egui::RichText::new("Session:")
+                        .color(label_color)
+                        .size(10.0),
+                );
+                ui.label(
+                    egui::RichText::new(format_duration(session_duration))
+                        .color(value_color)
+                        .size(10.0)
+                        .monospace(),
+                );
             });
         });
 
@@ -252,71 +290,97 @@ pub fn render_stats_pane_content(
 
     // Total aircraft
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("Total Aircraft:")
-            .color(label_color)
-            .size(11.0));
-        ui.label(egui::RichText::new(format!("{}", total_aircraft))
-            .color(value_color)
-            .size(12.0)
-            .strong()
-            .monospace());
+        ui.label(
+            egui::RichText::new("Total Aircraft:")
+                .color(label_color)
+                .size(11.0),
+        );
+        ui.label(
+            egui::RichText::new(format!("{}", total_aircraft))
+                .color(value_color)
+                .size(12.0)
+                .strong()
+                .monospace(),
+        );
     });
 
     ui.add_space(8.0);
 
     // Altitude bands section
-    ui.label(egui::RichText::new("By Altitude")
-        .color(label_color)
-        .size(10.0));
+    ui.label(
+        egui::RichText::new("By Altitude")
+            .color(label_color)
+            .size(10.0),
+    );
 
     egui::Grid::new("altitude_grid")
         .num_columns(2)
         .spacing([20.0, 2.0])
         .show(ui, |ui| {
-            ui.label(egui::RichText::new("0 - 10,000 ft")
-                .color(alt_low_color)
-                .size(9.0));
-            ui.label(egui::RichText::new(format!("{}", altitude_stats.ground_to_10k))
-                .color(value_color)
-                .size(10.0)
-                .monospace());
+            ui.label(
+                egui::RichText::new("0 - 10,000 ft")
+                    .color(alt_low_color)
+                    .size(9.0),
+            );
+            ui.label(
+                egui::RichText::new(format!("{}", altitude_stats.ground_to_10k))
+                    .color(value_color)
+                    .size(10.0)
+                    .monospace(),
+            );
             ui.end_row();
 
-            ui.label(egui::RichText::new("10,000 - 25,000 ft")
-                .color(alt_med_color)
-                .size(9.0));
-            ui.label(egui::RichText::new(format!("{}", altitude_stats.ten_to_25k))
-                .color(value_color)
-                .size(10.0)
-                .monospace());
+            ui.label(
+                egui::RichText::new("10,000 - 25,000 ft")
+                    .color(alt_med_color)
+                    .size(9.0),
+            );
+            ui.label(
+                egui::RichText::new(format!("{}", altitude_stats.ten_to_25k))
+                    .color(value_color)
+                    .size(10.0)
+                    .monospace(),
+            );
             ui.end_row();
 
-            ui.label(egui::RichText::new("25,000 - 40,000 ft")
-                .color(alt_high_color)
-                .size(9.0));
-            ui.label(egui::RichText::new(format!("{}", altitude_stats.twentyfive_to_40k))
-                .color(value_color)
-                .size(10.0)
-                .monospace());
+            ui.label(
+                egui::RichText::new("25,000 - 40,000 ft")
+                    .color(alt_high_color)
+                    .size(9.0),
+            );
+            ui.label(
+                egui::RichText::new(format!("{}", altitude_stats.twentyfive_to_40k))
+                    .color(value_color)
+                    .size(10.0)
+                    .monospace(),
+            );
             ui.end_row();
 
-            ui.label(egui::RichText::new("40,000+ ft")
-                .color(alt_ultra_color)
-                .size(9.0));
-            ui.label(egui::RichText::new(format!("{}", altitude_stats.above_40k))
-                .color(value_color)
-                .size(10.0)
-                .monospace());
+            ui.label(
+                egui::RichText::new("40,000+ ft")
+                    .color(alt_ultra_color)
+                    .size(9.0),
+            );
+            ui.label(
+                egui::RichText::new(format!("{}", altitude_stats.above_40k))
+                    .color(value_color)
+                    .size(10.0)
+                    .monospace(),
+            );
             ui.end_row();
 
             if altitude_stats.unknown > 0 {
-                ui.label(egui::RichText::new("Unknown")
-                    .color(to_egui_color32(theme.bg_overlay()))
-                    .size(9.0));
-                ui.label(egui::RichText::new(format!("{}", altitude_stats.unknown))
-                    .color(value_color)
-                    .size(10.0)
-                    .monospace());
+                ui.label(
+                    egui::RichText::new("Unknown")
+                        .color(to_egui_color32(theme.bg_overlay()))
+                        .size(9.0),
+                );
+                ui.label(
+                    egui::RichText::new(format!("{}", altitude_stats.unknown))
+                        .color(value_color)
+                        .size(10.0)
+                        .monospace(),
+                );
                 ui.end_row();
             }
         });
@@ -327,22 +391,30 @@ pub fn render_stats_pane_content(
 
     // Connection info
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("Connection:")
-            .color(label_color)
-            .size(10.0));
-        ui.label(egui::RichText::new(&connection_status)
-            .color(value_color)
-            .size(10.0));
+        ui.label(
+            egui::RichText::new("Connection:")
+                .color(label_color)
+                .size(10.0),
+        );
+        ui.label(
+            egui::RichText::new(&connection_status)
+                .color(value_color)
+                .size(10.0),
+        );
     });
 
     // Session duration
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("Session:")
-            .color(label_color)
-            .size(10.0));
-        ui.label(egui::RichText::new(format_duration(session_duration))
-            .color(value_color)
-            .size(10.0)
-            .monospace());
+        ui.label(
+            egui::RichText::new("Session:")
+                .color(label_color)
+                .size(10.0),
+        );
+        ui.label(
+            egui::RichText::new(format_duration(session_duration))
+                .color(value_color)
+                .size(10.0)
+                .monospace(),
+        );
     });
 }

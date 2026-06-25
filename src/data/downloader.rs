@@ -3,7 +3,8 @@ use std::io::Write;
 use std::path::PathBuf;
 
 const OURAIRPORTS_BASE: &str = "https://davidmegginson.github.io/ourairports-data";
-const OPENSKY_AIRCRAFT_DB_URL: &str = "https://opensky-network.org/datasets/metadata/aircraftDatabase.csv";
+const OPENSKY_AIRCRAFT_DB_URL: &str =
+    "https://opensky-network.org/datasets/metadata/aircraftDatabase.csv";
 
 /// Aviation data files from various sources
 #[derive(Debug, Clone, Copy)]
@@ -39,21 +40,22 @@ pub fn download_file_blocking(file: &DataFile) -> Result<(), String> {
     let url = file.url();
     info!("Downloading {} from {}", file.filename(), url);
 
-    let response = reqwest::blocking::get(&url)
-        .map_err(|e| format!("Download failed: {}", e))?;
+    let response = reqwest::blocking::get(&url).map_err(|e| format!("Download failed: {}", e))?;
 
     if !response.status().is_success() {
         return Err(format!("HTTP error: {}", response.status()));
     }
 
-    let bytes = response.bytes()
+    let bytes = response
+        .bytes()
         .map_err(|e| format!("Failed to read response: {}", e))?;
 
     let path = cache_path(file.filename());
-    let mut file_handle = std::fs::File::create(&path)
-        .map_err(|e| format!("Failed to create file: {}", e))?;
+    let mut file_handle =
+        std::fs::File::create(&path).map_err(|e| format!("Failed to create file: {}", e))?;
 
-    file_handle.write_all(&bytes)
+    file_handle
+        .write_all(&bytes)
         .map_err(|e| format!("Failed to write file: {}", e))?;
 
     info!("Downloaded {} ({} bytes)", file.filename(), bytes.len());

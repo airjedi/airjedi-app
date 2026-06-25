@@ -51,8 +51,10 @@ impl FaaNasrProvider {
 
         for i in 0..bytes.len().saturating_sub(9) {
             // Look for "20XX-MM-DD" pattern
-            if bytes[i] == b'2' && bytes[i + 1] == b'0'
-                && bytes[i + 4] == b'-' && bytes[i + 7] == b'-'
+            if bytes[i] == b'2'
+                && bytes[i + 1] == b'0'
+                && bytes[i + 4] == b'-'
+                && bytes[i + 7] == b'-'
             {
                 let candidate = &html[i..i + 10];
                 if let Ok(date) = chrono::NaiveDate::parse_from_str(candidate, "%Y-%m-%d") {
@@ -133,10 +135,13 @@ impl PipelineStage for NasrParseStage {
     }
 
     fn execute(&self, data: &mut PipelineData) -> Result<(), PipelineError> {
-        let raw = data.raw_bytes.take().ok_or_else(|| PipelineError::StageError {
-            stage: self.name().to_string(),
-            message: "no raw bytes".to_string(),
-        })?;
+        let raw = data
+            .raw_bytes
+            .take()
+            .ok_or_else(|| PipelineError::StageError {
+                stage: self.name().to_string(),
+                message: "no raw bytes".to_string(),
+            })?;
 
         let cursor = std::io::Cursor::new(raw);
         let mut outer = zip::ZipArchive::new(cursor).map_err(|e| PipelineError::StageError {
@@ -145,30 +150,38 @@ impl PipelineStage for NasrParseStage {
         })?;
 
         // Find and extract the inner CSV ZIP from CSV_Data/
-        let inner_bytes = extract_inner_csv_zip(&mut outer).ok_or_else(|| PipelineError::StageError {
-            stage: self.name().to_string(),
-            message: "CSV_Data/*.zip not found in NASR archive".to_string(),
-        })?;
+        let inner_bytes =
+            extract_inner_csv_zip(&mut outer).ok_or_else(|| PipelineError::StageError {
+                stage: self.name().to_string(),
+                message: "CSV_Data/*.zip not found in NASR archive".to_string(),
+            })?;
 
         let inner_cursor = std::io::Cursor::new(inner_bytes);
-        let mut inner = zip::ZipArchive::new(inner_cursor).map_err(|e| PipelineError::StageError {
-            stage: self.name().to_string(),
-            message: format!("invalid inner CSV ZIP: {}", e),
-        })?;
+        let mut inner =
+            zip::ZipArchive::new(inner_cursor).map_err(|e| PipelineError::StageError {
+                stage: self.name().to_string(),
+                message: format!("invalid inner CSV ZIP: {}", e),
+            })?;
 
         let now = Utc::now();
 
         // Parse airway segments
         if let Some(content) = read_csv_file(&mut inner, "AWY_SEG_ALT.csv") {
             let airways = parse_awy_seg_csv(&content, now);
-            info!("FAA NASR: parsed {} airway segment records from CSV", airways.len());
+            info!(
+                "FAA NASR: parsed {} airway segment records from CSV",
+                airways.len()
+            );
             data.records.extend(airways);
         }
 
         // Parse frequencies
         if let Some(content) = read_csv_file(&mut inner, "FRQ.csv") {
             let freqs = parse_frq_csv(&content, now);
-            info!("FAA NASR: parsed {} frequency records from CSV", freqs.len());
+            info!(
+                "FAA NASR: parsed {} frequency records from CSV",
+                freqs.len()
+            );
             data.records.extend(freqs);
         }
 
@@ -207,10 +220,7 @@ fn read_csv_file(
 
 /// Parse AWY_SEG_ALT.csv for airway segment records.
 /// Key fields: AWY_ID, POINT_SEQ, FROM_POINT, MIN_ENROUTE_ALT, MAX_AUTH_ALT
-fn parse_awy_seg_csv(
-    content: &str,
-    fetched_at: chrono::DateTime<Utc>,
-) -> Vec<CanonicalRecord> {
+fn parse_awy_seg_csv(content: &str, fetched_at: chrono::DateTime<Utc>) -> Vec<CanonicalRecord> {
     let mut records = Vec::new();
     let mut reader = csv::ReaderBuilder::new()
         .has_headers(true)
@@ -223,7 +233,10 @@ fn parse_awy_seg_csv(
     };
 
     let col = |name: &str| headers.iter().position(|h| h == name);
-    let i_awy_id = match col("AWY_ID") { Some(i) => i, None => return records };
+    let i_awy_id = match col("AWY_ID") {
+        Some(i) => i,
+        None => return records,
+    };
     let i_seq = col("POINT_SEQ");
     let i_from = col("FROM_POINT");
     let i_mea = col("MIN_ENROUTE_ALT");
@@ -275,7 +288,7 @@ fn parse_awy_seg_csv(
             airway_type,
             sequence,
             fix_ident,
-            fix_latitude: 0.0,  // Coordinates require FIX_BASE.csv join
+            fix_latitude: 0.0, // Coordinates require FIX_BASE.csv join
             fix_longitude: 0.0,
             min_altitude_ft: min_alt,
             max_altitude_ft: max_alt,
@@ -288,10 +301,7 @@ fn parse_awy_seg_csv(
 
 /// Parse FRQ.csv for airport/facility frequency records.
 /// Key fields: FACILITY, FAC_NAME, FREQ, FREQ_USE, LAT_DECIMAL, LONG_DECIMAL
-fn parse_frq_csv(
-    content: &str,
-    fetched_at: chrono::DateTime<Utc>,
-) -> Vec<CanonicalRecord> {
+fn parse_frq_csv(content: &str, fetched_at: chrono::DateTime<Utc>) -> Vec<CanonicalRecord> {
     let mut records = Vec::new();
     let mut reader = csv::ReaderBuilder::new()
         .has_headers(true)
@@ -304,8 +314,14 @@ fn parse_frq_csv(
     };
 
     let col = |name: &str| headers.iter().position(|h| h == name);
-    let i_facility = match col("FACILITY") { Some(i) => i, None => return records };
-    let i_freq = match col("FREQ") { Some(i) => i, None => return records };
+    let i_facility = match col("FACILITY") {
+        Some(i) => i,
+        None => return records,
+    };
+    let i_freq = match col("FREQ") {
+        Some(i) => i,
+        None => return records,
+    };
     let i_use = col("FREQ_USE");
     let i_fac_name = col("FAC_NAME");
 
@@ -403,7 +419,8 @@ mod tests {
             let mut zip = zip::ZipWriter::new(&mut outer_buf);
             let opts = zip::write::SimpleFileOptions::default();
 
-            zip.start_file("CSV_Data/01_Jan_2026_CSV.zip", opts).unwrap();
+            zip.start_file("CSV_Data/01_Jan_2026_CSV.zip", opts)
+                .unwrap();
             zip.write_all(&inner_buf.into_inner()).unwrap();
 
             zip.finish().unwrap();
@@ -489,8 +506,14 @@ mod tests {
         stage.execute(&mut data).unwrap();
         assert_eq!(data.records.len(), 2);
 
-        let has_airway = data.records.iter().any(|r| matches!(r, CanonicalRecord::Airway(_)));
-        let has_freq = data.records.iter().any(|r| matches!(r, CanonicalRecord::Frequency(_)));
+        let has_airway = data
+            .records
+            .iter()
+            .any(|r| matches!(r, CanonicalRecord::Airway(_)));
+        let has_freq = data
+            .records
+            .iter()
+            .any(|r| matches!(r, CanonicalRecord::Frequency(_)));
         assert!(has_airway, "should have an airway record");
         assert!(has_freq, "should have a frequency record");
     }

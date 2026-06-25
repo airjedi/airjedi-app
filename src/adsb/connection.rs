@@ -1,13 +1,13 @@
 use bevy::prelude::*;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use adsb_client::{
     Client as AdsbClient, ClientConfig, ConnectionConfig, ConnectionState, TrackerConfig,
 };
 
-use crate::{constants, config, MapState};
 use crate::debug_panel::DebugPanelState;
+use crate::{config, constants, MapState};
 
 /// Shared state for aircraft data from the ADS-B client.
 /// Updated by the background tokio thread and read by Bevy systems.
@@ -198,18 +198,13 @@ pub fn update_connection_status(
                 format!("ADS-B: {} aircraft", aircraft_count),
                 theme.text_success(),
             ),
-            ConnectionState::Connecting => (
-                "ADS-B: Connecting...".to_string(),
-                theme.text_warn(),
-            ),
-            ConnectionState::Disconnected => (
-                "ADS-B: Disconnected".to_string(),
-                theme.text_error(),
-            ),
-            ConnectionState::Error(ref msg) => (
-                format!("ADS-B: Error - {}", msg),
-                theme.text_error(),
-            ),
+            ConnectionState::Connecting => ("ADS-B: Connecting...".to_string(), theme.text_warn()),
+            ConnectionState::Disconnected => {
+                ("ADS-B: Disconnected".to_string(), theme.text_error())
+            }
+            ConnectionState::Error(ref msg) => {
+                (format!("ADS-B: Error - {}", msg), theme.text_error())
+            }
         };
 
         **text = status_text;

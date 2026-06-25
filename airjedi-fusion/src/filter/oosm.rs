@@ -15,8 +15,8 @@ pub fn handle_oosm(
 
     // Reject if too old
     let lag = now.signed_duration_since(obs_time);
-    let max_lag = chrono::Duration::from_std(config.max_lag)
-        .unwrap_or(chrono::Duration::seconds(30));
+    let max_lag =
+        chrono::Duration::from_std(config.max_lag).unwrap_or(chrono::Duration::seconds(30));
     if lag > max_lag {
         return FilterResult::OutlierRejected {
             distance: f64::INFINITY,
@@ -34,10 +34,9 @@ pub fn handle_oosm(
     };
 
     // Rollback to the snapshot
-    tracker.variant.initialize_from_state(
-        snapshot.state.clone(),
-        snapshot.covariance.clone(),
-    );
+    tracker
+        .variant
+        .initialize_from_state(snapshot.state.clone(), snapshot.covariance.clone());
 
     // Gather all observations for this track between snapshot time and now
     let stored_obs = store.query_range(track_id, snapshot.timestamp, now);
@@ -169,6 +168,9 @@ mod tests {
         let late_obs = make_obs_at_time(now - Duration::seconds(1), 37.0);
         let result = handle_oosm(&mut tracker, &late_obs, &track_id, &store, &config, now);
         // Falls back to normal update since no history snapshot is available
-        assert!(matches!(result, FilterResult::Updated | FilterResult::OutlierRejected { .. }));
+        assert!(matches!(
+            result,
+            FilterResult::Updated | FilterResult::OutlierRejected { .. }
+        ));
     }
 }

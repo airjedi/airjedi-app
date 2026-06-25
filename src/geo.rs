@@ -54,8 +54,7 @@ pub fn initial_bearing(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
     let delta_lon = (lon2 - lon1).to_radians();
 
     let x = delta_lon.sin() * lat2_rad.cos();
-    let y = lat1_rad.cos() * lat2_rad.sin()
-        - lat1_rad.sin() * lat2_rad.cos() * delta_lon.cos();
+    let y = lat1_rad.cos() * lat2_rad.sin() - lat1_rad.sin() * lat2_rad.cos() * delta_lon.cos();
 
     let bearing = x.atan2(y).to_degrees();
     (bearing + 360.0) % 360.0
@@ -144,7 +143,8 @@ impl CoordinateConverter {
             latitude: lat,
             longitude: lon,
         };
-        let pixel = world_coords_to_world_pixel(&ll, crate::constants::DEFAULT_TILE_SIZE, self.zoom_level);
+        let pixel =
+            world_coords_to_world_pixel(&ll, crate::constants::DEFAULT_TILE_SIZE, self.zoom_level);
         Vec2::new(
             (pixel.0 - self.reference_pixel.0) as f32,
             (pixel.1 - self.reference_pixel.1) as f32,

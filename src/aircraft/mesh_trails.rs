@@ -1,11 +1,13 @@
-use bevy::prelude::*;
-use bevy::mesh::PrimitiveTopology;
 use bevy::asset::RenderAssetUsages;
+use bevy::mesh::PrimitiveTopology;
+use bevy::prelude::*;
 use bevy_slippy_tiles::SlippyTilesSettings;
 
 use super::components::Aircraft;
-use super::trails::{altitude_color, age_opacity, TrailConfig, TrailHistory, TrailRenderer, SessionClock};
-use super::staleness::{staleness_opacity, aircraft_age_secs};
+use super::staleness::{aircraft_age_secs, staleness_opacity};
+use super::trails::{
+    age_opacity, altitude_color, SessionClock, TrailConfig, TrailHistory, TrailRenderer,
+};
 use crate::geo::CoordinateConverter;
 use crate::map::MapState;
 use crate::view3d::View3DState;
@@ -32,13 +34,20 @@ pub fn spawn_mesh_trails(
     aircraft_query: Query<Entity, (With<Aircraft>, Without<MeshTrailMarker>)>,
 ) {
     let is_3d = view3d_state.is_3d_active();
-    let active_renderer = if is_3d { trail_config.renderer_3d } else { trail_config.renderer_2d };
+    let active_renderer = if is_3d {
+        trail_config.renderer_3d
+    } else {
+        trail_config.renderer_2d
+    };
     if !trail_config.enabled || active_renderer != TrailRenderer::MeshStrip {
         return;
     }
 
     for aircraft_entity in aircraft_query.iter() {
-        let mesh = Mesh::new(PrimitiveTopology::TriangleStrip, RenderAssetUsages::default());
+        let mesh = Mesh::new(
+            PrimitiveTopology::TriangleStrip,
+            RenderAssetUsages::default(),
+        );
         let mesh_handle = meshes.add(mesh);
 
         let material = StandardMaterial {
@@ -50,16 +59,18 @@ pub fn spawn_mesh_trails(
         };
         let material_handle = materials.add(material);
 
-        let trail_entity = commands.spawn((
-            Mesh3d(mesh_handle.clone()),
-            MeshMaterial3d(material_handle.clone()),
-            Transform::default(),
-            MeshTrailEffect {
-                aircraft_entity,
-                mesh_handle,
-                material_handle,
-            },
-        )).id();
+        let trail_entity = commands
+            .spawn((
+                Mesh3d(mesh_handle.clone()),
+                MeshMaterial3d(material_handle.clone()),
+                Transform::default(),
+                MeshTrailEffect {
+                    aircraft_entity,
+                    mesh_handle,
+                    material_handle,
+                },
+            ))
+            .id();
 
         commands.entity(aircraft_entity).insert(MeshTrailMarker);
 
@@ -82,7 +93,11 @@ pub fn update_mesh_trails(
     }
 
     let is_3d = view3d_state.is_3d_active();
-    let active_renderer = if is_3d { trail_config.renderer_3d } else { trail_config.renderer_2d };
+    let active_renderer = if is_3d {
+        trail_config.renderer_3d
+    } else {
+        trail_config.renderer_2d
+    };
     if active_renderer != TrailRenderer::MeshStrip {
         return;
     }
@@ -150,7 +165,11 @@ pub fn update_mesh_trails(
 
             let base_color = altitude_color(point.altitude);
             let linear = base_color.to_linear();
-            let base_half_width = if is_3d { TRAIL_HALF_WIDTH_3D } else { TRAIL_HALF_WIDTH_2D };
+            let base_half_width = if is_3d {
+                TRAIL_HALF_WIDTH_3D
+            } else {
+                TRAIL_HALF_WIDTH_2D
+            };
             let segment_estimated = point.estimated || prev_estimated;
 
             if segment_estimated && prev_xy.is_some() {
@@ -159,9 +178,18 @@ pub fn update_mesh_trails(
                 let half_width = base_half_width * 0.5;
 
                 emit_dashed_segment(
-                    p_xy, p_z, xy, z, dir, half_width,
-                    opacity, stale_opacity, &linear,
-                    is_3d, &mut positions, &mut colors,
+                    p_xy,
+                    p_z,
+                    xy,
+                    z,
+                    dir,
+                    half_width,
+                    opacity,
+                    stale_opacity,
+                    &linear,
+                    is_3d,
+                    &mut positions,
+                    &mut colors,
                 );
             } else {
                 let half_width = base_half_width;
@@ -203,10 +231,14 @@ const DASH_FRACTION: f32 = 0.55;
 const DASH_COUNT: usize = 4;
 
 fn emit_dashed_segment(
-    from_xy: Vec2, from_z: f32,
-    to_xy: Vec2, to_z: f32,
-    dir: Vec2, half_width: f32,
-    opacity: f32, stale_opacity: f32,
+    from_xy: Vec2,
+    from_z: f32,
+    to_xy: Vec2,
+    to_z: f32,
+    dir: Vec2,
+    half_width: f32,
+    opacity: f32,
+    stale_opacity: f32,
     linear: &bevy::color::LinearRgba,
     is_3d: bool,
     positions: &mut Vec<[f32; 3]>,
@@ -285,7 +317,11 @@ pub fn cleanup_mesh_trails(
     effect_query: Query<(Entity, &MeshTrailEffect)>,
 ) {
     let is_3d = view3d_state.is_3d_active();
-    let active_renderer = if is_3d { trail_config.renderer_3d } else { trail_config.renderer_2d };
+    let active_renderer = if is_3d {
+        trail_config.renderer_3d
+    } else {
+        trail_config.renderer_2d
+    };
     let inactive = active_renderer != TrailRenderer::MeshStrip || !trail_config.enabled;
 
     for (effect_entity, effect) in effect_query.iter() {
@@ -293,7 +329,9 @@ pub fn cleanup_mesh_trails(
         if inactive || aircraft_gone {
             commands.entity(effect_entity).despawn();
             if !aircraft_gone {
-                commands.entity(effect.aircraft_entity).remove::<MeshTrailMarker>();
+                commands
+                    .entity(effect.aircraft_entity)
+                    .remove::<MeshTrailMarker>();
             }
         }
     }

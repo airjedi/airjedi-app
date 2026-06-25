@@ -43,7 +43,11 @@ impl GnnAssociator {
         for (obs_idx, obs) in observations.iter().enumerate() {
             if let Some(ref target_id) = obs.observation.target_id {
                 for (track_idx, (track, _, _)) in tracks.iter().enumerate() {
-                    if track.cooperative_ids.iter().any(|cid| cid.id == target_id.id) {
+                    if track
+                        .cooperative_ids
+                        .iter()
+                        .any(|cid| cid.id == target_id.id)
+                    {
                         costs.push((obs_idx, track_idx, 0.0));
                         id_matched_obs.insert(obs_idx);
                         id_matched_tracks.insert(track_idx);
@@ -90,10 +94,7 @@ impl GnnAssociator {
         }
 
         // Greedy assignment sorted by cost (upgrade to JV for optimality later)
-        costs.sort_by(|a, b| {
-            a.2.partial_cmp(&b.2)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        costs.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
 
         let mut assigned_obs = vec![false; observations.len()];
         let mut assigned_tracks = vec![false; tracks.len()];
@@ -116,9 +117,8 @@ impl GnnAssociator {
         let unassigned_observations: Vec<usize> = (0..observations.len())
             .filter(|i| !assigned_obs[*i])
             .collect();
-        let unassigned_tracks: Vec<usize> = (0..tracks.len())
-            .filter(|i| !assigned_tracks[*i])
-            .collect();
+        let unassigned_tracks: Vec<usize> =
+            (0..tracks.len()).filter(|i| !assigned_tracks[*i]).collect();
 
         AssociationResult {
             assignments,
@@ -148,11 +148,8 @@ fn observation_geodetic_position(obs: &SensorObservation) -> Option<(f64, f64)> 
                 sensor_alt_m,
             } = &obs.sensor_id.coordinate_frame
             {
-                let sensor_ecef = coord::geodetic_to_ecef(
-                    *sensor_lat_deg,
-                    *sensor_lon_deg,
-                    *sensor_alt_m,
-                );
+                let sensor_ecef =
+                    coord::geodetic_to_ecef(*sensor_lat_deg, *sensor_lon_deg, *sensor_alt_m);
                 let el = elevation_rad.unwrap_or(0.0);
                 let target_ecef = coord::spherical_to_ecef(
                     *range_m,
@@ -182,11 +179,7 @@ mod tests {
     use chrono::Utc;
     use nalgebra::DMatrix;
 
-    fn make_obs_at(
-        lat: f64,
-        lon: f64,
-        icao: Option<&str>,
-    ) -> StoredObservation {
+    fn make_obs_at(lat: f64, lon: f64, icao: Option<&str>) -> StoredObservation {
         StoredObservation {
             observation: SensorObservation {
                 sensor_id: SensorId {
@@ -259,12 +252,8 @@ mod tests {
         spatial.update_track(&track.id, 37.0, -97.0);
 
         let config = AssociatorConfig::default();
-        let result = GnnAssociator::associate(
-            &[&obs],
-            &[(&track, &tracker, &class)],
-            &spatial,
-            &config,
-        );
+        let result =
+            GnnAssociator::associate(&[&obs], &[(&track, &tracker, &class)], &spatial, &config);
         assert_eq!(result.assignments.len(), 1);
         assert!(result.unassigned_observations.is_empty());
     }
@@ -278,12 +267,8 @@ mod tests {
         spatial.update_track(&track.id, 37.0, -97.0);
 
         let config = AssociatorConfig::default();
-        let result = GnnAssociator::associate(
-            &[&obs],
-            &[(&track, &tracker, &class)],
-            &spatial,
-            &config,
-        );
+        let result =
+            GnnAssociator::associate(&[&obs], &[(&track, &tracker, &class)], &spatial, &config);
         assert!(result.assignments.is_empty());
         assert_eq!(result.unassigned_observations.len(), 1);
     }
@@ -299,10 +284,8 @@ mod tests {
     #[test]
     fn cooperative_id_preferred() {
         let obs = make_obs_at(37.01, -97.01, Some("ABC123"));
-        let (track1, tracker1, class1) =
-            make_track_at(37.0, -97.0, Some("ABC123"));
-        let (track2, tracker2, class2) =
-            make_track_at(37.005, -97.005, None);
+        let (track1, tracker1, class1) = make_track_at(37.0, -97.0, Some("ABC123"));
+        let (track2, tracker2, class2) = make_track_at(37.005, -97.005, None);
 
         let mut spatial = SpatialIndex::new(0.5);
         spatial.update_track(&track1.id, 37.0, -97.0);
@@ -311,10 +294,7 @@ mod tests {
         let config = AssociatorConfig::default();
         let result = GnnAssociator::associate(
             &[&obs],
-            &[
-                (&track1, &tracker1, &class1),
-                (&track2, &tracker2, &class2),
-            ],
+            &[(&track1, &tracker1, &class1), (&track2, &tracker2, &class2)],
             &spatial,
             &config,
         );

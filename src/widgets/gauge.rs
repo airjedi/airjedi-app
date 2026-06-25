@@ -156,8 +156,10 @@ impl egui::Widget for ArcGauge<'_> {
                 let angle = start_angle + t * (end_angle - start_angle);
                 let cos_a = angle.cos();
                 let sin_a = angle.sin();
-                let inner_pt = egui::pos2(center.x + tick_inner * cos_a, center.y + tick_inner * sin_a);
-                let outer_pt = egui::pos2(center.x + tick_outer * cos_a, center.y + tick_outer * sin_a);
+                let inner_pt =
+                    egui::pos2(center.x + tick_inner * cos_a, center.y + tick_inner * sin_a);
+                let outer_pt =
+                    egui::pos2(center.x + tick_outer * cos_a, center.y + tick_outer * sin_a);
                 painter.line_segment([inner_pt, outer_pt], tick_stroke);
             }
         }

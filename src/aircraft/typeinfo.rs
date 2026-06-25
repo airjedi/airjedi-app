@@ -96,7 +96,10 @@ impl AircraftTypeDatabase {
         let registration = non_empty(&record.registration);
         let type_code = non_empty(&record.typecode);
 
-        let manufacturer_model = match (non_empty(&record.manufacturername), non_empty(&record.model)) {
+        let manufacturer_model = match (
+            non_empty(&record.manufacturername),
+            non_empty(&record.model),
+        ) {
             (Some(mfr), Some(model)) => Some(format!("{} {}", mfr, model)),
             (None, Some(model)) => Some(model),
             (Some(mfr), None) => Some(mfr),

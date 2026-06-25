@@ -1,9 +1,7 @@
 use chrono::Utc;
 use serde::Deserialize;
 
-use crate::data_ingest::canonical::{
-    AirportInfo, CanonicalRecord, NavaidInfo, RunwayInfo,
-};
+use crate::data_ingest::canonical::{AirportInfo, CanonicalRecord, NavaidInfo, RunwayInfo};
 use crate::data_ingest::pipeline::{PipelineData, PipelineError, PipelinePhase, PipelineStage};
 use crate::data_ingest::provider::{
     DataProvider, FetchContext, ProviderCategory, ProviderError, ProviderMeta, RawFetchResult,

@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
-use crate::geo;
 use crate::config::AppConfig;
+use crate::geo;
 
 pub const BLEND_THRESHOLD_NM: f64 = 0.5;
 pub const BLEND_DURATION_SECS: f32 = 0.3;
@@ -44,9 +44,16 @@ pub struct InterpolationState {
 }
 
 impl InterpolationState {
-    pub fn new(lat: f64, lon: f64, altitude: Option<i32>, heading: Option<f32>,
-               speed: Option<f64>, vertical_rate: Option<i32>,
-               is_on_ground: Option<bool>, current_time: f64) -> Self {
+    pub fn new(
+        lat: f64,
+        lon: f64,
+        altitude: Option<i32>,
+        heading: Option<f32>,
+        speed: Option<f64>,
+        vertical_rate: Option<i32>,
+        is_on_ground: Option<bool>,
+        current_time: f64,
+    ) -> Self {
         let alt_f32 = altitude.map(|a| a as f32);
         let vrate_f32 = vertical_rate.map(|v| v as f32);
         let predicting = should_predict(heading, speed, is_on_ground);
@@ -68,7 +75,11 @@ impl InterpolationState {
     }
 }
 
-pub fn should_predict(heading: Option<f32>, speed: Option<f64>, is_on_ground: Option<bool>) -> bool {
+pub fn should_predict(
+    heading: Option<f32>,
+    speed: Option<f64>,
+    is_on_ground: Option<bool>,
+) -> bool {
     if is_on_ground == Some(true) {
         return false;
     }
@@ -93,9 +104,15 @@ pub fn lerp_heading(from: f32, to: f32, t: f32) -> f32 {
     ((result % 360.0) + 360.0) % 360.0
 }
 
-fn dead_reckon(lat: f64, lon: f64, heading: Option<f32>, speed: Option<f64>,
-               altitude: Option<f32>, vertical_rate: Option<f32>,
-               elapsed_secs: f64) -> (f64, f64, Option<f32>) {
+fn dead_reckon(
+    lat: f64,
+    lon: f64,
+    heading: Option<f32>,
+    speed: Option<f64>,
+    altitude: Option<f32>,
+    vertical_rate: Option<f32>,
+    elapsed_secs: f64,
+) -> (f64, f64, Option<f32>) {
     let (pred_lat, pred_lon) = match (heading, speed) {
         (Some(hdg), Some(spd)) if spd > MIN_PREDICTION_SPEED_KTS => {
             let elapsed_minutes = (elapsed_secs / 60.0) as f32;
@@ -138,9 +155,12 @@ pub fn interpolate_aircraft_positions(
 
         // Dead reckon from current baseline
         let (new_lat, new_lon, new_alt) = dead_reckon(
-            interp.base_lat, interp.base_lon,
-            interp.base_heading, interp.base_speed,
-            interp.base_altitude, interp.base_vertical_rate,
+            interp.base_lat,
+            interp.base_lon,
+            interp.base_heading,
+            interp.base_speed,
+            interp.base_altitude,
+            interp.base_vertical_rate,
             elapsed,
         );
 
@@ -151,9 +171,12 @@ pub fn interpolate_aircraft_positions(
             // Dead reckon from the OLD baseline too
             let old_elapsed = now - blend.old_base_time;
             let (old_lat, old_lon, old_alt) = dead_reckon(
-                blend.old_base_lat, blend.old_base_lon,
-                blend.old_base_heading, blend.old_base_speed,
-                blend.old_base_altitude, blend.old_base_vertical_rate,
+                blend.old_base_lat,
+                blend.old_base_lon,
+                blend.old_base_heading,
+                blend.old_base_speed,
+                blend.old_base_altitude,
+                blend.old_base_vertical_rate,
                 old_elapsed,
             );
 
@@ -196,10 +219,8 @@ pub fn update_interpolation_on_adsb(
     is_on_ground: Option<bool>,
     current_time: f64,
 ) {
-    let error_nm = geo::haversine_distance_nm(
-        interp.display_lat, interp.display_lon,
-        new_lat, new_lon,
-    );
+    let error_nm =
+        geo::haversine_distance_nm(interp.display_lat, interp.display_lon, new_lat, new_lon);
 
     let new_alt_f32 = new_altitude.map(|a| a as f32);
     let new_vrate_f32 = new_vertical_rate.map(|v| v as f32);

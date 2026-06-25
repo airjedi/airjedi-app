@@ -1,5 +1,5 @@
-use bevy::prelude::*;
 use bevy::picking::mesh_picking::ray_cast::MeshRayCast;
+use bevy::prelude::*;
 
 use super::detail_panel::CameraFollowState;
 use super::list_panel::AircraftListState;
@@ -12,7 +12,6 @@ pub struct SelectionOutline;
 /// Marker component added to aircraft entities when hovered.
 #[derive(Component)]
 pub struct HoverOutline;
-
 
 /// Observer triggered when an aircraft entity is clicked.
 /// Since Pointer events auto-propagate up the hierarchy, clicks on child
@@ -84,7 +83,7 @@ pub fn follow_aircraft_3d(
     tile_settings: Res<bevy_slippy_tiles::SlippyTilesSettings>,
     map_state: Res<crate::MapState>,
 ) {
-    use crate::view3d::{ViewMode, TransitionState};
+    use crate::view3d::{TransitionState, ViewMode};
 
     // Only follow in steady-state 3D (not during transitions)
     if !matches!(view3d_state.mode, ViewMode::Perspective3D)
@@ -159,19 +158,27 @@ pub fn follow_aircraft_3d(
 
         // Shortest-path yaw lerp (handle 0/360 wrap)
         let mut yaw_diff = target_yaw - view3d_state.camera_yaw;
-        if yaw_diff > 180.0 { yaw_diff -= 360.0; }
-        if yaw_diff < -180.0 { yaw_diff += 360.0; }
+        if yaw_diff > 180.0 {
+            yaw_diff -= 360.0;
+        }
+        if yaw_diff < -180.0 {
+            yaw_diff += 360.0;
+        }
         view3d_state.camera_yaw += yaw_diff * t_chase;
-        if view3d_state.camera_yaw < 0.0 { view3d_state.camera_yaw += 360.0; }
-        if view3d_state.camera_yaw >= 360.0 { view3d_state.camera_yaw -= 360.0; }
+        if view3d_state.camera_yaw < 0.0 {
+            view3d_state.camera_yaw += 360.0;
+        }
+        if view3d_state.camera_yaw >= 360.0 {
+            view3d_state.camera_yaw -= 360.0;
+        }
 
         // Target pitch
         let target_pitch = crate::view3d::CHASE_PITCH;
         view3d_state.camera_pitch += (target_pitch - view3d_state.camera_pitch) * t_chase;
 
         // Target altitude: aircraft altitude + offset above
-        let target_altitude = aircraft.altitude.unwrap_or(0) as f32
-            + crate::view3d::CHASE_OFFSET_ABOVE_FT;
+        let target_altitude =
+            aircraft.altitude.unwrap_or(0) as f32 + crate::view3d::CHASE_OFFSET_ABOVE_FT;
         view3d_state.camera_altitude += (target_altitude - view3d_state.camera_altitude) * t_chase;
     }
 }
@@ -188,7 +195,10 @@ pub fn clear_stale_selection(
 
     let still_exists = aircraft_query.iter().any(|a| a.icao == *selected_icao);
     if !still_exists {
-        info!("Selected aircraft {} no longer exists, clearing selection", selected_icao);
+        info!(
+            "Selected aircraft {} no longer exists, clearing selection",
+            selected_icao
+        );
         list_state.selected_icao = None;
         follow_state.following_icao = None;
     }
@@ -225,7 +235,6 @@ pub fn manage_selection_outline(
         }
     }
 }
-
 
 // =============================================================================
 // Manual 3D Picking (bypasses broken mesh picking backend)
@@ -278,17 +287,25 @@ pub fn pick_aircraft_3d(
         return;
     }
 
-    let Ok(window) = window_query.single() else { return };
-    let Some(cursor_pos) = window.cursor_position() else { return };
-    let Ok((camera, cam_gtf)) = camera_3d.single() else { return };
-    let Ok(ray) = camera.viewport_to_world(cam_gtf, cursor_pos) else { return };
+    let Ok(window) = window_query.single() else {
+        return;
+    };
+    let Some(cursor_pos) = window.cursor_position() else {
+        return;
+    };
+    let Ok((camera, cam_gtf)) = camera_3d.single() else {
+        return;
+    };
+    let Ok(ray) = camera.viewport_to_world(cam_gtf, cursor_pos) else {
+        return;
+    };
 
     let hits = raycast.cast_ray(ray, &default());
 
     // Find the closest aircraft hit
-    let aircraft_hit = hits.iter().find_map(|(entity, _hit)| {
-        find_aircraft_ancestor(*entity, &aircraft_query, &parent_query)
-    });
+    let aircraft_hit = hits
+        .iter()
+        .find_map(|(entity, _hit)| find_aircraft_ancestor(*entity, &aircraft_query, &parent_query));
 
     // Handle hover: add/remove HoverOutline based on what's under cursor
     if let Some(ac_entity) = aircraft_hit {
@@ -337,4 +354,3 @@ pub fn pick_aircraft_3d(
         }
     }
 }
-

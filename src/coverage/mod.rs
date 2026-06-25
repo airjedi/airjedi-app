@@ -89,11 +89,7 @@ impl CoverageState {
     }
 
     /// Calculate bearing from receiver to aircraft
-    fn calculate_bearing(
-        &self,
-        aircraft_lat: f64,
-        aircraft_lon: f64,
-    ) -> f64 {
+    fn calculate_bearing(&self, aircraft_lat: f64, aircraft_lon: f64) -> f64 {
         initial_bearing(
             self.receiver_location.0,
             self.receiver_location.1,
@@ -103,11 +99,7 @@ impl CoverageState {
     }
 
     /// Calculate distance from receiver to aircraft in nautical miles
-    fn calculate_range_nm(
-        &self,
-        aircraft_lat: f64,
-        aircraft_lon: f64,
-    ) -> f64 {
+    fn calculate_range_nm(&self, aircraft_lat: f64, aircraft_lon: f64) -> f64 {
         haversine_distance_nm(
             self.receiver_location.0,
             self.receiver_location.1,
@@ -117,12 +109,7 @@ impl CoverageState {
     }
 
     /// Record an aircraft observation
-    pub fn observe_aircraft(
-        &mut self,
-        icao: &str,
-        latitude: f64,
-        longitude: f64,
-    ) {
+    pub fn observe_aircraft(&mut self, icao: &str, latitude: f64, longitude: f64) {
         if !self.enabled {
             return;
         }
@@ -168,7 +155,8 @@ impl CoverageState {
                 // Convert polar (bearing, range) to lat/lon offset
                 // Approximate conversion: 1 NM = 1/60 degree
                 let lat_offset = range * bearing.cos() / 60.0;
-                let lon_offset = range * bearing.sin() / (60.0 * self.receiver_location.0.to_radians().cos());
+                let lon_offset =
+                    range * bearing.sin() / (60.0 * self.receiver_location.0.to_radians().cos());
 
                 points.push((
                     self.receiver_location.0 + lat_offset,
@@ -321,7 +309,11 @@ pub fn render_coverage_stats_panel(
             ui.separator();
 
             ui.horizontal(|ui| {
-                let enable_text = if coverage.enabled { "Disable" } else { "Enable" };
+                let enable_text = if coverage.enabled {
+                    "Disable"
+                } else {
+                    "Enable"
+                };
                 if ui.button(enable_text).clicked() {
                     coverage.enabled = !coverage.enabled;
                 }
@@ -338,8 +330,7 @@ pub fn render_coverage_stats_panel(
                 ui.label("Receiver:");
                 ui.label(format!(
                     "{:.4}, {:.4}",
-                    coverage.receiver_location.0,
-                    coverage.receiver_location.1
+                    coverage.receiver_location.0, coverage.receiver_location.1
                 ));
             });
         });
@@ -350,11 +341,10 @@ pub struct CoveragePlugin;
 
 impl Plugin for CoveragePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<CoverageState>()
-            .add_systems(Update, (
-                toggle_coverage_mode,
-                update_coverage_from_aircraft,
-            ));
+        app.init_resource::<CoverageState>().add_systems(
+            Update,
+            (toggle_coverage_mode, update_coverage_from_aircraft),
+        );
         // Coverage stats panel is rendered via the consolidated Tools window (tools_window.rs)
     }
 }

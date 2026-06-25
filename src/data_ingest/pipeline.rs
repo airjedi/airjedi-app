@@ -228,8 +228,12 @@ mod tests {
     fn pipeline_passes_raw_bytes_to_records() {
         struct ByteParser;
         impl PipelineStage for ByteParser {
-            fn name(&self) -> &str { "byte_parser" }
-            fn phase(&self) -> PipelinePhase { PipelinePhase::Parse }
+            fn name(&self) -> &str {
+                "byte_parser"
+            }
+            fn phase(&self) -> PipelinePhase {
+                PipelinePhase::Parse
+            }
             fn execute(&self, data: &mut PipelineData) -> Result<(), PipelineError> {
                 if data.raw_bytes.is_some() {
                     data.metadata.insert("had_bytes".into(), "true".into());

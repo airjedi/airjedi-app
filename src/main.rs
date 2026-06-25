@@ -1,60 +1,68 @@
-use bevy::{prelude::*, camera::{CameraOutputMode, visibility::RenderLayers}, gizmos::config::{DefaultGizmoConfigGroup, GizmoConfigStore}, light::SunDisk};
+use bevy::{
+    camera::{visibility::RenderLayers, CameraOutputMode},
+    gizmos::config::{DefaultGizmoConfigGroup, GizmoConfigStore},
+    light::SunDisk,
+    prelude::*,
+};
 use bevy_slippy_tiles::*;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 
-mod config;
-mod data;
-mod geo;
-mod units;
-mod map;
-mod aviation;
-mod aircraft;
 mod adsb;
-mod keyboard;
-mod weather;
-mod bookmarks;
-mod recording;
-mod tools;
-mod coverage;
+mod aircraft;
 mod airspace;
-mod data_sources;
-mod export;
-mod view3d;
-mod ui_panels;
-mod toolbar;
-mod tools_window;
-mod debug_panel;
-mod dock;
-mod inspector;
-mod statusbar;
-mod paths;
-mod tile_cache;
-mod tiles;
-mod terrain;
-mod render_layers;
-mod input;
-mod zoom;
-mod camera;
-mod hud;
-mod debug_3d_hud;
-mod build_info;
-pub(crate) mod theme;
-pub(crate) mod widgets;
-mod data_ingest;
+mod aviation;
+mod bookmarks;
 #[cfg(feature = "brp")]
 mod brp;
+mod build_info;
+mod camera;
+mod config;
+mod coverage;
+mod data;
+mod data_ingest;
+mod data_sources;
+mod debug_3d_hud;
+mod debug_panel;
+mod dock;
+mod export;
 mod fusion_integration;
+mod geo;
+mod hud;
+mod input;
+mod inspector;
+mod keyboard;
+mod map;
+mod paths;
+mod recording;
+mod render_layers;
+mod statusbar;
+mod terrain;
+pub(crate) mod theme;
+mod tile_cache;
+mod tiles;
+mod toolbar;
+mod tools;
+mod tools_window;
+mod ui_panels;
+mod units;
+mod view3d;
+mod weather;
+pub(crate) mod widgets;
+mod zoom;
 
 // Re-export core types so crate::Aircraft, crate::MapState, crate::ZoomState
 // continue to resolve throughout the codebase.
 pub(crate) use aircraft::components::{Aircraft, AircraftLabel};
-pub(crate) use map::{MapState, ZoomState};
-pub(crate) use camera::{MapCamera, AircraftCamera};
-pub(crate) use render_layers::RenderCategory;
-use config::ConfigPlugin;
-use keyboard::{HelpOverlayState, handle_keyboard_shortcuts, toggle_overlays_keyboard, update_help_overlay, sync_panel_manager_to_resources, sync_resources_to_panel_manager};
 use bevy_egui::{EguiGlobalSettings, PrimaryEguiContext};
+pub(crate) use camera::{AircraftCamera, MapCamera};
+use config::ConfigPlugin;
+use keyboard::{
+    handle_keyboard_shortcuts, sync_panel_manager_to_resources, sync_resources_to_panel_manager,
+    toggle_overlays_keyboard, update_help_overlay, HelpOverlayState,
+};
+pub(crate) use map::{MapState, ZoomState};
+pub(crate) use render_layers::RenderCategory;
 
 // ADS-B client types
 
@@ -72,7 +80,7 @@ pub(crate) enum ZoomSet {
 // Constants - All magic numbers centralized here
 // =============================================================================
 
-#[allow(dead_code)]  // Some constants defined for future use
+#[allow(dead_code)] // Some constants defined for future use
 pub(crate) mod constants {
     // Mercator projection limits
     pub const MERCATOR_LAT_LIMIT: f64 = 85.0511;
@@ -93,8 +101,8 @@ pub(crate) mod constants {
     pub const TILE_DOWNLOAD_RADIUS: u8 = 3;
 
     // Zoom sensitivity
-    pub const ZOOM_SENSITIVITY_LINE: f32 = 0.1;  // Mouse wheel
-    pub const ZOOM_SENSITIVITY_PIXEL: f32 = 0.002;  // Trackpad
+    pub const ZOOM_SENSITIVITY_LINE: f32 = 0.1; // Mouse wheel
+    pub const ZOOM_SENSITIVITY_PIXEL: f32 = 0.002; // Trackpad
 
     // Movement threshold for tile requests (degrees, ~100m at equator)
     pub const PAN_TILE_REQUEST_THRESHOLD: f64 = 0.001;
@@ -137,7 +145,10 @@ pub(crate) mod constants {
 
 /// Clamp latitude to valid Mercator projection range
 pub(crate) fn clamp_latitude(lat: f64) -> f64 {
-    lat.clamp(-constants::MERCATOR_LAT_LIMIT, constants::MERCATOR_LAT_LIMIT)
+    lat.clamp(
+        -constants::MERCATOR_LAT_LIMIT,
+        constants::MERCATOR_LAT_LIMIT,
+    )
 }
 
 /// Clamp longitude to valid range
@@ -155,14 +166,19 @@ fn main() {
     {
         use std::io;
         unsafe {
-            let mut rlim = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+            let mut rlim = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
             if libc::getrlimit(libc::RLIMIT_NOFILE, &mut rlim) == 0 {
                 let target = 4096.min(rlim.rlim_max);
                 if rlim.rlim_cur < target {
                     rlim.rlim_cur = target;
                     if libc::setrlimit(libc::RLIMIT_NOFILE, &rlim) != 0 {
-                        eprintln!("Warning: failed to raise file descriptor limit: {}",
-                            io::Error::last_os_error());
+                        eprintln!(
+                            "Warning: failed to raise file descriptor limit: {}",
+                            io::Error::last_os_error()
+                        );
                     }
                 }
             }
@@ -171,84 +187,108 @@ fn main() {
 
     let mut app = App::new();
     app.add_plugins((
-            DefaultPlugins
-                .set(WindowPlugin {
-                    primary_window: Some(Window {
-                        title: "AirJedi - Aircraft Map Tracker".to_string(),
-                        resolution: (1280, 720).into(),
-                        visible: false,
-                        ..default()
-                    }),
-                    ..default()
-                })
-                .set(bevy::log::LogPlugin {
-                    filter: "info,wgpu=warn,naga=warn,bevy_render=info".to_string(),
+        DefaultPlugins
+            .set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "AirJedi - Aircraft Map Tracker".to_string(),
+                    resolution: (1280, 720).into(),
+                    visible: false,
                     ..default()
                 }),
-            SlippyTilesPlugin,
-            ConfigPlugin,
-            aviation::AviationPlugin,
-            aircraft::AircraftPlugin,
-            weather::WeatherPlugin,
-            bookmarks::BookmarksPlugin,
-            recording::RecordingPlugin,
-            tools::ToolsPlugin,
-            coverage::CoveragePlugin,
-            airspace::AirspacePlugin,
-            data_sources::DataSourcesPlugin,
-            export::ExportPlugin,
-            view3d::View3DPlugin,
-            adsb::AdsbPlugin,
-        ))
-        .add_plugins((bevy_obj::ObjPlugin, bevy_inspector_egui::DefaultInspectorConfigPlugin, data_ingest::DataIngestPlugin))
-        // Full speed when focused; ~4 FPS when unfocused to keep ADS-B data
-        // flowing without overwhelming the GPU or triggering macOS throttling.
-        .insert_resource(ClearColor(Color::srgb(20.0 / 255.0, 21.0 / 255.0, 24.0 / 255.0)))
-        .insert_resource(bevy::winit::WinitSettings {
-            focused_mode: bevy::winit::UpdateMode::Continuous,
-            unfocused_mode: bevy::winit::UpdateMode::reactive(
-                std::time::Duration::from_millis(250),
-            ),
-        })
-        .init_resource::<HelpOverlayState>()
-        .init_resource::<ui_panels::UiPanelManager>()
-        .init_resource::<tools_window::ToolsWindowState>()
-        .init_resource::<debug_panel::DebugPanelState>()
-        .init_resource::<dock::DockTreeState>()
-        .init_resource::<inspector::InspectorState>()
-        .init_resource::<statusbar::StatusBarState>()
-        .init_resource::<hud::HudState>()
-        .register_type::<MapState>()
-        .register_type::<ZoomState>()
-        .insert_resource(ZoomState::new())
-        // SlippyTilesSettings will be updated by setup_slippy_tiles_from_config after config is loaded
-        .insert_resource(SlippyTilesSettings {
-            endpoint: config::BasemapStyle::default().endpoint_url().to_string(),
-            tiles_directory: std::path::PathBuf::from("tiles/"),  // Symlinked to centralized cache
-            reference_latitude: constants::DEFAULT_LATITUDE,   // Wichita, KS (matches MapState default)
-            reference_longitude: constants::DEFAULT_LONGITUDE,  // Wichita, KS (matches MapState default)
-            z_layer: 0.0,                  // Render tiles at z=0 (behind aircraft at z=10)
-            auto_render: false,            // Disable auto-render, we handle tile display ourselves
-            max_concurrent_downloads: 8,   // 3D mode generates many parallel requests across zoom levels
-            rate_limit_requests: 24,       // CartoDB/ESRI CDNs handle this easily; OSM is more restrictive
-            ..default()
-        })
-        .add_plugins((zoom::ZoomPlugin, tiles::TilesPlugin, terrain::TerrainPlugin, input::InputPlugin, camera::CameraPlugin))
-        .add_systems(Startup, (setup_debug_logger, setup_map, configure_gizmo_layers))
-        .add_systems(bevy_egui::EguiPrimaryContextPass, (
+                ..default()
+            })
+            .set(bevy::log::LogPlugin {
+                filter: "info,wgpu=warn,naga=warn,bevy_render=info".to_string(),
+                ..default()
+            }),
+        SlippyTilesPlugin,
+        ConfigPlugin,
+        aviation::AviationPlugin,
+        aircraft::AircraftPlugin,
+        weather::WeatherPlugin,
+        bookmarks::BookmarksPlugin,
+        recording::RecordingPlugin,
+        tools::ToolsPlugin,
+        coverage::CoveragePlugin,
+        airspace::AirspacePlugin,
+        data_sources::DataSourcesPlugin,
+        export::ExportPlugin,
+        view3d::View3DPlugin,
+        adsb::AdsbPlugin,
+    ))
+    .add_plugins((
+        bevy_obj::ObjPlugin,
+        bevy_inspector_egui::DefaultInspectorConfigPlugin,
+        data_ingest::DataIngestPlugin,
+    ))
+    // Full speed when focused; ~4 FPS when unfocused to keep ADS-B data
+    // flowing without overwhelming the GPU or triggering macOS throttling.
+    .insert_resource(ClearColor(Color::srgb(
+        20.0 / 255.0,
+        21.0 / 255.0,
+        24.0 / 255.0,
+    )))
+    .insert_resource(bevy::winit::WinitSettings {
+        focused_mode: bevy::winit::UpdateMode::Continuous,
+        unfocused_mode: bevy::winit::UpdateMode::reactive(std::time::Duration::from_millis(250)),
+    })
+    .init_resource::<HelpOverlayState>()
+    .init_resource::<ui_panels::UiPanelManager>()
+    .init_resource::<tools_window::ToolsWindowState>()
+    .init_resource::<debug_panel::DebugPanelState>()
+    .init_resource::<dock::DockTreeState>()
+    .init_resource::<inspector::InspectorState>()
+    .init_resource::<statusbar::StatusBarState>()
+    .init_resource::<hud::HudState>()
+    .register_type::<MapState>()
+    .register_type::<ZoomState>()
+    .insert_resource(ZoomState::new())
+    // SlippyTilesSettings will be updated by setup_slippy_tiles_from_config after config is loaded
+    .insert_resource(SlippyTilesSettings {
+        endpoint: config::BasemapStyle::default().endpoint_url().to_string(),
+        tiles_directory: std::path::PathBuf::from("tiles/"), // Symlinked to centralized cache
+        reference_latitude: constants::DEFAULT_LATITUDE, // Wichita, KS (matches MapState default)
+        reference_longitude: constants::DEFAULT_LONGITUDE, // Wichita, KS (matches MapState default)
+        z_layer: 0.0,                // Render tiles at z=0 (behind aircraft at z=10)
+        auto_render: false,          // Disable auto-render, we handle tile display ourselves
+        max_concurrent_downloads: 8, // 3D mode generates many parallel requests across zoom levels
+        rate_limit_requests: 24, // CartoDB/ESRI CDNs handle this easily; OSM is more restrictive
+        ..default()
+    })
+    .add_plugins((
+        zoom::ZoomPlugin,
+        tiles::TilesPlugin,
+        terrain::TerrainPlugin,
+        input::InputPlugin,
+        camera::CameraPlugin,
+    ))
+    .add_systems(
+        Startup,
+        (setup_debug_logger, setup_map, configure_gizmo_layers),
+    )
+    .add_systems(
+        bevy_egui::EguiPrimaryContextPass,
+        (
             theme::apply_egui_theme,
             toolbar::render_toolbar.after(theme::apply_egui_theme),
             statusbar::render_statusbar.after(toolbar::render_toolbar),
             dock::render_dock_tree.after(statusbar::render_statusbar),
-        ))
-        .add_systems(Update, show_window_after_init)
-        .add_systems(Update, handle_keyboard_shortcuts)
-        .add_systems(Update, toggle_overlays_keyboard)
-        .add_systems(Update, sync_resources_to_panel_manager.after(handle_keyboard_shortcuts))
-        .add_systems(Update, sync_panel_manager_to_resources.after(sync_resources_to_panel_manager))
-        .add_systems(Update, update_help_overlay)
-        .add_systems(Update, debug_panel::update_debug_metrics)
-        .add_systems(Update, heartbeat_diagnostic);
+        ),
+    )
+    .add_systems(Update, show_window_after_init)
+    .add_systems(Update, handle_keyboard_shortcuts)
+    .add_systems(Update, toggle_overlays_keyboard)
+    .add_systems(
+        Update,
+        sync_resources_to_panel_manager.after(handle_keyboard_shortcuts),
+    )
+    .add_systems(
+        Update,
+        sync_panel_manager_to_resources.after(sync_resources_to_panel_manager),
+    )
+    .add_systems(Update, update_help_overlay)
+    .add_systems(Update, debug_panel::update_debug_metrics)
+    .add_systems(Update, heartbeat_diagnostic);
 
     app.add_plugins(fusion_integration::FusionIntegrationPlugin);
 
@@ -257,7 +297,6 @@ fn main() {
 
     app.run();
 }
-
 
 // Resource to hold debug log file handle
 #[derive(Resource, Clone)]
@@ -276,10 +315,7 @@ impl ZoomDebugLogger {
 
 /// Show the window after a few frames so the GPU clear color is active before
 /// the window becomes visible, avoiding the macOS Metal magenta flash.
-fn show_window_after_init(
-    mut windows: Query<&mut Window>,
-    mut frame: Local<u32>,
-) {
+fn show_window_after_init(mut windows: Query<&mut Window>, mut frame: Local<u32>) {
     *frame += 1;
     if *frame == 3 {
         if let Ok(mut window) = windows.single_mut() {
@@ -321,7 +357,11 @@ fn heartbeat_diagnostic(
     let log_dir = paths::log_dir();
     paths::ensure_dir(&log_dir);
     let log_path = log_dir.join("heartbeat.log");
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&log_path) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
         let _ = writeln!(f, "{}", msg);
         let _ = f.flush();
     }
@@ -519,7 +559,6 @@ pub(crate) fn setup_map(
 
     commands.insert_resource(map_state);
 }
-
 
 pub fn clear_tile_cache() {
     tile_cache::clear_tile_cache();

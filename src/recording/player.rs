@@ -6,8 +6,8 @@ use std::path::Path;
 use std::time::Instant;
 
 use super::recorder::RecordedFrame;
-use crate::Aircraft;
 use crate::aircraft::TrailHistory;
+use crate::Aircraft;
 
 /// Playback state resource
 #[derive(Resource, Default)]
@@ -41,8 +41,7 @@ impl PlaybackState {
             self.stop();
         }
 
-        let file = File::open(path)
-            .map_err(|e| format!("Failed to open file: {}", e))?;
+        let file = File::open(path).map_err(|e| format!("Failed to open file: {}", e))?;
 
         let reader = BufReader::new(file);
         let mut frames = Vec::new();
@@ -53,8 +52,8 @@ impl PlaybackState {
                 continue;
             }
 
-            let frame: RecordedFrame = serde_json::from_str(&line)
-                .map_err(|e| format!("Failed to parse frame: {}", e))?;
+            let frame: RecordedFrame =
+                serde_json::from_str(&line).map_err(|e| format!("Failed to parse frame: {}", e))?;
             frames.push(frame);
         }
 
@@ -73,7 +72,11 @@ impl PlaybackState {
         self.pause_time = None;
         self.accumulated_pause_ms = 0;
 
-        info!("Loaded recording with {} frames, duration {} ms", self.frames.len(), self.total_duration_ms);
+        info!(
+            "Loaded recording with {} frames, duration {} ms",
+            self.frames.len(),
+            self.total_duration_ms
+        );
         Ok(())
     }
 
@@ -112,7 +115,8 @@ impl PlaybackState {
         self.current_time_ms = time_ms.min(self.total_duration_ms);
 
         // Find the frame closest to this time
-        self.current_frame_index = self.frames
+        self.current_frame_index = self
+            .frames
             .iter()
             .position(|f| f.timestamp_ms >= self.current_time_ms)
             .unwrap_or(self.frames.len().saturating_sub(1));

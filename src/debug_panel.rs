@@ -2,13 +2,12 @@
 ///
 /// Provides a runtime debug panel with scrollable log messages and live metrics
 /// (FPS, aircraft count, message rate, connection state, map state).
-
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 use std::collections::VecDeque;
 
 use crate::adsb::AdsbAircraftData;
-use crate::theme::{AppTheme, to_egui_color32, to_egui_color32_alpha};
+use crate::theme::{to_egui_color32, to_egui_color32_alpha, AppTheme};
 use crate::ui_panels::{PanelId, UiPanelManager};
 use crate::{Aircraft, MapState, ZoomState};
 
@@ -56,7 +55,8 @@ impl DebugPanelState {
             self.log_messages.pop_front();
         }
         let now = chrono_timestamp();
-        self.log_messages.push_back(format!("[{}] {}", now, msg.into()));
+        self.log_messages
+            .push_back(format!("[{}] {}", now, msg.into()));
     }
 }
 
@@ -92,7 +92,9 @@ pub fn update_debug_metrics(
     let elapsed = time.elapsed_secs_f64();
     let interval = elapsed - debug.last_rate_time;
     if interval >= 1.0 {
-        let delta_msgs = debug.messages_processed.saturating_sub(debug.last_rate_count);
+        let delta_msgs = debug
+            .messages_processed
+            .saturating_sub(debug.last_rate_count);
         debug.message_rate = delta_msgs as f64 / interval;
         debug.last_rate_time = elapsed;
         debug.last_rate_count = debug.messages_processed;
@@ -357,7 +359,14 @@ pub fn render_debug_panel(
     let panel_bg = to_egui_color32_alpha(theme.bg_secondary(), 240);
     let border_color = to_egui_color32(theme.bg_contrast());
 
-    render_debug_panel_ui(ctx, &mut debug, map_state.as_deref(), zoom_state.as_deref(), panel_bg, border_color);
+    render_debug_panel_ui(
+        ctx,
+        &mut debug,
+        map_state.as_deref(),
+        zoom_state.as_deref(),
+        panel_bg,
+        border_color,
+    );
 
     // If the egui X button closed the window, close it in UiPanelManager too.
     // This is handled here instead of via sync_resources_to_panel_manager because
@@ -382,8 +391,8 @@ mod tests {
     use super::*;
     use crate::map::{MapState, ZoomState};
     use bevy_slippy_tiles::ZoomLevel;
-    use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
+    use egui_kittest::Harness;
 
     #[test]
     fn test_debug_panel_renders_metrics() {
@@ -425,8 +434,12 @@ mod tests {
     fn test_debug_panel_renders_log_messages() {
         let mut debug = DebugPanelState::default();
         debug.open = true;
-        debug.log_messages.push_back("Test log entry one".to_string());
-        debug.log_messages.push_back("Test log entry two".to_string());
+        debug
+            .log_messages
+            .push_back("Test log entry one".to_string());
+        debug
+            .log_messages
+            .push_back("Test log entry two".to_string());
 
         let harness = Harness::new_state(
             |ctx, state: &mut DebugPanelState| {

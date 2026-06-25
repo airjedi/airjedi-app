@@ -1,7 +1,7 @@
-use bevy::prelude::*;
-use airjedi_fusion::{TrackerState, TrackQuality, TrackStatus};
 use crate::aircraft::components::FusionTrackLink;
 use crate::map::MapState;
+use airjedi_fusion::{TrackQuality, TrackStatus, TrackerState};
+use bevy::prelude::*;
 
 pub fn render_uncertainty_ellipses(
     fusion_tracks: Query<(&TrackerState, &TrackQuality)>,
@@ -40,8 +40,7 @@ pub fn render_uncertainty_ellipses(
         // north = [-sin_lat*cos_lon, -sin_lat*sin_lon, cos_lat]
         let pos_cov = cov.view((0, 0), (3, 3));
 
-        let var_east = sin_lon * sin_lon * pos_cov[(0, 0)]
-            + cos_lon * cos_lon * pos_cov[(1, 1)]
+        let var_east = sin_lon * sin_lon * pos_cov[(0, 0)] + cos_lon * cos_lon * pos_cov[(1, 1)]
             - 2.0 * sin_lon * cos_lon * pos_cov[(0, 1)];
 
         let var_north = (sin_lat * cos_lon).powi(2) * pos_cov[(0, 0)]

@@ -1,9 +1,9 @@
-pub mod prelude_imports;
 pub mod associator;
 pub mod classification;
 pub mod config;
 pub mod coord;
 pub mod filter;
+pub mod prelude_imports;
 pub mod sensor;
 pub mod store;
 pub mod systems;
@@ -52,14 +52,10 @@ impl Plugin for FusionPlugin {
                 )
                     .chain(),
             )
+            .add_systems(Update, systems::drain_observations.in_set(FusionSet::Drain))
             .add_systems(
                 Update,
-                systems::drain_observations.in_set(FusionSet::Drain),
-            )
-            .add_systems(
-                Update,
-                systems::update_spatial_index
-                    .in_set(FusionSet::Associate),
+                systems::update_spatial_index.in_set(FusionSet::Associate),
             )
             .add_systems(
                 Update,
@@ -95,13 +91,11 @@ impl Plugin for FusionPlugin {
             app.insert_resource(transport)
                 .add_systems(
                     Update,
-                    transport::nats::nats_subscribe_drain_system
-                        .in_set(FusionSet::Drain),
+                    transport::nats::nats_subscribe_drain_system.in_set(FusionSet::Drain),
                 )
                 .add_systems(
                     Update,
-                    transport::nats::nats_publish_system
-                        .after(FusionSet::Fuse),
+                    transport::nats::nats_publish_system.after(FusionSet::Fuse),
                 );
         }
     }

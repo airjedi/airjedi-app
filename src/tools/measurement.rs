@@ -1,9 +1,11 @@
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
-use bevy_slippy_tiles::{LatitudeLongitudeCoordinates, world_coords_to_world_pixel, world_pixel_to_world_coords};
+use bevy_slippy_tiles::{
+    world_coords_to_world_pixel, world_pixel_to_world_coords, LatitudeLongitudeCoordinates,
+};
 
-use crate::{MapState, ZoomState};
 use crate::geo::{haversine_distance_nm, initial_bearing, NM_TO_KM};
+use crate::{MapState, ZoomState};
 
 /// State for the measurement tool
 #[derive(Resource, Default)]
@@ -151,7 +153,11 @@ pub fn handle_measurement_clicks(
         latitude: map_state.latitude,
         longitude: map_state.longitude,
     };
-    let (cx, cy) = world_coords_to_world_pixel(&center_coords, crate::constants::DEFAULT_TILE_SIZE, map_state.zoom_level);
+    let (cx, cy) = world_coords_to_world_pixel(
+        &center_coords,
+        crate::constants::DEFAULT_TILE_SIZE,
+        map_state.zoom_level,
+    );
 
     // Calculate offset from center in world pixels
     let offset_x = world_pos.x as f64 / zoom_state.camera_zoom as f64;
@@ -172,7 +178,10 @@ pub fn handle_measurement_clicks(
         if state.start_point.is_none() {
             // Set start point
             state.start_point = Some((cursor_geo.latitude, cursor_geo.longitude));
-            info!("Measurement start: {:.4}, {:.4}", cursor_geo.latitude, cursor_geo.longitude);
+            info!(
+                "Measurement start: {:.4}, {:.4}",
+                cursor_geo.latitude, cursor_geo.longitude
+            );
 
             // Spawn start point marker
             commands.spawn((
@@ -184,7 +193,10 @@ pub fn handle_measurement_clicks(
         } else if state.end_point.is_none() {
             // Set end point
             state.end_point = Some((cursor_geo.latitude, cursor_geo.longitude));
-            info!("Measurement end: {:.4}, {:.4}", cursor_geo.latitude, cursor_geo.longitude);
+            info!(
+                "Measurement end: {:.4}, {:.4}",
+                cursor_geo.latitude, cursor_geo.longitude
+            );
 
             // Spawn end point marker
             commands.spawn((
@@ -197,7 +209,10 @@ pub fn handle_measurement_clicks(
             // Log result
             if let (Some(dist_nm), Some(bearing)) = (state.distance_nm(), state.bearing()) {
                 let dist_km = state.distance_km().unwrap_or(0.0);
-                info!("Distance: {:.2} nm ({:.2} km), Bearing: {:.0}", dist_nm, dist_km, bearing);
+                info!(
+                    "Distance: {:.2} nm ({:.2} km), Bearing: {:.0}",
+                    dist_nm, dist_km, bearing
+                );
             }
         } else {
             // Reset for new measurement
@@ -236,19 +251,31 @@ pub fn update_measurement_line(
         latitude: map_state.latitude,
         longitude: map_state.longitude,
     };
-    let (cx, cy) = world_coords_to_world_pixel(&center_coords, crate::constants::DEFAULT_TILE_SIZE, map_state.zoom_level);
+    let (cx, cy) = world_coords_to_world_pixel(
+        &center_coords,
+        crate::constants::DEFAULT_TILE_SIZE,
+        map_state.zoom_level,
+    );
 
     let start_coords = LatitudeLongitudeCoordinates {
         latitude: start.0,
         longitude: start.1,
     };
-    let (sx, sy) = world_coords_to_world_pixel(&start_coords, crate::constants::DEFAULT_TILE_SIZE, map_state.zoom_level);
+    let (sx, sy) = world_coords_to_world_pixel(
+        &start_coords,
+        crate::constants::DEFAULT_TILE_SIZE,
+        map_state.zoom_level,
+    );
 
     let end_coords = LatitudeLongitudeCoordinates {
         latitude: end.0,
         longitude: end.1,
     };
-    let (ex, ey) = world_coords_to_world_pixel(&end_coords, crate::constants::DEFAULT_TILE_SIZE, map_state.zoom_level);
+    let (ex, ey) = world_coords_to_world_pixel(
+        &end_coords,
+        crate::constants::DEFAULT_TILE_SIZE,
+        map_state.zoom_level,
+    );
 
     // Calculate screen positions
     let start_screen = Vec2::new(
@@ -312,7 +339,7 @@ pub fn render_measurement_tooltip(
                 ui.label(
                     egui::RichText::new("MEASURE")
                         .color(egui::Color32::YELLOW)
-                        .strong()
+                        .strong(),
                 );
                 ui.label("(M to cancel)");
             });
@@ -337,16 +364,16 @@ pub fn render_measurement_tooltip(
                                 ui.label(
                                     egui::RichText::new(format!("{:.2} nm", dist_nm))
                                         .color(egui::Color32::WHITE)
-                                        .strong()
+                                        .strong(),
                                 );
                                 ui.label(
                                     egui::RichText::new(format!("{:.2} km", dist_km))
                                         .color(egui::Color32::LIGHT_GRAY)
-                                        .size(12.0)
+                                        .size(12.0),
                                 );
                                 ui.label(
                                     egui::RichText::new(format!("BRG {:03.0}", bearing))
-                                        .color(egui::Color32::LIGHT_BLUE)
+                                        .color(egui::Color32::LIGHT_BLUE),
                                 );
                             } else {
                                 ui.label("Click to set start point");

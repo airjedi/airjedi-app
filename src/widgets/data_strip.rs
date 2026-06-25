@@ -1,5 +1,5 @@
-use bevy_egui::egui;
 use super::WidgetTheme;
+use bevy_egui::egui;
 
 /// A horizontal data ribbon with an optional colored accent border on the left.
 pub struct DataStrip<'a> {
@@ -87,12 +87,7 @@ impl<'a> DataStrip<'a> {
                 let glow_shape = egui::epaint::RectShape::filled(
                     accent_rect.expand(2.0),
                     egui::CornerRadius::ZERO,
-                    egui::Color32::from_rgba_unmultiplied(
-                        accent.r(),
-                        accent.g(),
-                        accent.b(),
-                        60,
-                    ),
+                    egui::Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 60),
                 )
                 .with_blur_width(blur as f32);
                 prepared
@@ -101,10 +96,11 @@ impl<'a> DataStrip<'a> {
                     .add(egui::Shape::Rect(glow_shape));
             }
 
-            prepared
-                .content_ui
-                .painter()
-                .rect_filled(accent_rect, egui::CornerRadius::ZERO, accent);
+            prepared.content_ui.painter().rect_filled(
+                accent_rect,
+                egui::CornerRadius::ZERO,
+                accent,
+            );
         }
 
         let response = prepared.end(ui);

@@ -1,9 +1,9 @@
-use bevy::prelude::*;
-use chrono::{DateTime, Utc};
-use airjedi_fusion::{Track, TrackerState, TrackQuality, TrackStatus};
 use crate::aircraft::components::{AircraftLabel, FusionTrackLink};
 use crate::aviation::loader::{AviationData, LoadingState};
 use crate::geo::haversine_distance_nm;
+use airjedi_fusion::{Track, TrackQuality, TrackStatus, TrackerState};
+use bevy::prelude::*;
+use chrono::{DateTime, Utc};
 
 const LANDING_ALTITUDE_FT: i32 = 1500;
 const LANDING_SPEED_KTS: f64 = 80.0;
@@ -61,8 +61,7 @@ pub fn detect_landings(
                 continue;
             }
 
-            if let (Some(le_lat), Some(le_lon)) =
-                (runway.le_latitude_deg, runway.le_longitude_deg)
+            if let (Some(le_lat), Some(le_lon)) = (runway.le_latitude_deg, runway.le_longitude_deg)
             {
                 if haversine_distance_nm(lat, lon, le_lat, le_lon) < RUNWAY_PROXIMITY_NM {
                     nearest_airport = Some(runway.airport_ident.clone());

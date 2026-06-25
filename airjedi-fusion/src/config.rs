@@ -1,7 +1,7 @@
-use crate::prelude_imports::*;
 use crate::associator::AssociatorConfig;
 use crate::filter::ekf::ProcessNoiseConfig;
 use crate::filter::OosmConfig;
+use crate::prelude_imports::*;
 use crate::sensor::FusionTier;
 use crate::store::StoreConfig;
 use crate::track::LifecycleProfiles;

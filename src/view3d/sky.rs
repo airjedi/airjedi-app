@@ -7,10 +7,10 @@
 //! via the `solar-positioning` crate (~0.0003 degree accuracy).
 //! Supports both real-time wall clock and manual time override via TimeState.
 
-use bevy::prelude::*;
-use bevy::camera::{CameraOutputMode, Exposure};
 use bevy::camera::visibility::RenderLayers;
+use bevy::camera::{CameraOutputMode, Exposure};
 use bevy::pbr::{DistanceFog, FogFalloff, StandardMaterial};
+use bevy::prelude::*;
 use bevy::render::render_resource::BlendState;
 
 use super::View3DState;
@@ -167,7 +167,11 @@ pub struct MoonState {
 
 impl Default for MoonState {
     fn default() -> Self {
-        Self { elevation: -10.0, azimuth: 0.0, phase: 0.5 }
+        Self {
+            elevation: -10.0,
+            azimuth: 0.0,
+            phase: 0.5,
+        }
     }
 }
 
@@ -195,8 +199,8 @@ fn compute_moon_position(
 
     let sin_ra = ecl_lon.sin() * obliquity.cos() - ecl_lat.tan() * obliquity.sin();
     let cos_ra = ecl_lon.cos();
-    let declination = (ecl_lat.cos() * obliquity.sin() * ecl_lon.sin()
-        + ecl_lat.sin() * obliquity.cos()).asin();
+    let declination =
+        (ecl_lat.cos() * obliquity.sin() * ecl_lon.sin() + ecl_lat.sin() * obliquity.cos()).asin();
 
     let gmst = (280.46061837 + 360.98564736629 * days) % 360.0;
     let ra = sin_ra.atan2(cos_ra).to_degrees();
@@ -205,12 +209,11 @@ fn compute_moon_position(
 
     let lat_rad = latitude.to_radians();
 
-    let sin_alt = lat_rad.sin() * declination.sin()
-        + lat_rad.cos() * declination.cos() * hour_angle.cos();
+    let sin_alt =
+        lat_rad.sin() * declination.sin() + lat_rad.cos() * declination.cos() * hour_angle.cos();
     let elevation = sin_alt.asin();
 
-    let cos_az = (declination.sin() - lat_rad.sin() * sin_alt)
-        / (lat_rad.cos() * elevation.cos());
+    let cos_az = (declination.sin() - lat_rad.sin() * sin_alt) / (lat_rad.cos() * elevation.cos());
     let mut azimuth = cos_az.clamp(-1.0, 1.0).acos();
     if hour_angle.sin() > 0.0 {
         azimuth = std::f64::consts::TAU - azimuth;
@@ -498,10 +501,18 @@ fn generate_star_texture(size: u32) -> Image {
             let color_hash = pseudo_hash(i + num_stars * 2) % 100;
             let (r, g, b) = if color_hash < 15 {
                 // Blue-white hot stars
-                (brightness.saturating_sub(20), brightness.saturating_sub(10), brightness)
+                (
+                    brightness.saturating_sub(20),
+                    brightness.saturating_sub(10),
+                    brightness,
+                )
             } else if color_hash < 25 {
                 // Warm yellow stars
-                (brightness, brightness.saturating_sub(15), brightness.saturating_sub(40))
+                (
+                    brightness,
+                    brightness.saturating_sub(15),
+                    brightness.saturating_sub(40),
+                )
             } else {
                 (brightness, brightness, brightness)
             };
@@ -588,11 +599,8 @@ pub fn update_sun_position(
     mut ambient: ResMut<GlobalAmbientLight>,
 ) {
     let datetime = time_state.current_datetime();
-    let (elevation, azimuth) = compute_sun_position_at(
-        map_state.latitude,
-        map_state.longitude,
-        &datetime,
-    );
+    let (elevation, azimuth) =
+        compute_sun_position_at(map_state.latitude, map_state.longitude, &datetime);
 
     // Only update when position changes meaningfully (0.05 degrees ≈ 12 seconds of time).
     // Avoiding per-frame writes prevents Bevy change detection from triggering
@@ -613,9 +621,8 @@ pub fn update_sun_position(
     // Convert sun elevation and azimuth to directional light rotation.
     let elev_rad = elevation.to_radians();
     let azim_rad = azimuth.to_radians();
-    *transform = Transform::from_rotation(
-        Quat::from_euler(EulerRot::YXZ, -azim_rad, -elev_rad, 0.0),
-    );
+    *transform =
+        Transform::from_rotation(Quat::from_euler(EulerRot::YXZ, -azim_rad, -elev_rad, 0.0));
 
     // Scale illuminance with sun elevation (128,000 lux = raw sunlight pre-scattering)
     if elevation > 0.0 {
@@ -653,11 +660,8 @@ pub fn update_moon_position(
     mut moon_query: Query<(&mut DirectionalLight, &mut Transform), With<MoonLight>>,
 ) {
     let datetime = time_state.current_datetime();
-    let (elevation, azimuth, phase) = compute_moon_position(
-        map_state.latitude,
-        map_state.longitude,
-        &datetime,
-    );
+    let (elevation, azimuth, phase) =
+        compute_moon_position(map_state.latitude, map_state.longitude, &datetime);
 
     // Only update when position changes meaningfully.
     let elev_changed = (moon_state.elevation - elevation).abs() > 0.05;
@@ -676,9 +680,8 @@ pub fn update_moon_position(
 
     let elev_rad = elevation.to_radians();
     let azim_rad = azimuth.to_radians();
-    *transform = Transform::from_rotation(
-        Quat::from_euler(EulerRot::YXZ, -azim_rad, -elev_rad, 0.0),
-    );
+    *transform =
+        Transform::from_rotation(Quat::from_euler(EulerRot::YXZ, -azim_rad, -elev_rad, 0.0));
 
     // Full moon ~0.25 lux, scaled by phase (sine curve peaks at phase=0.5)
     let phase_illuminance = (std::f32::consts::PI * phase).sin();
@@ -691,10 +694,7 @@ pub fn update_moon_position(
 }
 
 /// Keep time offset in sync with map longitude, and apply BRP override_hour.
-pub fn sync_time_offset(
-    map_state: Res<MapState>,
-    mut time_state: ResMut<TimeState>,
-) {
+pub fn sync_time_offset(map_state: Res<MapState>, mut time_state: ResMut<TimeState>) {
     let new_offset = (map_state.longitude / 15.0) as f32;
     if (time_state.utc_offset_hours - new_offset).abs() > 0.01 {
         time_state.utc_offset_hours = new_offset;
@@ -719,7 +719,10 @@ pub fn sync_time_offset(
 /// See the tech debt GitHub issue for restoration plan.
 pub fn manage_camera_mode(
     state: Res<View3DState>,
-    mut camera_3d: Query<(&mut Camera, &mut DistanceFog), (With<crate::AircraftCamera>, Without<crate::MapCamera>)>,
+    mut camera_3d: Query<
+        (&mut Camera, &mut DistanceFog),
+        (With<crate::AircraftCamera>, Without<crate::MapCamera>),
+    >,
     mut camera_2d: Query<&mut Camera, (With<crate::MapCamera>, Without<Camera3d>)>,
     mut ground_query: Query<(&mut Transform, &mut Visibility), With<GroundPlane>>,
     mut last_3d: Local<Option<bool>>,
@@ -920,4 +923,3 @@ pub fn update_ground_plane_color(
     let b = 0.094 + (0.60 - 0.094) * day;
     material.base_color = Color::srgb(r, g, b);
 }
-

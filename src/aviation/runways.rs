@@ -2,9 +2,9 @@ use bevy::prelude::*;
 use bevy_slippy_tiles::*;
 
 use super::{AviationData, LoadingState};
-use crate::MapState;
 use crate::constants;
-use crate::geo::{CoordinateConverter, haversine_distance_nm};
+use crate::geo::{haversine_distance_nm, CoordinateConverter};
+use crate::MapState;
 
 /// Component marking a runway entity
 #[derive(Component)]

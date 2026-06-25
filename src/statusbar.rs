@@ -4,7 +4,7 @@ use bevy_egui::{egui, EguiContexts};
 use crate::adsb::AdsbAircraftData;
 use crate::aircraft::stats_panel::StatsPanelState;
 use crate::recording::RecordingState;
-use crate::theme::{AppTheme, to_egui_color32};
+use crate::theme::{to_egui_color32, AppTheme};
 use crate::MapState;
 
 /// FPS smoothing state using exponential moving average.
@@ -82,7 +82,11 @@ pub fn render_statusbar(
                     .as_ref()
                     .and_then(|d| d.try_aircraft_count())
                     .unwrap_or(0);
-                ui.label(egui::RichText::new(format!("{} aircraft", count)).size(FONT_SIZE).color(primary));
+                ui.label(
+                    egui::RichText::new(format!("{} aircraft", count))
+                        .size(FONT_SIZE)
+                        .color(primary),
+                );
 
                 separator(ui, dim);
 
@@ -106,7 +110,11 @@ pub fn render_statusbar(
                 if recording.is_recording {
                     separator(ui, dim);
                     let time_val = ui.input(|i| i.time);
-                    let alpha = if (time_val * 2.0) as i32 % 2 == 0 { 255 } else { 100 };
+                    let alpha = if (time_val * 2.0) as i32 % 2 == 0 {
+                        255
+                    } else {
+                        100
+                    };
                     let rec_color = egui::Color32::from_rgba_unmultiplied(255, 0, 0, alpha);
                     ui.label(
                         egui::RichText::new(format!("REC {}s", recording.duration_secs()))

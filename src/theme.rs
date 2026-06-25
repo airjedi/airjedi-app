@@ -236,7 +236,10 @@ impl From<&AppTheme> for WidgetTheme {
             bg_secondary: theme.inner.bg_secondary_color_visuals(),
             accent: theme.inner.primary_accent_color_visuals(),
             border: theme.inner.bg_contrast_color_visuals(),
-            text: theme.inner.fg_primary_text_color_visuals().unwrap_or(egui::Color32::WHITE),
+            text: theme
+                .inner
+                .fg_primary_text_color_visuals()
+                .unwrap_or(egui::Color32::WHITE),
             text_dim: theme.ext_text_dim,
             shadow_color: egui::Color32::from_black_alpha(50),
         }
@@ -322,14 +325,28 @@ macro_rules! catppuccin_theme {
             fn rounding_visuals(&self) -> u8 {
                 6
             }
-            fn custom_text_styles(&self) -> std::collections::BTreeMap<egui::TextStyle, egui::FontId> {
+            fn custom_text_styles(
+                &self,
+            ) -> std::collections::BTreeMap<egui::TextStyle, egui::FontId> {
                 use egui::FontFamily::{Monospace, Proportional};
                 [
-                    (egui::TextStyle::Small, egui::FontId::new(10.0, Proportional)),
+                    (
+                        egui::TextStyle::Small,
+                        egui::FontId::new(10.0, Proportional),
+                    ),
                     (egui::TextStyle::Body, egui::FontId::new(13.0, Proportional)),
-                    (egui::TextStyle::Button, egui::FontId::new(12.0, Proportional)),
-                    (egui::TextStyle::Heading, egui::FontId::new(15.0, Proportional)),
-                    (egui::TextStyle::Monospace, egui::FontId::new(12.0, Monospace)),
+                    (
+                        egui::TextStyle::Button,
+                        egui::FontId::new(12.0, Proportional),
+                    ),
+                    (
+                        egui::TextStyle::Heading,
+                        egui::FontId::new(15.0, Proportional),
+                    ),
+                    (
+                        egui::TextStyle::Monospace,
+                        egui::FontId::new(12.0, Monospace),
+                    ),
                 ]
                 .into()
             }
@@ -348,10 +365,34 @@ macro_rules! catppuccin_theme {
     };
 }
 
-catppuccin_theme!(CatppuccinMochaTheme, catppuccin_mocha, FlavorName::Mocha, "Catppuccin Mocha", true);
-catppuccin_theme!(CatppuccinMacchiatoTheme, catppuccin_macchiato, FlavorName::Macchiato, "Catppuccin Macchiato", true);
-catppuccin_theme!(CatppuccinFrappeTheme, catppuccin_frappe, FlavorName::Frappe, "Catppuccin Frappe", true);
-catppuccin_theme!(CatppuccinLatteTheme, catppuccin_latte, FlavorName::Latte, "Catppuccin Latte", false);
+catppuccin_theme!(
+    CatppuccinMochaTheme,
+    catppuccin_mocha,
+    FlavorName::Mocha,
+    "Catppuccin Mocha",
+    true
+);
+catppuccin_theme!(
+    CatppuccinMacchiatoTheme,
+    catppuccin_macchiato,
+    FlavorName::Macchiato,
+    "Catppuccin Macchiato",
+    true
+);
+catppuccin_theme!(
+    CatppuccinFrappeTheme,
+    catppuccin_frappe,
+    FlavorName::Frappe,
+    "Catppuccin Frappe",
+    true
+);
+catppuccin_theme!(
+    CatppuccinLatteTheme,
+    catppuccin_latte,
+    FlavorName::Latte,
+    "Catppuccin Latte",
+    false
+);
 
 // ── Cockpit Dark theme ──────────────────────────────────────────────
 //
@@ -429,11 +470,23 @@ impl Aesthetix for CockpitDarkTheme {
     fn custom_text_styles(&self) -> std::collections::BTreeMap<egui::TextStyle, egui::FontId> {
         use egui::FontFamily::{Monospace, Proportional};
         [
-            (egui::TextStyle::Small, egui::FontId::new(10.0, Proportional)),
+            (
+                egui::TextStyle::Small,
+                egui::FontId::new(10.0, Proportional),
+            ),
             (egui::TextStyle::Body, egui::FontId::new(13.0, Proportional)),
-            (egui::TextStyle::Button, egui::FontId::new(12.0, Proportional)),
-            (egui::TextStyle::Heading, egui::FontId::new(15.0, Proportional)),
-            (egui::TextStyle::Monospace, egui::FontId::new(12.0, Monospace)),
+            (
+                egui::TextStyle::Button,
+                egui::FontId::new(12.0, Proportional),
+            ),
+            (
+                egui::TextStyle::Heading,
+                egui::FontId::new(15.0, Proportional),
+            ),
+            (
+                egui::TextStyle::Monospace,
+                egui::FontId::new(12.0, Monospace),
+            ),
         ]
         .into()
     }
@@ -442,8 +495,14 @@ impl Aesthetix for CockpitDarkTheme {
         egui::style::WidgetVisuals {
             bg_fill: self.bg_auxiliary_color_visuals(),
             weak_bg_fill: self.bg_auxiliary_color_visuals(),
-            bg_stroke: egui::Stroke { width: 1.0, color: self.primary_accent_color_visuals() },
-            fg_stroke: egui::Stroke { width: 1.5, color: self.fg_primary_text_color_visuals().unwrap_or_default() },
+            bg_stroke: egui::Stroke {
+                width: 1.0,
+                color: self.primary_accent_color_visuals(),
+            },
+            fg_stroke: egui::Stroke {
+                width: 1.5,
+                color: self.fg_primary_text_color_visuals().unwrap_or_default(),
+            },
             corner_radius: rounding,
             expansion: 2.0,
         }
@@ -453,8 +512,14 @@ impl Aesthetix for CockpitDarkTheme {
         egui::style::WidgetVisuals {
             bg_fill: self.bg_contrast_color_visuals(),
             weak_bg_fill: self.bg_contrast_color_visuals(),
-            bg_stroke: egui::Stroke { width: 1.0, color: self.primary_accent_color_visuals() },
-            fg_stroke: egui::Stroke { width: 2.0, color: self.fg_primary_text_color_visuals().unwrap_or_default() },
+            bg_stroke: egui::Stroke {
+                width: 1.0,
+                color: self.primary_accent_color_visuals(),
+            },
+            fg_stroke: egui::Stroke {
+                width: 2.0,
+                color: self.fg_primary_text_color_visuals().unwrap_or_default(),
+            },
             corner_radius: rounding,
             expansion: 1.0,
         }
@@ -464,8 +529,14 @@ impl Aesthetix for CockpitDarkTheme {
         egui::style::WidgetVisuals {
             bg_fill: self.bg_auxiliary_color_visuals(),
             weak_bg_fill: self.bg_auxiliary_color_visuals(),
-            bg_stroke: egui::Stroke { width: 1.0, color: self.primary_accent_color_visuals() },
-            fg_stroke: egui::Stroke { width: 1.0, color: self.fg_primary_text_color_visuals().unwrap_or_default() },
+            bg_stroke: egui::Stroke {
+                width: 1.0,
+                color: self.primary_accent_color_visuals(),
+            },
+            fg_stroke: egui::Stroke {
+                width: 1.0,
+                color: self.fg_primary_text_color_visuals().unwrap_or_default(),
+            },
             corner_radius: rounding,
             expansion: 0.0,
         }
@@ -575,7 +646,10 @@ pub fn apply_egui_theme(
             "Inter".to_owned(),
             egui::FontData::from_static(inter_data).into(),
         );
-        fonts.families.get_mut(&egui::FontFamily::Proportional).unwrap()
+        fonts
+            .families
+            .get_mut(&egui::FontFamily::Proportional)
+            .unwrap()
             .insert(0, "Inter".to_owned());
 
         // Load Phosphor icon font into a dedicated family so it doesn't

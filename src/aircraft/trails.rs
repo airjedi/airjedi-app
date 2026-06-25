@@ -68,10 +68,7 @@ impl fmt::Display for TrailRenderer {
 }
 
 impl TrailRenderer {
-    pub const ALL: &'static [TrailRenderer] = &[
-        TrailRenderer::Gizmo,
-        TrailRenderer::MeshStrip,
-    ];
+    pub const ALL: &'static [TrailRenderer] = &[TrailRenderer::Gizmo, TrailRenderer::MeshStrip];
 }
 
 /// Resource for trail configuration
@@ -100,7 +97,14 @@ impl Default for TrailConfig {
 
 impl TrailHistory {
     /// Add a new point to the trail
-    pub fn add_point(&mut self, lat: f64, lon: f64, altitude: Option<i32>, estimated: bool, clock: &SessionClock) {
+    pub fn add_point(
+        &mut self,
+        lat: f64,
+        lon: f64,
+        altitude: Option<i32>,
+        estimated: bool,
+        clock: &SessionClock,
+    ) {
         self.points.push_back(TrailPoint {
             lat,
             lon,
@@ -201,6 +205,12 @@ pub fn record_trail_points(
     for (aircraft, mut trail) in query.iter_mut() {
         let age_secs = (now_utc - aircraft.last_seen).num_seconds();
         let estimated = age_secs > timer.interval_secs as i64;
-        trail.add_point(aircraft.latitude, aircraft.longitude, aircraft.altitude, estimated, &clock);
+        trail.add_point(
+            aircraft.latitude,
+            aircraft.longitude,
+            aircraft.altitude,
+            estimated,
+            &clock,
+        );
     }
 }

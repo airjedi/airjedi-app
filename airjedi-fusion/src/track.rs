@@ -1,7 +1,7 @@
 use crate::prelude_imports::*;
+use crate::types::{TargetCategory, TargetId, Timestamp, TrackId};
 use std::collections::HashMap;
 use std::time::Duration;
-use crate::types::{TargetCategory, TargetId, Timestamp, TrackId};
 
 #[derive(Component, Debug, Clone)]
 pub struct Track {

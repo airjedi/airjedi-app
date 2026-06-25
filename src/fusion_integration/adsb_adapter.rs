@@ -1,11 +1,11 @@
-use bevy::prelude::*;
-use std::collections::HashMap;
+use airjedi_fusion::coord::CoordinateFrame;
 use airjedi_fusion::nalgebra;
 use airjedi_fusion::sensor::*;
 use airjedi_fusion::systems::ObservationBuffer;
 use airjedi_fusion::types::*;
-use airjedi_fusion::coord::CoordinateFrame;
+use bevy::prelude::*;
 use chrono::{DateTime, Utc};
+use std::collections::HashMap;
 
 use crate::adsb::connection::AdsbAircraftData;
 
@@ -60,7 +60,10 @@ fn adsb_aircraft_to_observation(
         (Some(track_deg), Some(speed_kts)) => {
             let speed_mps = speed_kts * 0.514444;
             let track_rad = track_deg.to_radians();
-            (Some(speed_mps * track_rad.cos()), Some(speed_mps * track_rad.sin()))
+            (
+                Some(speed_mps * track_rad.cos()),
+                Some(speed_mps * track_rad.sin()),
+            )
         }
         _ => (None, None),
     };
@@ -68,7 +71,7 @@ fn adsb_aircraft_to_observation(
     let vel_down = ac.vertical_rate.map(|vr| f64::from(-vr) * 0.00508);
 
     let pos_var = 10_000.0_f64; // 100m sigma squared
-    let vel_var = 100.0_f64;    // 10 m/s sigma squared
+    let vel_var = 100.0_f64; // 10 m/s sigma squared
     let cov = nalgebra::DMatrix::from_diagonal(&nalgebra::DVector::from_vec(vec![
         pos_var, pos_var, pos_var, vel_var, vel_var, vel_var,
     ]));

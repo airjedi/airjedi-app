@@ -34,7 +34,8 @@ impl DataProvider for NotamProvider {
 
         if client_id.is_empty() || client_secret.is_empty() {
             return Err(ProviderError::Other(
-                "NOTAM provider requires api_key and api_secret from https://api.faa.gov/s/".to_string()
+                "NOTAM provider requires api_key and api_secret from https://api.faa.gov/s/"
+                    .to_string(),
             ));
         }
 
@@ -65,7 +66,8 @@ impl DataProvider for NotamProvider {
 
         if resp.status().as_u16() == 401 {
             return Err(ProviderError::Other(
-                "NOTAM API auth failed: check api_key and api_secret in Ingest settings".to_string()
+                "NOTAM API auth failed: check api_key and api_secret in Ingest settings"
+                    .to_string(),
             ));
         }
 
@@ -88,10 +90,7 @@ impl DataProvider for NotamProvider {
     }
 
     fn pipeline_stages(&self) -> Vec<Box<dyn PipelineStage>> {
-        vec![
-            Box::new(NotamParseStage),
-            Box::new(NotamValidateStage),
-        ]
+        vec![Box::new(NotamParseStage), Box::new(NotamValidateStage)]
     }
 
     fn metadata(&self) -> ProviderMeta {
@@ -132,15 +131,16 @@ impl PipelineStage for NotamParseStage {
         // Support both formats:
         // 1. GeoJSON FeatureCollection (v1 API with responseFormat=geoJson)
         // 2. Legacy format with "notamList" array
-        let items: Vec<&Value> = if let Some(features) = json.get("features").and_then(|f| f.as_array()) {
-            // GeoJSON: each feature has properties with NOTAM fields
-            features.iter().collect()
-        } else if let Some(list) = json.get("notamList").and_then(|l| l.as_array()) {
-            list.iter().collect()
-        } else {
-            bevy::log::warn!("NOTAM response has no 'features' or 'notamList' field");
-            return Ok(());
-        };
+        let items: Vec<&Value> =
+            if let Some(features) = json.get("features").and_then(|f| f.as_array()) {
+                // GeoJSON: each feature has properties with NOTAM fields
+                features.iter().collect()
+            } else if let Some(list) = json.get("notamList").and_then(|l| l.as_array()) {
+                list.iter().collect()
+            } else {
+                bevy::log::warn!("NOTAM response has no 'features' or 'notamList' field");
+                return Ok(());
+            };
 
         for item in &items {
             // For GeoJSON, the NOTAM fields are in "properties"
@@ -167,7 +167,10 @@ fn parse_notam_item(
 ) -> Option<NotamInfo> {
     // NOTAM ID: v1 uses "coreNOTAMData.notam.number", legacy uses "notamNumber"
     let id = props
-        .get("coreNOTAMData").and_then(|c| c.get("notam")).and_then(|n| n.get("number")).and_then(|v| v.as_str())
+        .get("coreNOTAMData")
+        .and_then(|c| c.get("notam"))
+        .and_then(|n| n.get("number"))
+        .and_then(|v| v.as_str())
         .or_else(|| props.get("notamNumber").and_then(|v| v.as_str()))
         .or_else(|| props.get("id").and_then(|v| v.as_str()))
         .unwrap_or("")
@@ -224,7 +227,10 @@ fn parse_notam_item(
         match coords {
             Some(arr) if arr.len() >= 2 => {
                 // GeoJSON: [longitude, latitude]
-                (arr.get(1).and_then(|v| v.as_f64()), arr.get(0).and_then(|v| v.as_f64()))
+                (
+                    arr.get(1).and_then(|v| v.as_f64()),
+                    arr.get(0).and_then(|v| v.as_f64()),
+                )
             }
             _ => (None, None),
         }
@@ -234,9 +240,7 @@ fn parse_notam_item(
         (lat, lon)
     };
 
-    let radius_nm = props
-        .get("radius")
-        .and_then(|v| v.as_f64());
+    let radius_nm = props.get("radius").and_then(|v| v.as_f64());
 
     Some(NotamInfo {
         id,
@@ -304,8 +308,8 @@ impl PipelineStage for NotamValidateStage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{Datelike, Timelike};
     use crate::data_ingest::pipeline::run_pipeline;
+    use chrono::{Datelike, Timelike};
 
     fn sample_notam_response() -> Vec<u8> {
         serde_json::to_vec(&serde_json::json!({
@@ -400,10 +404,8 @@ mod tests {
             ..Default::default()
         };
 
-        let stages: Vec<Box<dyn PipelineStage>> = vec![
-            Box::new(NotamParseStage),
-            Box::new(NotamValidateStage),
-        ];
+        let stages: Vec<Box<dyn PipelineStage>> =
+            vec![Box::new(NotamParseStage), Box::new(NotamValidateStage)];
         let result = run_pipeline(&stages, data).unwrap();
 
         // Only the active NOTAM should remain

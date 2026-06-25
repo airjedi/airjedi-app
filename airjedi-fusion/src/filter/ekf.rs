@@ -1,7 +1,7 @@
-use nalgebra::{DMatrix, DVector, SMatrix, SVector};
+use super::{FilterResult, Innovation, StateHistory, StateSnapshot, TrackFilter};
 use crate::coord::{self, CoordinateFrame};
 use crate::sensor::{Measurement, SensorObservation};
-use super::{FilterResult, Innovation, StateHistory, StateSnapshot, TrackFilter};
+use nalgebra::{DMatrix, DVector, SMatrix, SVector};
 
 #[derive(Debug, Clone)]
 pub struct ProcessNoiseConfig {
@@ -39,10 +39,7 @@ impl Ekf6Dof {
         }
     }
 
-    fn observation_to_ecef(
-        &self,
-        obs: &SensorObservation,
-    ) -> Option<(DVector<f64>, DMatrix<f64>)> {
+    fn observation_to_ecef(&self, obs: &SensorObservation) -> Option<(DVector<f64>, DMatrix<f64>)> {
         match &obs.measurement {
             Measurement::PositionVelocity3D {
                 lat_deg,
@@ -56,17 +53,15 @@ impl Ekf6Dof {
                 let alt = alt_m.unwrap_or(0.0);
                 let ecef = coord::geodetic_to_ecef(*lat_deg, *lon_deg, alt);
 
-                let has_vel = vel_north_mps.is_some()
-                    && vel_east_mps.is_some()
-                    && vel_down_mps.is_some();
+                let has_vel =
+                    vel_north_mps.is_some() && vel_east_mps.is_some() && vel_down_mps.is_some();
                 let z_dim = if has_vel { 6 } else { 3 };
                 let mut z = DVector::zeros(z_dim);
                 z[0] = ecef[0];
                 z[1] = ecef[1];
                 z[2] = ecef[2];
 
-                if let (Some(vn), Some(ve), Some(vd)) =
-                    (vel_north_mps, vel_east_mps, vel_down_mps)
+                if let (Some(vn), Some(ve), Some(vd)) = (vel_north_mps, vel_east_mps, vel_down_mps)
                 {
                     let lat_rad = lat_deg.to_radians();
                     let lon_rad = lon_deg.to_radians();
@@ -76,10 +71,8 @@ impl Ekf6Dof {
                     let cos_lon = lon_rad.cos();
 
                     // NED to ECEF velocity rotation
-                    z[3] = -sin_lat * cos_lon * vn - sin_lon * ve
-                        - cos_lat * cos_lon * vd;
-                    z[4] = -sin_lat * sin_lon * vn + cos_lon * ve
-                        - cos_lat * sin_lon * vd;
+                    z[3] = -sin_lat * cos_lon * vn - sin_lon * ve - cos_lat * cos_lon * vd;
+                    z[4] = -sin_lat * sin_lon * vn + cos_lon * ve - cos_lat * sin_lon * vd;
                     z[5] = cos_lat * vn - sin_lat * vd;
                 }
 
@@ -105,10 +98,7 @@ impl Ekf6Dof {
                 z[1] = ecef[1];
                 z[2] = ecef[2];
                 let r = if obs.covariance.matrix.nrows() >= 3 {
-                    obs.covariance
-                        .matrix
-                        .view((0, 0), (3, 3))
-                        .into_owned()
+                    obs.covariance.matrix.view((0, 0), (3, 3)).into_owned()
                 } else {
                     DMatrix::identity(3, 3) * 100.0
                 };
@@ -126,11 +116,8 @@ impl Ekf6Dof {
                     sensor_alt_m,
                 } = &obs.sensor_id.coordinate_frame
                 {
-                    let sensor_ecef = coord::geodetic_to_ecef(
-                        *sensor_lat_deg,
-                        *sensor_lon_deg,
-                        *sensor_alt_m,
-                    );
+                    let sensor_ecef =
+                        coord::geodetic_to_ecef(*sensor_lat_deg, *sensor_lon_deg, *sensor_alt_m);
                     let el = elevation_rad.unwrap_or(0.0);
                     let target_ecef = coord::spherical_to_ecef(
                         *range_m,
@@ -145,10 +132,7 @@ impl Ekf6Dof {
                     z[1] = target_ecef[1];
                     z[2] = target_ecef[2];
                     let r = if obs.covariance.matrix.nrows() >= 3 {
-                        obs.covariance
-                            .matrix
-                            .view((0, 0), (3, 3))
-                            .into_owned()
+                        obs.covariance.matrix.view((0, 0), (3, 3)).into_owned()
                     } else {
                         DMatrix::identity(3, 3) * 500.0
                     };
@@ -162,9 +146,7 @@ impl Ekf6Dof {
             } => {
                 let z_dim = state.len().min(6);
                 let z = state.rows(0, z_dim).into_owned();
-                let r = covariance
-                    .view((0, 0), (z_dim, z_dim))
-                    .into_owned();
+                let r = covariance.view((0, 0), (z_dim, z_dim)).into_owned();
                 Some((z, r))
             }
             _ => None,
@@ -377,8 +359,7 @@ mod tests {
         let mut ekf = Ekf6Dof::new(ProcessNoiseConfig::default());
         ekf.initialize(&obs);
 
-        let (lat, lon, alt) =
-            coord::ecef_to_geodetic(&[ekf.x[0], ekf.x[1], ekf.x[2]]);
+        let (lat, lon, alt) = coord::ecef_to_geodetic(&[ekf.x[0], ekf.x[1], ekf.x[2]]);
         assert_relative_eq!(lat, 37.6872, epsilon = 0.001);
         assert_relative_eq!(lon, -97.3301, epsilon = 0.001);
         assert_relative_eq!(alt, 10000.0, epsilon = 10.0);

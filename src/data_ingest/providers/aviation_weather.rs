@@ -211,20 +211,12 @@ fn parse_metar_item(item: &MetarJson, fetched_at: DateTime<Utc>) -> Option<Metar
             .min()
     });
 
-    let flight_category = item
-        .flt_cat
-        .as_deref()
-        .unwrap_or("VFR")
-        .to_string();
+    let flight_category = item.flt_cat.as_deref().unwrap_or("VFR").to_string();
 
     // Altimeter: if > 100, assume hPa and convert to inHg
-    let altimeter_inhg = item.altim.map(|a| {
-        if a > 100.0 {
-            a / HPA_TO_INHG
-        } else {
-            a
-        }
-    });
+    let altimeter_inhg = item
+        .altim
+        .map(|a| if a > 100.0 { a / HPA_TO_INHG } else { a });
 
     Some(MetarReport {
         icao,
@@ -408,14 +400,11 @@ impl PipelineStage for TafParseStage {
 fn parse_taf_item(item: &TafJson, fetched_at: DateTime<Utc>) -> Option<TafReport> {
     let icao = item.icao_id.as_ref()?.clone();
 
-    let issue_time = parse_flexible_datetime(&item.issue_time)
-        .unwrap_or(fetched_at);
+    let issue_time = parse_flexible_datetime(&item.issue_time).unwrap_or(fetched_at);
 
-    let valid_from = parse_flexible_datetime(&item.valid_time_from)
-        .unwrap_or(fetched_at);
+    let valid_from = parse_flexible_datetime(&item.valid_time_from).unwrap_or(fetched_at);
 
-    let valid_to = parse_flexible_datetime(&item.valid_time_to)
-        .unwrap_or(fetched_at);
+    let valid_to = parse_flexible_datetime(&item.valid_time_to).unwrap_or(fetched_at);
 
     Some(TafReport {
         icao,
@@ -573,11 +562,9 @@ fn parse_sigmet_item(item: &SigmetJson, fetched_at: DateTime<Utc>) -> Option<Sig
     let region = item.icao_id.clone().unwrap_or_default();
     let hazard = item.hazard.clone().unwrap_or_default();
 
-    let valid_from = parse_flexible_datetime(&item.valid_time_from)
-        .unwrap_or(fetched_at);
+    let valid_from = parse_flexible_datetime(&item.valid_time_from).unwrap_or(fetched_at);
 
-    let valid_to = parse_flexible_datetime(&item.valid_time_to)
-        .unwrap_or(fetched_at);
+    let valid_to = parse_flexible_datetime(&item.valid_time_to).unwrap_or(fetched_at);
 
     let polygon: Vec<(f64, f64)> = item
         .coords
@@ -712,11 +699,9 @@ fn parse_airmet_item(item: &AirmetJson, fetched_at: DateTime<Utc>) -> Option<Air
         return None;
     }
 
-    let valid_from = parse_flexible_datetime(&item.valid_time_from)
-        .unwrap_or(fetched_at);
+    let valid_from = parse_flexible_datetime(&item.valid_time_from).unwrap_or(fetched_at);
 
-    let valid_to = parse_flexible_datetime(&item.valid_time_to)
-        .unwrap_or(fetched_at);
+    let valid_to = parse_flexible_datetime(&item.valid_time_to).unwrap_or(fetched_at);
 
     let polygon: Vec<(f64, f64)> = item
         .coords
@@ -842,11 +827,11 @@ fn parse_pirep_item(item: &PirepJson, fetched_at: DateTime<Utc>) -> Option<Pirep
     let latitude = item.lat?;
     let longitude = item.lon?;
 
-    let observation_time = parse_flexible_datetime(&item.obs_time)
-        .unwrap_or(fetched_at);
+    let observation_time = parse_flexible_datetime(&item.obs_time).unwrap_or(fetched_at);
 
     // Altitude: prefer altFt, fall back to fltLvl * 100
-    let altitude_ft = item.alt_ft
+    let altitude_ft = item
+        .alt_ft
         .or_else(|| item.flt_lvl.map(|fl| fl * 100))
         .unwrap_or(0);
 

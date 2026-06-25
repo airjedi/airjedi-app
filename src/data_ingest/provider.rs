@@ -199,12 +199,19 @@ mod tests {
             }
             let cron = preset.to_cron();
             let back = SchedulePreset::from_cron(cron);
-            assert_eq!(*preset, back, "roundtrip failed for {:?} -> {}", preset, cron);
+            assert_eq!(
+                *preset, back,
+                "roundtrip failed for {:?} -> {}",
+                preset, cron
+            );
         }
     }
 
     #[test]
     fn unknown_cron_maps_to_custom() {
-        assert_eq!(SchedulePreset::from_cron("0 0 */3 * * *"), SchedulePreset::Custom);
+        assert_eq!(
+            SchedulePreset::from_cron("0 0 */3 * * *"),
+            SchedulePreset::Custom
+        );
     }
 }

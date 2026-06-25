@@ -3,7 +3,6 @@
 /// Uses `bevy_inspector_egui` to display editable views of resources,
 /// entities, and assets.  Requires `&mut World` access, which is why
 /// the dock system runs as an exclusive system.
-
 use bevy::prelude::*;
 use bevy_egui::egui;
 use bevy_inspector_egui::bevy_inspector;

@@ -101,7 +101,9 @@ pub fn paint_arc(
     segments: usize,
 ) {
     let points = arc_points(center, radius, start_angle, end_angle, segments);
-    painter.add(egui::Shape::Path(egui::epaint::PathShape::line(points, stroke)));
+    painter.add(egui::Shape::Path(egui::epaint::PathShape::line(
+        points, stroke,
+    )));
 }
 
 /// Paint a filled arc band (donut segment) using a triangle mesh.
@@ -124,11 +126,17 @@ pub fn paint_thick_arc(
         let sin_a = angle.sin();
 
         mesh.colored_vertex(
-            egui::pos2(center.x + inner_radius * cos_a, center.y + inner_radius * sin_a),
+            egui::pos2(
+                center.x + inner_radius * cos_a,
+                center.y + inner_radius * sin_a,
+            ),
             color,
         );
         mesh.colored_vertex(
-            egui::pos2(center.x + outer_radius * cos_a, center.y + outer_radius * sin_a),
+            egui::pos2(
+                center.x + outer_radius * cos_a,
+                center.y + outer_radius * sin_a,
+            ),
             color,
         );
 

@@ -137,7 +137,8 @@ impl DataSourceManager {
     /// Add a new data source
     pub fn add_source(&mut self, config: DataSourceConfig) {
         if !self.sources.iter().any(|s| s.name == config.name) {
-            self.states.insert(config.name.clone(), DataSourceState::default());
+            self.states
+                .insert(config.name.clone(), DataSourceState::default());
             self.sources.push(config);
         }
     }
@@ -152,8 +153,10 @@ impl DataSourceManager {
     ///
     /// This handles merging data from multiple sources for the same aircraft.
     pub fn update_aircraft(&mut self, data: SourcedAircraftData) {
-        let entry = self.aircraft.entry(data.icao.clone()).or_insert_with(|| {
-            MergedAircraftData {
+        let entry = self
+            .aircraft
+            .entry(data.icao.clone())
+            .or_insert_with(|| MergedAircraftData {
                 icao: data.icao.clone(),
                 callsign: None,
                 latitude: 0.0,
@@ -165,8 +168,7 @@ impl DataSourceManager {
                 squawk: None,
                 sources: Vec::new(),
                 primary_source: data.source.clone(),
-            }
-        });
+            });
 
         // Track which sources report this aircraft
         if !entry.sources.contains(&data.source) {
@@ -174,7 +176,8 @@ impl DataSourceManager {
         }
 
         // Find priority of current primary source
-        let primary_priority = self.sources
+        let primary_priority = self
+            .sources
             .iter()
             .find(|s| s.name == entry.primary_source)
             .map(|s| s.priority)
@@ -213,7 +216,11 @@ impl DataSourceManager {
 
     /// Get source statistics
     pub fn get_stats(&self) -> DataSourceStats {
-        let connected_count = self.states.values().filter(|s| s.status.is_connected()).count();
+        let connected_count = self
+            .states
+            .values()
+            .filter(|s| s.status.is_connected())
+            .count();
         let total_aircraft = self.aircraft.len();
         let total_messages: u64 = self.states.values().map(|s| s.messages_received).sum();
 

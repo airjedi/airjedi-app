@@ -1,12 +1,12 @@
 use bevy::prelude::*;
 use bevy_slippy_tiles::*;
 
-use super::{TrailHistory, TrailConfig, SessionClock};
-use super::trails::{altitude_color, age_opacity, TrailRenderer};
-use super::staleness::{staleness_opacity, aircraft_age_secs};
-use crate::{Aircraft, MapState};
+use super::staleness::{aircraft_age_secs, staleness_opacity};
+use super::trails::{age_opacity, altitude_color, TrailRenderer};
+use super::{SessionClock, TrailConfig, TrailHistory};
 use crate::geo::CoordinateConverter;
 use crate::view3d::View3DState;
+use crate::{Aircraft, MapState};
 
 /// System to draw flight trails using Gizmos.
 /// In 2D mode, draws flat trails. In 3D mode, draws trails at altitude using Vec3 positions.
@@ -25,7 +25,11 @@ pub fn draw_trails(
     }
 
     let is_3d = view3d_state.is_3d_active();
-    let active_renderer = if is_3d { config.renderer_3d } else { config.renderer_2d };
+    let active_renderer = if is_3d {
+        config.renderer_3d
+    } else {
+        config.renderer_2d
+    };
     if active_renderer != TrailRenderer::Gizmo {
         return;
     }

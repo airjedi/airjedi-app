@@ -1,15 +1,15 @@
-use crate::prelude_imports::*;
-use chrono::Utc;
 use crate::associator::gnn::GnnAssociator;
 use crate::associator::spatial_index::SpatialIndex;
 use crate::associator::AssociatorConfig;
 use crate::classification::TargetClassification;
 use crate::config::FusionConfig;
 use crate::filter::{FilterResult, TrackerState};
+use crate::prelude_imports::*;
 use crate::sensor::SensorObservation;
 use crate::store::TimelineStore;
 use crate::track::{LifecycleProfiles, Track, TrackQuality, TrackStatus};
 use crate::types::TrackId;
+use chrono::Utc;
 
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FusionSet {
@@ -24,10 +24,7 @@ pub struct ObservationBuffer {
     pub observations: Vec<SensorObservation>,
 }
 
-pub fn drain_observations(
-    mut buffer: ResMut<ObservationBuffer>,
-    mut store: ResMut<TimelineStore>,
-) {
+pub fn drain_observations(mut buffer: ResMut<ObservationBuffer>, mut store: ResMut<TimelineStore>) {
     for obs in buffer.observations.drain(..) {
         store.insert(obs);
     }
@@ -50,12 +47,7 @@ pub fn association_system(
 
     let unassociated_refs: Vec<_> = store.unassociated().iter().collect();
 
-    let result = GnnAssociator::associate(
-        &unassociated_refs,
-        &track_list,
-        &spatial_index,
-        &config,
-    );
+    let result = GnnAssociator::associate(&unassociated_refs, &track_list, &spatial_index, &config);
 
     // Associate in reverse index order to keep indices valid during removal
     let mut sorted_assignments = result.assignments;
@@ -168,8 +160,7 @@ pub fn track_initiation_system(
             initiated_ids.insert(target_id.id.clone());
         }
 
-        let mut tracker =
-            TrackerState::new_6dof(fusion_config.filter_defaults.clone());
+        let mut tracker = TrackerState::new_6dof(fusion_config.filter_defaults.clone());
         tracker.variant.initialize(&obs.observation);
         tracker.last_update = Some(Utc::now());
 
@@ -216,8 +207,6 @@ pub fn track_cleanup_system(
     }
 }
 
-pub fn store_eviction_system(
-    mut store: ResMut<TimelineStore>,
-) {
+pub fn store_eviction_system(mut store: ResMut<TimelineStore>) {
     store.evict_old(Utc::now());
 }

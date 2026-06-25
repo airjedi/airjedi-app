@@ -1,8 +1,8 @@
-pub mod sync;
 pub mod connection;
+pub mod sync;
 
-pub use sync::*;
 pub use connection::*;
+pub use sync::*;
 
 use bevy::prelude::*;
 use bevy_egui::EguiPrimaryContextPass;
@@ -40,6 +40,9 @@ impl Plugin for AdsbPlugin {
             ),
         );
 
-        app.add_systems(Update, (update_connection_status, reconnect_on_config_change));
+        app.add_systems(
+            Update,
+            (update_connection_status, reconnect_on_config_change),
+        );
     }
 }

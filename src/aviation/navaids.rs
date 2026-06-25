@@ -2,9 +2,9 @@ use bevy::prelude::*;
 use bevy_slippy_tiles::*;
 
 use super::{AviationData, LoadingState, NavaidType};
-use crate::MapState;
 use crate::constants;
-use crate::geo::{CoordinateConverter, haversine_distance_nm};
+use crate::geo::{haversine_distance_nm, CoordinateConverter};
+use crate::MapState;
 
 /// Component marking a navaid entity
 #[derive(Component)]
@@ -20,7 +20,9 @@ pub struct NavaidRenderState {
 
 impl Default for NavaidRenderState {
     fn default() -> Self {
-        Self { show_navaids: false } // Off by default
+        Self {
+            show_navaids: false,
+        } // Off by default
     }
 }
 
@@ -61,8 +63,12 @@ pub fn draw_navaids(
         {
             continue;
         }
-        if haversine_distance_nm(center_lat, center_lon, navaid.latitude_deg, navaid.longitude_deg)
-            > constants::AVIATION_FEATURE_RADIUS_NM
+        if haversine_distance_nm(
+            center_lat,
+            center_lon,
+            navaid.latitude_deg,
+            navaid.longitude_deg,
+        ) > constants::AVIATION_FEATURE_RADIUS_NM
         {
             continue;
         }

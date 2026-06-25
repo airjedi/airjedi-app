@@ -40,8 +40,8 @@ impl HeightmapData {
     /// Create a Bevy `Image` from the raw RGB data for GPU texture upload.
     /// The shader decodes the Terrarium format from the RGB channels.
     pub(crate) fn to_gpu_image(&self) -> bevy::prelude::Image {
-        use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
         use bevy::asset::RenderAssetUsages;
+        use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
         // Convert RGB → RGBA (GPU textures require 4 channels)
         let mut rgba = Vec::with_capacity((self.width * self.height * 4) as usize);
@@ -121,7 +121,12 @@ impl HeightmapCache {
             return;
         }
         self.pending.insert(key);
-        fetch_and_decode(self.provider.clone(), key, self.sender.clone(), self.active_fetches.clone());
+        fetch_and_decode(
+            self.provider.clone(),
+            key,
+            self.sender.clone(),
+            self.active_fetches.clone(),
+        );
     }
 
     /// Drain the receiver channel, inserting all completed heightmaps into the cache.
@@ -147,10 +152,13 @@ impl HeightmapCache {
         let min_zoom = current_zoom.saturating_sub(4);
         self.cache.retain(|&(zoom, _, _), _| {
             let keep = zoom >= min_zoom && zoom <= current_zoom;
-            if !keep { removed += 1; }
+            if !keep {
+                removed += 1;
+            }
             keep
         });
-        self.pending.retain(|&(zoom, _, _)| zoom >= min_zoom && zoom <= current_zoom);
+        self.pending
+            .retain(|&(zoom, _, _)| zoom >= min_zoom && zoom <= current_zoom);
 
         // Phase 2: If still over budget, drop oldest (arbitrary) entries
         if self.cache.len() > max_entries {
@@ -179,9 +187,8 @@ impl HeightmapCache {
         zoom_level: bevy_slippy_tiles::ZoomLevel,
     ) -> Option<f32> {
         let zoom = zoom_level.to_u8();
-        let tile_coords = bevy_slippy_tiles::SlippyTileCoordinates::from_latitude_longitude(
-            lat, lon, zoom_level,
-        );
+        let tile_coords =
+            bevy_slippy_tiles::SlippyTileCoordinates::from_latitude_longitude(lat, lon, zoom_level);
         let key: TileKey = (zoom, tile_coords.x, tile_coords.y);
         let heightmap = self.cache.get(&key)?;
 
@@ -193,8 +200,14 @@ impl HeightmapCache {
         let tile_lon_min = (tile_coords.x as f64 / n) * 360.0 - 180.0;
         let tile_lon_max = ((tile_coords.x + 1) as f64 / n) * 360.0 - 180.0;
 
-        let tile_lat_max = (std::f64::consts::PI * (1.0 - 2.0 * tile_coords.y as f64 / n)).sinh().atan().to_degrees();
-        let tile_lat_min = (std::f64::consts::PI * (1.0 - 2.0 * (tile_coords.y + 1) as f64 / n)).sinh().atan().to_degrees();
+        let tile_lat_max = (std::f64::consts::PI * (1.0 - 2.0 * tile_coords.y as f64 / n))
+            .sinh()
+            .atan()
+            .to_degrees();
+        let tile_lat_min = (std::f64::consts::PI * (1.0 - 2.0 * (tile_coords.y + 1) as f64 / n))
+            .sinh()
+            .atan()
+            .to_degrees();
 
         // UV within tile: u = east fraction, v = south fraction
         let u = ((lon - tile_lon_min) / (tile_lon_max - tile_lon_min)).clamp(0.0, 1.0) as f32;
@@ -283,14 +296,17 @@ fn fetch_and_decode(
             elevations.push(elev);
         }
         let raw_rgb = img.as_raw().clone();
-        let _ = sender.send((key, HeightmapData {
-            width: w,
-            height: h,
-            elevations,
-            raw_rgb,
-            min_elevation: min_elev,
-            max_elevation: max_elev,
-        }));
+        let _ = sender.send((
+            key,
+            HeightmapData {
+                width: w,
+                height: h,
+                elevations,
+                raw_rgb,
+                min_elevation: min_elev,
+                max_elevation: max_elev,
+            },
+        ));
     });
 }
 
@@ -326,10 +342,7 @@ pub(crate) fn request_heightmaps_for_tiles(
     map_state: Res<crate::MapState>,
     mut cache: ResMut<HeightmapCache>,
     tile_settings: Res<bevy_slippy_tiles::SlippyTilesSettings>,
-    tile_query: Query<
-        (&Transform, &crate::tiles::TileFadeState),
-        With<bevy_slippy_tiles::MapTile>,
-    >,
+    tile_query: Query<(&Transform, &crate::tiles::TileFadeState), With<bevy_slippy_tiles::MapTile>>,
 ) {
     // Only fetch heightmaps when 3D mode is active and terrain is enabled
     if !view_state.is_3d_active() || !terrain_state.enabled {
@@ -343,7 +356,12 @@ pub(crate) fn request_heightmaps_for_tiles(
             continue;
         }
 
-        let key = super::tile_key_from_transform(transform, fade_state, &tile_settings, map_state.zoom_level);
+        let key = super::tile_key_from_transform(
+            transform,
+            fade_state,
+            &tile_settings,
+            map_state.zoom_level,
+        );
 
         if !cache.contains(&key) {
             cache.request(key);
