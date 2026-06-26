@@ -17,6 +17,6 @@ pub fn format_altitude_with_indicator(alt: i32, indicator: &str) -> String {
     if alt >= FL_THRESHOLD {
         format!("{} FL{:03}", indicator, alt / 100)
     } else {
-        format!("{} {}", indicator, alt)
+        format!("{} {} ft", indicator, alt)
     }
 }

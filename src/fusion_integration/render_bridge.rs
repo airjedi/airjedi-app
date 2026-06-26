@@ -1,3 +1,4 @@
+use crate::adsb::connection::AdsbAircraftData;
 use crate::adsb::sync::AircraftModelRegistry;
 use crate::aircraft::components::{Aircraft, AircraftLabel, FusionTrackLink};
 use crate::aircraft::picking::{on_aircraft_click, on_aircraft_hover, on_aircraft_out};
@@ -35,6 +36,7 @@ pub fn sync_tracks_to_visuals(
     label_query: Query<(Entity, &AircraftLabel)>,
     model_registry: Option<Res<AircraftModelRegistry>>,
     type_db: Option<Res<crate::aircraft::AircraftTypeDatabase>>,
+    adsb_data: Option<Res<AdsbAircraftData>>,
     theme: Res<AppTheme>,
     time: Res<Time<Real>>,
     map_state: Res<MapState>,
@@ -45,15 +47,31 @@ pub fn sync_tracks_to_visuals(
         return;
     };
 
+    let raw_aircraft = adsb_data.as_ref().and_then(|d| d.try_get_aircraft());
+
     for (track_entity, track, tracker, quality, classification) in &fusion_tracks {
         let (lat, lon, alt_m) = tracker.position_geodetic();
-        let alt_ft = (alt_m / 0.3048) as i32;
+        let filter_alt_ft = (alt_m / 0.3048) as i32;
 
         let vel_ecef = tracker.velocity_ecef();
         let speed_mps = (vel_ecef[0].powi(2) + vel_ecef[1].powi(2) + vel_ecef[2].powi(2)).sqrt();
         let speed_kts = speed_mps / 0.514444;
 
         let heading = compute_heading_from_ecef(lat, lon, &vel_ecef, speed_mps);
+
+        let track_icao = track
+            .cooperative_ids
+            .iter()
+            .find(|id| id.id_type == IdentifierType::Icao)
+            .map(|id| id.id.as_str());
+        let raw_ac = track_icao.and_then(|icao| {
+            raw_aircraft
+                .as_ref()
+                .and_then(|list| list.iter().find(|ac| ac.icao == icao))
+        });
+        let alt_ft = raw_ac
+            .and_then(|ac| ac.altitude)
+            .unwrap_or(filter_alt_ft);
 
         let existing_visual = visual_lookup
             .iter()
@@ -80,7 +98,13 @@ pub fn sync_tracks_to_visuals(
                 aircraft.is_on_ground = Some(track.is_on_ground);
                 aircraft.last_seen = track.last_update;
 
-                if aircraft.callsign.is_none() {
+                if let Some(ac) = raw_ac {
+                    if let Some(ref cs) = ac.callsign {
+                        if !cs.trim().is_empty() {
+                            aircraft.callsign = Some(cs.clone());
+                        }
+                    }
+                } else if aircraft.callsign.is_none() {
                     for cid in &track.cooperative_ids {
                         if cid.id_type == IdentifierType::Callsign {
                             aircraft.callsign = Some(cid.id.clone());

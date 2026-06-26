@@ -513,9 +513,14 @@ pub fn render_aircraft_list_panel(
                                         .size(13.0),
                                 );
 
-                                // Display tail number if known, otherwise ICAO
-                                let id_label =
-                                    aircraft.registration.as_deref().unwrap_or(&aircraft.icao);
+                                // Display: registration > callsign > ICAO as primary label
+                                let id_label = aircraft
+                                    .registration
+                                    .as_deref()
+                                    .or(aircraft.callsign.as_deref().map(|s| s.trim()))
+                                    .unwrap_or(&aircraft.icao);
+                                let has_better_id = aircraft.registration.is_some()
+                                    || aircraft.callsign.is_some();
                                 ui.label(
                                     egui::RichText::new(id_label)
                                         .color(icao_color)
@@ -524,18 +529,13 @@ pub fn render_aircraft_list_panel(
                                         .strong(),
                                 );
 
-                                // Callsign
-                                if let Some(ref callsign) = aircraft.callsign {
-                                    let cs_color = if is_selected {
-                                        callsign_selected_color
-                                    } else {
-                                        callsign_color
-                                    };
+                                // Show ICAO hex as dim secondary when a better label is primary
+                                if has_better_id {
                                     ui.label(
-                                        egui::RichText::new(format!("{}", callsign.trim()))
-                                            .color(cs_color)
-                                            .size(13.0)
-                                            .strong(),
+                                        egui::RichText::new(&aircraft.icao)
+                                            .color(metrics_color)
+                                            .size(10.0)
+                                            .monospace(),
                                     );
                                 }
 
@@ -641,7 +641,7 @@ pub fn render_aircraft_list_panel(
                                         (egui::Color32::from_rgb(150, 150, 150), "\u{2500}")
                                     };
                                     ui.label(
-                                        egui::RichText::new(format!("{} {}ft/min", vr_symbol, vr))
+                                        egui::RichText::new(format!("{} {}ft/min", vr_symbol, vr.abs()))
                                             .color(vr_color)
                                             .size(10.0)
                                             .monospace(),
@@ -1224,7 +1224,7 @@ fn render_inline_detail(
                         ArcGauge::themed(alt_norm, &wt)
                             .size(60.0)
                             .label("ALT")
-                            .value_text(&format!("{}", alt))
+                            .value_text(&format_altitude(Some(alt)))
                             .tick_count(5)
                             .track_width(4.0)
                             .fill_width(4.0),
@@ -1237,7 +1237,7 @@ fn render_inline_detail(
                         ArcGauge::themed(spd_norm, &wt)
                             .size(60.0)
                             .label("SPD")
-                            .value_text(&format!("{:.0}", speed))
+                            .value_text(&format!("{:.0} kt", speed))
                             .fill_color(egui::Color32::from_rgb(100, 220, 150))
                             .tick_count(5)
                             .track_width(4.0)
@@ -1251,7 +1251,7 @@ fn render_inline_detail(
                         ArcGauge::themed(hdg_norm, &wt)
                             .size(60.0)
                             .label("HDG")
-                            .value_text(&format!("{:.0}", hdg))
+                            .value_text(&format!("{:.0}\u{00B0}", hdg))
                             .fill_color(egui::Color32::from_rgb(220, 180, 100))
                             .sweep(360.0)
                             .tick_count(8)
