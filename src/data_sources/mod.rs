@@ -249,7 +249,7 @@ pub fn toggle_data_sources_panel(
     mut contexts: EguiContexts,
 ) {
     if let Ok(ctx) = contexts.ctx_mut() {
-        if ctx.wants_keyboard_input() {
+        if ctx.egui_wants_keyboard_input() {
             return;
         }
     }

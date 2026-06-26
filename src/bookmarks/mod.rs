@@ -404,7 +404,7 @@ pub fn toggle_bookmarks_panel(
 ) {
     // Don't toggle if egui wants input
     if let Ok(ctx) = contexts.ctx_mut() {
-        if ctx.wants_keyboard_input() {
+        if ctx.egui_wants_keyboard_input() {
             return;
         }
     }

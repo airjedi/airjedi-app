@@ -265,7 +265,7 @@ fn scale_aircraft_and_labels(
     let label_scale = 1.0 / zoom_state.camera_zoom;
     for (mut transform, mut text_font) in label_query.iter_mut() {
         transform.scale = Vec3::splat(label_scale);
-        text_font.font_size = constants::BASE_FONT_SIZE;
+        text_font.font_size = FontSize::Px(constants::BASE_FONT_SIZE);
     }
 }
 

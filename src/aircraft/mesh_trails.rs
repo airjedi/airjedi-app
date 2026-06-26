@@ -109,7 +109,7 @@ pub fn update_mesh_trails(
             continue;
         };
 
-        let Some(mesh) = meshes.get_mut(&effect.mesh_handle) else {
+        let Some(mut mesh) = meshes.get_mut(&effect.mesh_handle) else {
             continue;
         };
 

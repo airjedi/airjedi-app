@@ -507,7 +507,7 @@ pub(crate) fn setup_map(
         Name::new("Sun Light"),
         DirectionalLight {
             illuminance: 5000.0,
-            shadows_enabled: false,
+            shadow_maps_enabled: false,
             ..default()
         },
         SunDisk::EARTH,
@@ -520,7 +520,7 @@ pub(crate) fn setup_map(
         Name::new("Moon Light"),
         DirectionalLight {
             illuminance: 0.0,
-            shadows_enabled: false,
+            shadow_maps_enabled: false,
             color: Color::srgb(0.7, 0.75, 0.9),
             ..default()
         },

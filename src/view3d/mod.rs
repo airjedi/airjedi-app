@@ -257,7 +257,7 @@ pub fn toggle_3d_view(
 ) {
     let egui_wants_input = contexts
         .ctx_mut()
-        .map(|ctx| ctx.wants_keyboard_input())
+        .map(|ctx| ctx.egui_wants_keyboard_input())
         .unwrap_or(false);
 
     if egui_wants_input {
@@ -669,7 +669,7 @@ pub fn handle_3d_camera_controls(
 
     // Don't process input when pointer is over UI panels (allow over map viewport)
     if let Ok(ctx) = contexts.ctx_mut() {
-        if ctx.is_pointer_over_area() {
+        if ctx.is_pointer_over_egui() {
             let over_map = if let Some(map_rect) = dock_state.map_viewport_rect {
                 ctx.pointer_latest_pos()
                     .is_some_and(|pos| map_rect.contains(pos))
@@ -1024,7 +1024,7 @@ fn fix_materials_in_hierarchy(
                 !matches!(m.alpha_mode, AlphaMode::Opaque) || m.unlit != want_unlit
             });
             if needs_fix {
-                if let Some(material) = materials.get_mut(mat_handle.id()) {
+                if let Some(mut material) = materials.get_mut(mat_handle.id()) {
                     material.alpha_mode = AlphaMode::Opaque;
                     material.unlit = want_unlit;
                 }

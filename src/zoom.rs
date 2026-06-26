@@ -204,8 +204,8 @@ pub(crate) fn handle_zoom(
     }
     // Don't zoom the map when pointer is over a dock panel (but allow zoom over the map viewport)
     if let Ok(ctx) = contexts.ctx_mut() {
-        if ctx.is_pointer_over_area() {
-            // The egui CentralPanel covers the entire window, so is_pointer_over_area() is
+        if ctx.is_pointer_over_egui() {
+            // The egui CentralPanel covers the entire window, so is_pointer_over_egui() is
             // always true. Check if the pointer is inside the map viewport pane -- if so,
             // allow zoom through to Bevy.
             if let Some(map_rect) = dock_state.map_viewport_rect {
@@ -392,7 +392,7 @@ pub(crate) fn handle_pinch_zoom(
 
     // Don't zoom when pointer is over a dock panel (same logic as handle_zoom)
     if let Ok(ctx) = contexts.ctx_mut() {
-        if ctx.is_pointer_over_area() {
+        if ctx.is_pointer_over_egui() {
             if let Some(map_rect) = dock_state.map_viewport_rect {
                 if let Some(pos) = ctx.pointer_latest_pos() {
                     if !map_rect.contains(pos) {

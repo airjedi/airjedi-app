@@ -400,7 +400,7 @@ pub fn toggle_airspace_display(
     mut contexts: EguiContexts,
 ) {
     if let Ok(ctx) = contexts.ctx_mut() {
-        if ctx.wants_keyboard_input() {
+        if ctx.egui_wants_keyboard_input() {
             return;
         }
     }

@@ -27,14 +27,14 @@ pub struct MaterialsUnlit;
 /// Resource holding aircraft 3D model handles keyed by type code
 #[derive(Resource)]
 pub struct AircraftModelRegistry {
-    pub default_model: Handle<Scene>,
-    pub type_models: HashMap<String, Handle<Scene>>,
+    pub default_model: Handle<WorldAsset>,
+    pub type_models: HashMap<String, Handle<WorldAsset>>,
     pub corrections: HashMap<String, ModelCorrection>,
 }
 
 impl AircraftModelRegistry {
     /// Get the model handle for a given type code, falling back to the default
-    pub fn get_model(&self, type_code: Option<&str>) -> Handle<Scene> {
+    pub fn get_model(&self, type_code: Option<&str>) -> Handle<WorldAsset> {
         if let Some(code) = type_code {
             if let Some(handle) = self.type_models.get(code) {
                 return handle.clone();
@@ -62,7 +62,7 @@ pub fn setup_aircraft_models(mut commands: Commands, asset_server: Res<AssetServ
             settings.load_meshes = RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD;
         },
     );
-    let b737_model: Handle<Scene> = asset_server.load("models/b737/78349.obj");
+    let b737_model: Handle<WorldAsset> = asset_server.load("models/b737/78349.obj");
 
     let mut type_models = HashMap::new();
     for code in B737_TYPES {
@@ -140,7 +140,7 @@ pub fn make_aircraft_unlit(
         for child in children.iter() {
             for descendant in std::iter::once(child).chain(children_query.iter_descendants(child)) {
                 if let Ok(mat_handle) = material_query.get(descendant) {
-                    if let Some(mat) = materials.get_mut(&mat_handle.0) {
+                    if let Some(mut mat) = materials.get_mut(&mat_handle.0) {
                         mat.unlit = true;
                         found_any = true;
                     }

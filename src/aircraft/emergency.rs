@@ -181,7 +181,7 @@ pub fn update_emergency_banner(
             parent.spawn((
                 Text::new("EMERGENCY ALERT"),
                 TextFont {
-                    font_size: 18.0,
+                    font_size: FontSize::Px(18.0),
                     ..default()
                 },
                 TextColor(Color::WHITE),

@@ -37,7 +37,7 @@ pub fn handle_keyboard_shortcuts(
 ) {
     // Check if egui wants keyboard input (e.g., typing in a text field)
     if let Ok(ctx) = contexts.ctx_mut() {
-        if ctx.wants_keyboard_input() {
+        if ctx.egui_wants_keyboard_input() {
             return;
         }
     }
@@ -198,7 +198,7 @@ pub fn toggle_overlays_keyboard(
 ) {
     // Check if egui wants keyboard input
     if let Ok(ctx) = contexts.ctx_mut() {
-        if ctx.wants_keyboard_input() {
+        if ctx.egui_wants_keyboard_input() {
             return;
         }
     }
@@ -411,7 +411,7 @@ Ctrl+R  Record/Stop recording
             parent.spawn((
                 Text::new(help_text),
                 TextFont {
-                    font_size: 14.0,
+                    font_size: FontSize::Px(14.0),
                     ..default()
                 },
                 TextColor(text_color),

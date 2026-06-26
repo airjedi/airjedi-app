@@ -426,7 +426,7 @@ pub fn update_sky_dome_colors(
     let Ok(mesh_handle) = sky_query.single() else {
         return;
     };
-    let Some(mesh) = meshes.get_mut(&mesh_handle.0) else {
+    let Some(mut mesh) = meshes.get_mut(&mesh_handle.0) else {
         return;
     };
 
@@ -904,7 +904,7 @@ pub fn update_ground_plane_color(
     let Ok(mat_handle) = ground_query.single() else {
         return;
     };
-    let Some(material) = materials.get_mut(mat_handle.id()) else {
+    let Some(mut material) = materials.get_mut(mat_handle.id()) else {
         return;
     };
 

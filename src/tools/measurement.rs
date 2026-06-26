@@ -69,7 +69,7 @@ pub fn toggle_measurement_mode(
 ) {
     // Don't toggle if egui wants input
     if let Ok(ctx) = contexts.ctx_mut() {
-        if ctx.wants_keyboard_input() {
+        if ctx.egui_wants_keyboard_input() {
             return;
         }
     }
@@ -126,7 +126,7 @@ pub fn handle_measurement_clicks(
 
     // Check if egui wants pointer
     if let Ok(ctx) = contexts.ctx_mut() {
-        if ctx.wants_pointer_input() {
+        if ctx.egui_wants_pointer_input() {
             return;
         }
     }

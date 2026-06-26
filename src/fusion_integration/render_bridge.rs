@@ -164,7 +164,7 @@ pub fn sync_tracks_to_visuals(
 
             let mut entity_commands = commands.spawn((
                 Name::new(format!("Aircraft: {}", aircraft_name)),
-                SceneRoot(model_handle),
+                WorldAssetRoot(model_handle),
                 Transform::from_xyz(pos.x, pos.y, constants::AIRCRAFT_Z_LAYER),
                 Pickable::default(),
                 Aircraft {
@@ -214,7 +214,7 @@ pub fn sync_tracks_to_visuals(
                 Name::new(format!("Label: {}", aircraft_name)),
                 Text2d::new(label_text),
                 TextFont {
-                    font_size: constants::BASE_FONT_SIZE,
+                    font_size: FontSize::Px(constants::BASE_FONT_SIZE),
                     ..default()
                 },
                 TextColor(theme.text_primary()),

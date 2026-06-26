@@ -12,8 +12,8 @@ default = ["brp"]
 brp = ["bevy/bevy_remote", "dep:bevy_brp_extras"]
 
 [dependencies]
-bevy = { version = "0.18", features = ["jpeg"] }
-bevy_obj = "0.18"
+bevy = { version = "0.19", features = ["jpeg"] }
+bevy_obj = "0.19"
 bevy_slippy_tiles = { path = "/Users/ccustine/development/aviation/bevy_slippy_tiles/.worktrees/tile-format" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -21,19 +21,19 @@ reqwest = { version = "0.12", features = ["blocking", "json"] }
 adsb-client = { path = "/Users/ccustine/development/aviation/airjedi-desktop/crates/adsb-client" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
 chrono = { version = "0.4", features = ["serde"] }
-bevy_egui = "0.39"
-bevy-inspector-egui = "0.36"
-egui_tiles = "0.14"
-egui-phosphor = "0.11"
+bevy_egui = "0.40"
+bevy-inspector-egui = "0.37"
+egui_tiles = "0.15"
+egui-phosphor = "0.12"
 catppuccin = "2.6"
-egui-aesthetix = { git = "https://github.com/thebashpotato/egui-aesthetix", features = ["carl", "nord", "standard", "tokyo_night"] }
+egui-aesthetix = { git = "https://github.com/thebashpotato/egui-aesthetix", branch = "dependabot/cargo/egui-0.34.3", features = ["carl", "nord", "standard", "tokyo_night"] }
 toml = "0.8"
 dirs = "6.0"
 csv = "1.3"
 solar-positioning = "0.3"
 libc = "0.2"
 image = { version = "0.25", default-features = false, features = ["png"] }
-bevy_brp_extras = { version = "0.18", optional = true }
+bevy_brp_extras = { version = "0.20", optional = true }
 airjedi-fusion = { path = "airjedi-fusion" }
 shadow-rs = { version = "1", default-features = false }
 tokio-cron-scheduler = "0.15"
@@ -44,7 +44,7 @@ zip = "2"
 shadow-rs = { version = "1", features = ["build"] }
 
 [dev-dependencies]
-egui_kittest = "0.33"
+egui_kittest = "0.34"
 
 [profile.dev]
 opt-level = 1

@@ -58,7 +58,7 @@ pub(crate) fn check_egui_wants_input(
 ) {
     egui_wants.0 = false;
     if let Ok(ctx) = contexts.ctx_mut() {
-        if ctx.wants_keyboard_input() || ctx.wants_pointer_input() {
+        if ctx.egui_wants_keyboard_input() || ctx.egui_wants_pointer_input() {
             // Check if pointer is over the map viewport (allow interaction there)
             let over_map = if let Some(map_rect) = dock_state.map_viewport_rect {
                 ctx.pointer_latest_pos()

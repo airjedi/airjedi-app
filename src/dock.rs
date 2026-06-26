@@ -323,7 +323,7 @@ impl<'a> Behavior<DockPane> for DockBehavior<'a> {
                         Option<Res<MapState>>,
                         Option<Res<ZoomState>>,
                     )>::new(world);
-                    let (mut debug, map, zoom) = state.get_mut(world);
+                    let (mut debug, map, zoom) = state.get_mut(world).unwrap();
                     debug_panel::render_debug_pane_content(
                         ui,
                         &mut debug,
@@ -343,7 +343,7 @@ impl<'a> Behavior<DockPane> for DockBehavior<'a> {
                         Res<ThemeRegistry>,
                     )>::new(world);
                     let (mut settings_ui, mut app_config, mut theme, theme_registry) =
-                        state.get_mut(world);
+                        state.get_mut(world).unwrap();
                     config::render_settings_pane_content(
                         ui,
                         &mut settings_ui,
@@ -380,7 +380,7 @@ impl<'a> Behavior<DockPane> for DockBehavior<'a> {
                         clock,
                         query,
                         theme,
-                    ) = state.get_mut(world);
+                    ) = state.get_mut(world).unwrap();
                     render_aircraft_list_pane_content(
                         ui,
                         &mut list,
@@ -409,7 +409,7 @@ impl<'a> Behavior<DockPane> for DockBehavior<'a> {
                         Query<&'static Aircraft>,
                         Res<AppTheme>,
                     )>::new(world);
-                    let (stats, query, theme) = state.get_mut(world);
+                    let (stats, query, theme) = state.get_mut(world).unwrap();
                     render_stats_pane_content(ui, &stats, &query, &theme);
                 });
             }
@@ -427,7 +427,7 @@ impl<'a> Behavior<DockPane> for DockBehavior<'a> {
                         Res<AppTheme>,
                     )>::new(world);
                     let (mut bookmarks, mut config, mut map, mut zoom, list, query, theme) =
-                        state.get_mut(world);
+                        state.get_mut(world).unwrap();
                     bookmarks::render_bookmarks_pane_content(
                         ui,
                         &mut bookmarks,
@@ -445,7 +445,7 @@ impl<'a> Behavior<DockPane> for DockBehavior<'a> {
                 let world = &mut *self.world;
                 render_pane_with_bg(bg, ui, |ui| {
                     let mut state = SystemState::<ResMut<CoverageState>>::new(world);
-                    let mut coverage = state.get_mut(world);
+                    let mut coverage = state.get_mut(world).unwrap();
                     tools_window::render_coverage_tab(ui, &mut coverage);
                 });
             }
@@ -457,7 +457,7 @@ impl<'a> Behavior<DockPane> for DockBehavior<'a> {
                         ResMut<AirspaceDisplayState>,
                         ResMut<AirspaceData>,
                     )>::new(world);
-                    let (mut display, mut data) = state.get_mut(world);
+                    let (mut display, mut data) = state.get_mut(world).unwrap();
                     tools_window::render_airspace_tab(ui, &mut display, &mut data);
                 });
             }
@@ -466,7 +466,7 @@ impl<'a> Behavior<DockPane> for DockBehavior<'a> {
                 let world = &mut *self.world;
                 render_pane_with_bg(bg, ui, |ui| {
                     let mut state = SystemState::<ResMut<DataSourceManager>>::new(world);
-                    let mut mgr = state.get_mut(world);
+                    let mut mgr = state.get_mut(world).unwrap();
                     tools_window::render_data_sources_tab(ui, &mut mgr);
                 });
             }
@@ -475,7 +475,7 @@ impl<'a> Behavior<DockPane> for DockBehavior<'a> {
                 let world = &mut *self.world;
                 render_pane_with_bg(bg, ui, |ui| {
                     let mut state = SystemState::<ResMut<ExportState>>::new(world);
-                    let mut export = state.get_mut(world);
+                    let mut export = state.get_mut(world).unwrap();
                     tools_window::render_export_tab(ui, &mut export);
                 });
             }
@@ -485,7 +485,7 @@ impl<'a> Behavior<DockPane> for DockBehavior<'a> {
                 render_pane_with_bg(bg, ui, |ui| {
                     let mut state =
                         SystemState::<(ResMut<RecordingState>, ResMut<PlaybackState>)>::new(world);
-                    let (mut recording, mut playback) = state.get_mut(world);
+                    let (mut recording, mut playback) = state.get_mut(world).unwrap();
                     tools_window::render_recording_tab(ui, &mut recording, &mut playback);
                 });
             }
@@ -500,7 +500,7 @@ impl<'a> Behavior<DockPane> for DockBehavior<'a> {
                         Res<SunState>,
                         Option<ResMut<crate::tiles::GridOverlay>>,
                     )>::new(world);
-                    let (mut view3d, mut terrain, mut time, sun, mut grid) = state.get_mut(world);
+                    let (mut view3d, mut terrain, mut time, sun, mut grid) = state.get_mut(world).unwrap();
                     tools_window::render_view3d_tab(
                         ui,
                         &mut view3d,
@@ -520,7 +520,7 @@ impl<'a> Behavior<DockPane> for DockBehavior<'a> {
                         ResMut<AppConfig>,
                         Option<ResMut<crate::data_ingest::IngestUiState>>,
                     )>::new(world);
-                    let (ingest_status, mut app_config, mut ingest_ui) = state.get_mut(world);
+                    let (ingest_status, mut app_config, mut ingest_ui) = state.get_mut(world).unwrap();
                     tools_window::render_ingest_tab(
                         ui,
                         ingest_status.as_deref(),
