@@ -718,6 +718,7 @@ fn rescale_tiles_on_zoom_change(
     mut prev_zoom: ResMut<Previous3DZoom>,
     mut tile_query: Query<&mut Transform, With<MapTile>>,
     mut spawned_tiles: ResMut<SpawnedTiles>,
+    mut tile_grid: ResMut<super::pool::TileGrid>,
 ) {
     // In 3D mode, use the rendering zoom (stable coordinate space) so tile
     // positions stay consistent with entities. In 2D, use map_state directly.
@@ -741,10 +742,18 @@ fn rescale_tiles_on_zoom_change(
 
     let mut count = 0u32;
     for mut transform in tile_query.iter_mut() {
-        transform.translation.x *= factor;
-        transform.translation.y *= factor;
-        transform.scale.x *= factor;
-        transform.scale.y *= factor;
+        if view3d_state.is_3d_active() {
+            // Y-up: scale x and z (map axes), leave y (height) alone
+            transform.translation.x *= factor;
+            transform.translation.z *= factor;
+            transform.scale.x *= factor;
+            transform.scale.z *= factor;
+        } else {
+            transform.translation.x *= factor;
+            transform.translation.y *= factor;
+            transform.scale.x *= factor;
+            transform.scale.y *= factor;
+        }
         count += 1;
     }
 
@@ -758,6 +767,8 @@ fn rescale_tiles_on_zoom_change(
         spawned_tiles.positions.insert((new_x, new_y, z));
     }
 
+    tile_grid.occupied.clear();
+
     debug!(
         "Rescaled {} tiles by {}x for zoom {} -> {}",
         count, factor, prev_zoom.0, current
@@ -769,6 +780,9 @@ fn rescale_tiles_on_zoom_change(
 /// Computes which tiles the viewport needs, checks disk cache directly,
 /// spawns cached tiles immediately (zero latency), and requests network
 /// downloads for uncached tiles.
+///
+/// In 3D mode, loads multi-zoom bands toward the horizon for perspective
+/// coverage at decreasing detail levels.
 fn load_visible_tiles(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
@@ -789,6 +803,7 @@ fn load_visible_tiles(
     let Some(ref quad_mesh) = quad_mesh else { return };
     let current_zoom = map_state.zoom_level.to_u8();
     let now = time.elapsed_secs_f64();
+    let is_3d = view3d_state.is_3d_active();
 
     let radius = if let Ok(window) = window_query.single() {
         compute_tile_radius(
@@ -799,156 +814,206 @@ fn load_visible_tiles(
         constants::TILE_DOWNLOAD_RADIUS
     };
 
-    let center = super::coords::SlippyTileCoordinates::from_latitude_longitude(
-        map_state.latitude, map_state.longitude, map_state.zoom_level,
-    );
-
-    let reference_point = LatitudeLongitudeCoordinates {
-        latitude: tile_settings.reference_latitude,
-        longitude: tile_settings.reference_longitude,
-    };
-    let (ref_x, ref_y) = world_coords_to_world_pixel(
-        &reference_point, constants::DEFAULT_TILE_SIZE, map_state.zoom_level,
-    );
-
     let cache_dir = crate::tile_cache::tile_cache_dir_for_style(&dl_settings.cache_key);
     let flat_cache_dir = crate::tile_cache::tile_cache_dir();
     let ext = dl_settings.tile_format.extension();
     let tile_px = constants::DEFAULT_TILE_SIZE.to_pixels();
 
-    let boost = if view3d_state.is_3d_active() {
-        super::TILE_EMISSIVE_BOOST
-    } else {
-        1.0
-    };
-    let tile_z = if view3d_state.is_3d_active() {
+    let boost = if is_3d { super::TILE_EMISSIVE_BOOST } else { 1.0 };
+    let tile_z = if is_3d {
         view3d_state.altitude_to_z(view3d_state.ground_elevation_ft)
     } else {
         tile_settings.z_layer + 0.1
     };
+    let [pr, pg, pb] = basemap_state.style.placeholder_color();
+    let flat_rot = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
 
-    let r = radius as i64;
-    let max_tile = 1i64 << current_zoom;
+    // Build list of (center_lat, center_lon, zoom, radius) bands to load.
+    // In 2D: single band at current zoom.
+    // In 3D: near band + mid/far bands at lower zoom levels offset toward camera look direction.
+    let lat = map_state.latitude;
+    let lon = map_state.longitude;
+
+    struct TileBand {
+        lat: f64,
+        lon: f64,
+        zoom: u8,
+        radius: u8,
+    }
+
+    let mut bands = Vec::with_capacity(8);
+    bands.push(TileBand { lat, lon, zoom: current_zoom, radius });
+
+    if is_3d {
+        // In 3D, use a large radius at current zoom, then add lower-zoom
+        // bands all centered on the SAME point for seamless coverage.
+        // Lower-zoom tiles are larger so a smaller radius covers more area.
+        bands[0].radius = radius.max(10);
+
+        // Lower-zoom bands provide fallback coverage beyond the near band.
+        // Use large radii so they overlap with the near band - overlap is
+        // harmless since tile_grid dedup prevents spawning at occupied positions.
+        for zoom_offset in 1..=3u8 {
+            if current_zoom >= zoom_offset {
+                bands.push(TileBand {
+                    lat, lon,
+                    zoom: current_zoom - zoom_offset,
+                    radius: 10,
+                });
+            }
+        }
+    }
+
     let mut uncached_requested = false;
 
-    for dx in -r..=r {
-        for dy in -r..=r {
-            let raw_x = center.x as i64 + dx;
-            let y = center.y as i64 + dy;
-            if y < 0 || y >= max_tile { continue; }
-            let x = super::coords::wrap_tile_x(raw_x, current_zoom);
+    for band in &bands {
+        let Ok(band_zoom) = ZoomLevel::try_from(band.zoom) else { continue };
+        let center = super::coords::SlippyTileCoordinates::from_latitude_longitude(
+            band.lat, band.lon, band_zoom,
+        );
 
-            // Compute world pixel position for this tile
-            let tc = super::coords::SlippyTileCoordinates { x, y: y as u32 };
-            let ll = tc.to_latitude_longitude(map_state.zoom_level);
-            let (tile_x, tile_y) = world_coords_to_world_pixel(
-                &ll, constants::DEFAULT_TILE_SIZE, map_state.zoom_level,
-            );
-            let half = tile_px as f64 / 2.0;
-            let tx = ((tile_x + half) - ref_x) as f32;
-            let ty = ((tile_y - half) - ref_y) as f32;
+        // Position ALL tiles in render_zoom pixel space for consistent alignment.
+        // Convert each tile's lat/lon to render_zoom pixels directly, avoiding
+        // the band_zoom-to-render_zoom rescale that causes sub-pixel alignment gaps.
+        let render_zoom = if is_3d {
+            view3d_state.effective_zoom(map_state.zoom_level)
+        } else {
+            map_state.zoom_level
+        };
+        let reference_point = LatitudeLongitudeCoordinates {
+            latitude: tile_settings.reference_latitude,
+            longitude: tile_settings.reference_longitude,
+        };
+        let (ref_x, ref_y) = world_coords_to_world_pixel(
+            &reference_point, constants::DEFAULT_TILE_SIZE, render_zoom,
+        );
 
-            let tile_key = (tx as i32, ty as i32, current_zoom);
-            if tile_grid.occupied.contains_key(&tile_key) {
-                continue;
-            }
+        let r = band.radius as i64;
+        let max_tile = 1i64 << band.zoom;
 
-            // Check disk cache (per-style first, then flat fallback)
-            let filename = format!(
-                "{}.{}.{}.{}.tile.{}", current_zoom, x, y as u32, tile_px, ext
-            );
-            let style_path = cache_dir.join(&filename);
-            let flat_path = flat_cache_dir.join(&filename);
+        // Visual scale: lower-zoom tiles cover more ground area
+        let zoom_diff = render_zoom.to_u8().saturating_sub(band.zoom) as u32;
+        let rescale = if zoom_diff > 0 {
+            (1u32 << zoom_diff) as f32
+        } else {
+            1.0
+        };
 
-            let cached = if style_path.exists() {
-                true
-            } else if flat_path.exists() {
-                if let Some(p) = style_path.parent() {
-                    let _ = std::fs::create_dir_all(p);
+        for dx in -r..=r {
+            for dy in -r..=r {
+                let raw_x = center.x as i64 + dx;
+                let y = center.y as i64 + dy;
+                if y < 0 || y >= max_tile { continue; }
+                let x = super::coords::wrap_tile_x(raw_x, band.zoom);
+
+                // Position at band's native zoom for pixel-perfect alignment,
+                // then rescale to render_zoom space. Tile edges align exactly
+                // at the native zoom's pixel grid, avoiding Mercator non-linearity.
+                let ref_at_band = world_coords_to_world_pixel(
+                    &reference_point, constants::DEFAULT_TILE_SIZE, band_zoom,
+                );
+                let tc = super::coords::SlippyTileCoordinates { x, y: y as u32 };
+                let ll = tc.to_latitude_longitude(band_zoom);
+                let (tile_x, tile_y) = world_coords_to_world_pixel(
+                    &ll, constants::DEFAULT_TILE_SIZE, band_zoom,
+                );
+                let half = tile_px as f64 / 2.0;
+                let tx = (((tile_x + half) - ref_at_band.0) * rescale as f64) as f32;
+                let ty = (((tile_y - half) - ref_at_band.1) * rescale as f64) as f32;
+
+                let tile_key = (tx as i32, ty as i32, band.zoom);
+                if tile_grid.occupied.contains_key(&tile_key) {
+                    continue;
                 }
-                let _ = std::fs::copy(&flat_path, &style_path);
-                true
-            } else {
-                false
-            };
 
-            if !cached {
-                // Request download for uncached tiles (once per frame, batch)
-                if !uncached_requested {
-                    uncached_requested = true;
-                    download_events.write(DownloadSlippyTilesMessage {
-                        tile_size: constants::DEFAULT_TILE_SIZE,
-                        zoom_level: map_state.zoom_level,
-                        coordinates: Coordinates::from_lat_lon(
-                            map_state.latitude, map_state.longitude,
-                        ),
-                        radius: Radius(radius),
-                        use_cache: true,
-                    });
-                }
-                continue;
-            }
+                let filename = format!(
+                    "{}.{}.{}.{}.tile.{}", band.zoom, x, y as u32, tile_px, ext
+                );
+                let style_path = cache_dir.join(&filename);
+                let flat_path = flat_cache_dir.join(&filename);
 
-            // Cached tile - load and spawn immediately
-            let asset_path = format!("tiles/{}/{}", dl_settings.cache_key, filename);
-            let tile_handle: Handle<Image> =
-                if let Some(h) = tile_asset_cache.entries.get(&asset_path) {
-                    h.clone()
+                let cached = if style_path.exists() {
+                    true
+                } else if flat_path.exists() {
+                    if let Some(p) = style_path.parent() {
+                        let _ = std::fs::create_dir_all(p);
+                    }
+                    let _ = std::fs::copy(&flat_path, &style_path);
+                    true
                 } else {
-                    let h: Handle<Image> = asset_server.load(&asset_path);
-                    tile_asset_cache.entries.insert(asset_path, h.clone());
-                    h
+                    false
                 };
 
-            let [pr, pg, pb] = basemap_state.style.placeholder_color();
-            let material = materials.add(StandardMaterial {
-                base_color: Color::srgb(pr, pg, pb),
-                emissive: bevy::color::LinearRgba::new(boost, boost, boost, 1.0),
-                emissive_texture: Some(tile_handle.clone()),
-                emissive_exposure_weight: 0.0,
-                perceptual_roughness: 1.0,
-                metallic: 0.0,
-                alpha_mode: AlphaMode::Opaque,
-                ..default()
-            });
+                if !cached {
+                    if !uncached_requested {
+                        uncached_requested = true;
+                        download_events.write(DownloadSlippyTilesMessage {
+                            tile_size: constants::DEFAULT_TILE_SIZE,
+                            zoom_level: map_state.zoom_level,
+                            coordinates: Coordinates::from_lat_lon(lat, lon),
+                            radius: Radius(radius),
+                            use_cache: true,
+                        });
+                    }
+                    continue;
+                }
 
-            // Position and orient based on view mode:
-            // 2D: Z-up (x, y, z_layer), no rotation
-            // 3D: Y-up (x, z_layer, -y), rotated flat on XZ plane
-            let (tile_pos, tile_rot, tile_scale) = if view3d_state.is_3d_active() {
-                (
-                    Vec3::new(tx, tile_z, -ty),
-                    Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2),
-                    Vec3::new(1.0, 1.0, 1.0),
-                )
-            } else {
-                (
-                    Vec3::new(tx, ty, tile_z),
-                    Quat::IDENTITY,
-                    Vec3::ONE,
-                )
-            };
+                let asset_path = format!("tiles/{}/{}", dl_settings.cache_key, filename);
+                let tile_handle: Handle<Image> =
+                    if let Some(h) = tile_asset_cache.entries.get(&asset_path) {
+                        h.clone()
+                    } else {
+                        let h: Handle<Image> = asset_server.load(&asset_path);
+                        tile_asset_cache.entries.insert(asset_path, h.clone());
+                        h
+                    };
 
-            let entity = commands.spawn((
-                Name::new(format!("Map Tile z{}", current_zoom)),
-                Mesh3d(quad_mesh.0.clone()),
-                MeshMaterial3d(material),
-                Transform::from_translation(tile_pos)
-                    .with_rotation(tile_rot)
-                    .with_scale(tile_scale),
-                Visibility::Inherited,
-                TileOriginalImage(tile_handle),
-                MapTile,
-                TileFadeState {
-                    alpha: 1.0,
-                    tile_zoom: current_zoom,
-                    spawn_time: now,
-                },
-                Pickable::IGNORE,
-                RenderLayers::layer(crate::RenderCategory::TILES),
-            )).id();
+                let material = materials.add(StandardMaterial {
+                    base_color: Color::srgb(pr, pg, pb),
+                    emissive: bevy::color::LinearRgba::new(boost, boost, boost, 1.0),
+                    emissive_texture: Some(tile_handle.clone()),
+                    emissive_exposure_weight: 0.0,
+                    perceptual_roughness: 1.0,
+                    metallic: 0.0,
+                    alpha_mode: AlphaMode::Opaque,
+                    ..default()
+                });
 
-            tile_grid.occupied.insert(tile_key, entity);
+                let (tile_pos, tile_rot, tile_sc) = if is_3d {
+                    (
+                        Vec3::new(tx, tile_z, -ty),
+                        flat_rot,
+                        Vec3::new(rescale, 1.0, rescale),
+                    )
+                } else {
+                    (
+                        Vec3::new(tx, ty, tile_z),
+                        Quat::IDENTITY,
+                        Vec3::ONE,
+                    )
+                };
+
+                let entity = commands.spawn((
+                    Name::new(format!("Map Tile z{}", band.zoom)),
+                    Mesh3d(quad_mesh.0.clone()),
+                    MeshMaterial3d(material),
+                    Transform::from_translation(tile_pos)
+                        .with_rotation(tile_rot)
+                        .with_scale(tile_sc),
+                    Visibility::Inherited,
+                    TileOriginalImage(tile_handle),
+                    MapTile,
+                    TileFadeState {
+                        alpha: 1.0,
+                        tile_zoom: band.zoom,
+                        spawn_time: now,
+                    },
+                    Pickable::IGNORE,
+                    RenderLayers::layer(crate::RenderCategory::TILES),
+                )).id();
+
+                tile_grid.occupied.insert(tile_key, entity);
+            }
         }
     }
 }
@@ -1181,50 +1246,37 @@ fn animate_tile_fades(
 
 /// Create the shared mesh used by all tile 3D quads.
 fn setup_tile_quad_mesh(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
+    // Slightly oversized (0.5px overlap) to prevent sub-pixel gaps between
+    // adjacent tiles from showing the background through at grazing angles.
+    let overlap = 0.5;
     let mesh = meshes.add(Rectangle::new(
-        constants::DEFAULT_TILE_PIXELS,
-        constants::DEFAULT_TILE_PIXELS,
+        constants::DEFAULT_TILE_PIXELS + overlap,
+        constants::DEFAULT_TILE_PIXELS + overlap,
     ));
     commands.insert_resource(TileQuadMesh(mesh));
 }
 
-/// Orient tile meshes for the current view mode.
-/// - 2D: Rectangle faces -Z (orthographic camera looks down -Z). No rotation.
-/// - 3D: Rectangle rotated -90deg around X to lie flat on the XZ ground plane.
-/// Also converts tile positions between Z-up (2D) and Y-up (3D) coordinate systems.
+/// When view mode changes, despawn all tiles and clear tracking so
+/// load_visible_tiles respawns them fresh in the correct coordinate system.
 fn orient_tiles_for_view_mode(
+    mut commands: Commands,
     view3d_state: Res<view3d::View3DState>,
-    mut tile_query: Query<&mut Transform, With<MapTile>>,
+    tile_query: Query<Entity, With<MapTile>>,
+    mut tile_grid: ResMut<super::pool::TileGrid>,
+    mut spawned_tiles: ResMut<SpawnedTiles>,
     mut last_3d: Local<Option<bool>>,
 ) {
     let is_3d = view3d_state.is_3d_active();
     if *last_3d == Some(is_3d) {
         return;
     }
-    let was_3d = *last_3d;
     *last_3d = Some(is_3d);
 
-    let flat_rotation = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
-
-    for mut transform in tile_query.iter_mut() {
-        if is_3d {
-            // 2D -> 3D: rotate flat, convert position from Z-up to Y-up
-            // Z-up (x, y, z) -> Y-up (x, z, -y) then tile lies on XZ plane
-            let pos = transform.translation;
-            transform.translation = Vec3::new(pos.x, pos.z, -pos.y);
-            transform.rotation = flat_rotation;
-            // Scale: (sx, sy, 1) -> (sx, 1, sy) for XZ plane
-            let s = transform.scale;
-            transform.scale = Vec3::new(s.x, 1.0, s.y);
-        } else if was_3d.is_some() {
-            // 3D -> 2D: undo rotation, convert Y-up back to Z-up
-            let pos = transform.translation;
-            transform.translation = Vec3::new(pos.x, -pos.z, pos.y);
-            transform.rotation = Quat::IDENTITY;
-            let s = transform.scale;
-            transform.scale = Vec3::new(s.x, s.z, 1.0);
-        }
+    for entity in tile_query.iter() {
+        commands.entity(entity).despawn();
     }
+    tile_grid.occupied.clear();
+    spawned_tiles.positions.clear();
 }
 
 // The following 5 systems were removed in the unified mesh redesign:
