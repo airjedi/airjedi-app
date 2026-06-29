@@ -690,7 +690,7 @@ fn load_visible_tiles(
     // In 3D mode, only run when the refresh timer fires (every 300ms).
     // Computing directional multi-zoom bands every frame is expensive.
     // The timer is ticked by update_3d_adaptive_zoom which runs earlier.
-    if is_3d && !timer.0.just_finished() && !map_state.is_changed() {
+    if is_3d && !timer.0.just_finished() {
         return;
     }
 
@@ -761,48 +761,50 @@ fn load_visible_tiles(
             Some((clamp_latitude(lat + offset_lat), clamp_longitude(lon + offset_lon), z))
         };
 
-        // Spawn bands: current zoom only, centered + directional offsets.
-        // These tiles get mesh quads and are visible.
+        // Multi-zoom bands with Y-offset separation to prevent Z-fighting.
+        // Current-zoom tiles render at tile_z. Lower-zoom tiles render
+        // slightly below (tile_z - offset), providing geometric separation
+        // that works at all viewing angles including grazing.
+        //
+        // Near band: current zoom centered on camera position.
+        // Mid/far/horizon bands: lower zoom levels offset forward along
+        // camera yaw for perspective coverage toward the horizon.
         let near_radius = (3 + (3.0 * pitch_factor) as u8).max(radius).max(10);
         bands.push(TileBand { lat, lon, zoom: current_zoom, radius: near_radius, spawn: true });
 
-        // Additional current-zoom bands offset forward along camera look direction
-        let deg_per_tile_lon = 360.0 / (1u64 << current_zoom) as f64;
-        let deg_per_tile_lat = deg_per_tile_lon * lat.to_radians().cos();
-        for &fwd in &[6.0, 12.0, 18.0] {
-            let offset_lat = fwd * deg_per_tile_lat * (yaw_rad as f64).cos();
-            let offset_lon = fwd * deg_per_tile_lon * (yaw_rad as f64).sin();
-            let fwd_radius = (near_radius / 2).max(5);
-            bands.push(TileBand {
-                lat: clamp_latitude(lat + offset_lat),
-                lon: clamp_longitude(lon + offset_lon),
-                zoom: current_zoom,
-                radius: fwd_radius,
-                spawn: true,
-            });
-        }
-
-        // Download-only bands: lower zoom levels, NOT spawned (avoids Z-fighting).
-        // These warm the cache so tiles are ready when zoom level changes.
+        // Mid bands (zoom-1): forward + left/right, 2x tile coverage
         let mid_radius = 3 + (2.0 * (1.0 - pitch_factor)) as u8;
-        let far_radius = 2 + (3.0 * (1.0 - pitch_factor)) as u8;
-        let horizon_radius = 4 + (3.0 * (1.0 - pitch_factor)) as u8;
-
         for &(fwd, side) in &[(3.0, 0.0), (2.0, -4.0), (2.0, 4.0)] {
             if let Some((olat, olon, z)) = offset_lat_lon(1, fwd, side) {
-                bands.push(TileBand { lat: olat, lon: olon, zoom: z, radius: mid_radius, spawn: false });
+                bands.push(TileBand { lat: olat, lon: olon, zoom: z, radius: mid_radius, spawn: true });
             }
         }
+
+        // Far bands (zoom-2): wider forward coverage, 4x tile size
+        let far_radius = 2 + (3.0 * (1.0 - pitch_factor)) as u8;
         for &(fwd, side) in &[(4.0, 0.0), (3.0, -5.0), (3.0, 5.0)] {
             if let Some((olat, olon, z)) = offset_lat_lon(2, fwd, side) {
-                bands.push(TileBand { lat: olat, lon: olon, zoom: z, radius: far_radius, spawn: false });
+                bands.push(TileBand { lat: olat, lon: olon, zoom: z, radius: far_radius, spawn: true });
             }
         }
+
+        // Horizon bands (zoom-3, zoom-4): coarse tiles for distant ground
+        let horizon_radius = 4 + (3.0 * (1.0 - pitch_factor)) as u8;
+        let ultra_radius = 4 + (2.0 * (1.0 - pitch_factor)) as u8;
+
         for &fwd in &[2.0, 5.0, 8.0] {
             let spread = fwd * 1.5 + 4.0;
             for &side in &[0.0, -spread, spread] {
                 if let Some((olat, olon, z)) = offset_lat_lon(3, fwd, side) {
-                    bands.push(TileBand { lat: olat, lon: olon, zoom: z, radius: horizon_radius, spawn: false });
+                    bands.push(TileBand { lat: olat, lon: olon, zoom: z, radius: horizon_radius, spawn: true });
+                }
+            }
+        }
+        for &fwd in &[2.0, 5.0, 8.0] {
+            let spread = fwd * 2.0 + 5.0;
+            for &side in &[0.0, -spread, spread] {
+                if let Some((olat, olon, z)) = offset_lat_lon(4, fwd, side) {
+                    bands.push(TileBand { lat: olat, lon: olon, zoom: z, radius: ultra_radius, spawn: true });
                 }
             }
         }
@@ -935,8 +937,12 @@ fn load_visible_tiles(
                 });
 
                 let (tile_pos, tile_rot, tile_sc) = if is_3d {
+                    // Lower-zoom tiles render slightly below current-zoom tiles
+                    // to prevent Z-fighting between coplanar mesh quads.
+                    // Each zoom level down gets -2.0 units of Y offset.
+                    let zoom_depth = current_zoom.saturating_sub(band.zoom) as f32 * -2.0;
                     (
-                        Vec3::new(tx, tile_z, -ty),
+                        Vec3::new(tx, tile_z + zoom_depth, -ty),
                         flat_rot,
                         Vec3::new(rescale, 1.0, rescale),
                     )
