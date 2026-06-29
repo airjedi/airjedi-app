@@ -242,16 +242,17 @@ fn main() {
     .register_type::<MapState>()
     .register_type::<ZoomState>()
     .insert_resource(ZoomState::new())
-    // SlippyTilesSettings will be updated by setup_slippy_tiles_from_config after config is loaded
-    .insert_resource(SlippyTilesSettings {
+    .insert_resource(TileRenderSettings {
+        reference_latitude: constants::DEFAULT_LATITUDE,
+        reference_longitude: constants::DEFAULT_LONGITUDE,
+        z_layer: 0.0,
+        ..default()
+    })
+    .insert_resource(TileDownloadSettings {
         endpoint: config::BasemapStyle::default().endpoint_url().to_string(),
-        tiles_directory: std::path::PathBuf::from("tiles/"), // Symlinked to centralized cache
-        reference_latitude: constants::DEFAULT_LATITUDE, // Wichita, KS (matches MapState default)
-        reference_longitude: constants::DEFAULT_LONGITUDE, // Wichita, KS (matches MapState default)
-        z_layer: 0.0,                // Render tiles at z=0 (behind aircraft at z=10)
-        auto_render: false,          // Disable auto-render, we handle tile display ourselves
-        max_concurrent_downloads: 8, // 3D mode generates many parallel requests across zoom levels
-        rate_limit_requests: 24, // CartoDB/ESRI CDNs handle this easily; OSM is more restrictive
+        tiles_directory: std::path::PathBuf::from("tiles/"),
+        max_concurrent_downloads: 8,
+        rate_limit_requests: 24,
         ..default()
     })
     .add_plugins((
@@ -407,8 +408,9 @@ fn configure_gizmo_layers(mut config_store: ResMut<GizmoConfigStore>) {
 
 pub(crate) fn setup_map(
     mut commands: Commands,
-    mut download_events: MessageWriter<DownloadSlippyTilesMessage>,
-    mut tile_settings: ResMut<SlippyTilesSettings>,
+    mut download_events: MessageWriter<DownloadTilesRequest>,
+    mut tile_render: ResMut<TileRenderSettings>,
+    mut dl_settings: ResMut<TileDownloadSettings>,
     app_config: Res<config::AppConfig>,
     mut egui_settings: ResMut<EguiGlobalSettings>,
 ) {
@@ -526,12 +528,14 @@ pub(crate) fn setup_map(
     tile_cache::clear_legacy_tiles();
     tile_cache::remove_invalid_tiles();
 
-    // Update SlippyTilesSettings from config
-    tile_settings.endpoint = app_config.map.basemap_style.endpoint_url().to_string();
-    tile_settings.tile_format = app_config.map.basemap_style.tile_format();
-    tile_settings.reverse_axes = app_config.map.basemap_style.reverse_axes();
-    tile_settings.reference_latitude = app_config.map.default_latitude;
-    tile_settings.reference_longitude = app_config.map.default_longitude;
+    // Update download settings from config
+    dl_settings.endpoint = app_config.map.basemap_style.endpoint_url().to_string();
+    dl_settings.tile_format = app_config.map.basemap_style.tile_format();
+    dl_settings.reverse_axes = app_config.map.basemap_style.reverse_axes();
+
+    // Update render settings from config
+    tile_render.reference_latitude = app_config.map.default_latitude;
+    tile_render.reference_longitude = app_config.map.default_longitude;
 
     // Initialize map state resource from config
     let map_state = MapState {

@@ -804,7 +804,7 @@ pub fn update_airspace_meshes(
     display_state: Res<AirspaceDisplayState>,
     view3d_state: Option<Res<View3DState>>,
     map_state: Res<crate::map::MapState>,
-    tile_settings: Res<crate::tiles::SlippyTilesSettings>,
+    tile_settings: Res<crate::tiles::TileRenderSettings>,
     mut spawned: ResMut<SpawnedAirspaces>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -1005,7 +1005,7 @@ pub fn draw_airspace_gizmos(
     display_state: Res<AirspaceDisplayState>,
     view3d_state: Option<Res<View3DState>>,
     map_state: Res<crate::map::MapState>,
-    tile_settings: Res<crate::tiles::SlippyTilesSettings>,
+    tile_settings: Res<crate::tiles::TileRenderSettings>,
 ) {
     if !display_state.enabled || !airspace_data.loaded {
         return;

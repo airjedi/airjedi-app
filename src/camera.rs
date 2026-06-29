@@ -119,7 +119,7 @@ fn follow_aircraft(
 
 fn update_camera_position(
     map_state: Res<MapState>,
-    tile_settings: Res<SlippyTilesSettings>,
+    tile_settings: Res<TileRenderSettings>,
     mut camera_query: Query<&mut Transform, With<MapCamera>>,
     logger: Option<Res<ZoomDebugLogger>>,
     view3d_state: Res<view3d::View3DState>,
@@ -271,7 +271,7 @@ fn scale_aircraft_and_labels(
 
 pub(crate) fn update_aircraft_positions(
     map_state: Res<MapState>,
-    tile_settings: Res<SlippyTilesSettings>,
+    tile_settings: Res<TileRenderSettings>,
     config: Res<crate::config::AppConfig>,
     view3d_state: Res<view3d::View3DState>,
     mut aircraft_query: Query<(

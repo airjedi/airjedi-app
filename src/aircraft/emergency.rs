@@ -96,7 +96,7 @@ pub fn draw_emergency_rings(
     mut gizmos: Gizmos,
     alert_state: Res<EmergencyAlertState>,
     map_state: Res<MapState>,
-    tile_settings: Res<SlippyTilesSettings>,
+    tile_settings: Res<TileRenderSettings>,
     view3d_state: Res<crate::view3d::View3DState>,
     aircraft_query: Query<&Aircraft>,
 ) {

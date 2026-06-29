@@ -13,7 +13,7 @@ use airjedi_fusion::types::{IdentifierType, TargetCategory};
 use airjedi_fusion::{TargetClassification, Track, TrackQuality, TrackStatus, TrackerState};
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
-use crate::tiles::SlippyTilesSettings;
+use crate::tiles::TileRenderSettings;
 
 pub fn sync_tracks_to_visuals(
     mut commands: Commands,
@@ -40,7 +40,7 @@ pub fn sync_tracks_to_visuals(
     theme: Res<AppTheme>,
     time: Res<Time<Real>>,
     map_state: Res<MapState>,
-    tile_settings: Res<SlippyTilesSettings>,
+    tile_settings: Res<TileRenderSettings>,
     view3d_state: Res<view3d::View3DState>,
 ) {
     let Some(model_registry) = model_registry else {

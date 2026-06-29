@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiPlugin};
-use crate::tiles::{SlippyTilesSettings, TileFormat};
+use crate::tiles::{TileDownloadSettings, TileFormat};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -799,11 +799,11 @@ impl Default for CurrentBasemapState {
     }
 }
 
-/// System to detect basemap changes and update SlippyTilesSettings
+/// System to detect basemap changes and update TileDownloadSettings
 pub fn apply_basemap_changes(
     app_config: Res<AppConfig>,
     mut current_state: ResMut<CurrentBasemapState>,
-    mut tile_settings: ResMut<SlippyTilesSettings>,
+    mut dl_settings: ResMut<TileDownloadSettings>,
 ) {
     if !app_config.is_changed() {
         return;
@@ -816,10 +816,9 @@ pub fn apply_basemap_changes(
             current_state.style, new_style
         );
         current_state.style = new_style;
-        tile_settings.endpoint = new_style.endpoint_url().to_string();
-        tile_settings.tile_format = new_style.tile_format();
-        tile_settings.reverse_axes = new_style.reverse_axes();
-        // Note: Tile cache clearing happens in main.rs when cache is cleared
+        dl_settings.endpoint = new_style.endpoint_url().to_string();
+        dl_settings.tile_format = new_style.tile_format();
+        dl_settings.reverse_axes = new_style.reverse_axes();
     }
 }
 

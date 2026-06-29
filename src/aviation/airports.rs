@@ -47,7 +47,7 @@ pub fn spawn_airports(
     mut materials: ResMut<Assets<ColorMaterial>>,
     aviation_data: Res<AviationData>,
     render_state: Res<AirportRenderState>,
-    tile_settings: Res<SlippyTilesSettings>,
+    tile_settings: Res<TileRenderSettings>,
     map_state: Res<MapState>,
     view3d_state: Res<crate::view3d::View3DState>,
     existing_airports: Query<Entity, With<AirportMarker>>,
@@ -100,7 +100,7 @@ pub fn spawn_airports(
 
 /// System to update airport positions when map moves
 pub fn update_airport_positions(
-    tile_settings: Res<SlippyTilesSettings>,
+    tile_settings: Res<TileRenderSettings>,
     map_state: Res<MapState>,
     aviation_data: Res<AviationData>,
     view3d_state: Res<crate::view3d::View3DState>,

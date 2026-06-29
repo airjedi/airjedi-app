@@ -31,7 +31,7 @@ pub fn draw_navaids(
     mut gizmos: Gizmos,
     aviation_data: Res<AviationData>,
     render_state: Res<NavaidRenderState>,
-    tile_settings: Res<SlippyTilesSettings>,
+    tile_settings: Res<TileRenderSettings>,
     map_state: Res<MapState>,
     view3d_state: Res<crate::view3d::View3DState>,
 ) {

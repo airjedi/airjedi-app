@@ -40,13 +40,6 @@ pub struct TileQuad3d;
 #[derive(Resource)]
 pub struct TileQuadMesh(pub Handle<Mesh>);
 
-/// Tracks which tile positions have been spawned to prevent duplicate entities.
-/// Key is (transform_x rounded, transform_y rounded, zoom_level).
-#[derive(Resource, Default)]
-pub struct SpawnedTiles {
-    pub positions: std::collections::HashSet<(i32, i32, u8)>,
-}
-
 /// Timer that triggers periodic tile re-requests in 3D mode so that camera
 /// orbit, pan, and altitude changes continuously fill visible areas.
 #[derive(Resource)]
@@ -121,8 +114,7 @@ pub struct GridOverlay {
 // =============================================================================
 
 pub(super) fn setup_render_systems(app: &mut App) {
-        app.init_resource::<SpawnedTiles>()
-            .init_resource::<Tile3DRefreshTimer>()
+        app.init_resource::<Tile3DRefreshTimer>()
             .init_resource::<AltitudeChangeTracker>()
             .init_resource::<Previous3DZoom>()
             .init_resource::<TileAssetCache>()
@@ -134,7 +126,7 @@ pub(super) fn setup_render_systems(app: &mut App) {
             .add_systems(Update, handle_3d_view_tile_refresh)
             .add_systems(
                 Update,
-                request_3d_tiles_continuous
+                update_3d_adaptive_zoom
                     .after(handle_3d_view_tile_refresh)
                     .in_set(ZoomSet::Change),
             )
@@ -336,18 +328,19 @@ pub fn compute_tile_radius(
 
 /// Send a tile download request for the current map location.
 pub fn request_tiles_at_location(
-    download_events: &mut MessageWriter<DownloadSlippyTilesMessage>,
+    download_events: &mut MessageWriter<DownloadTilesRequest>,
     latitude: f64,
     longitude: f64,
     zoom_level: ZoomLevel,
     radius: u8,
     use_cache: bool,
 ) {
-    download_events.write(DownloadSlippyTilesMessage {
-        tile_size: constants::DEFAULT_TILE_SIZE,
-        zoom_level,
-        coordinates: Coordinates::from_latitude_longitude(latitude, longitude),
+    download_events.write(DownloadTilesRequest {
+        latitude,
+        longitude,
+        zoom: zoom_level.to_u8(),
         radius: Radius(radius),
+        priority: DownloadPriority::Near,
         use_cache,
     });
 }
@@ -362,12 +355,10 @@ fn handle_basemap_change(
     mut commands: Commands,
     basemap_state: Res<crate::config::CurrentBasemapState>,
     tile_query: Query<Entity, With<MapTile>>,
-    mut spawned_tiles: ResMut<SpawnedTiles>,
-    mut download_status: ResMut<SlippyTileDownloadStatus>,
     mut tile_asset_cache: ResMut<TileAssetCache>,
     mut tile_grid: ResMut<super::pool::TileGrid>,
     mut downloaded_tiles: ResMut<super::download::DownloadedTiles>,
-    mut download_events: MessageWriter<DownloadSlippyTilesMessage>,
+    mut download_events: MessageWriter<DownloadTilesRequest>,
     map_state: Res<MapState>,
     zoom_state: Res<ZoomState>,
     window_query: Query<&Window>,
@@ -393,9 +384,7 @@ fn handle_basemap_change(
         commands.entity(entity).despawn();
     }
 
-    spawned_tiles.positions.clear();
     tile_grid.occupied.clear();
-    download_status.0.clear();
     tile_asset_cache.entries.clear();
     super::download::clear_download_tracking(&mut downloaded_tiles);
 
@@ -415,7 +404,6 @@ fn handle_basemap_change(
 }
 
 /// When a tile image fails to load, check if the cached file is corrupt and remove it.
-/// The tile will be re-requested automatically by bevy_slippy_tiles on the next frame.
 fn handle_tile_load_failures(
     mut commands: Commands,
     mut failed_events: MessageReader<AssetLoadFailedEvent<Image>>,
@@ -423,7 +411,7 @@ fn handle_tile_load_failures(
         (Entity, &TileOriginalImage, &Transform, &TileFadeState),
         With<MapTile>,
     >,
-    mut spawned_tiles: ResMut<SpawnedTiles>,
+    mut tile_grid: ResMut<super::pool::TileGrid>,
 ) {
     for event in failed_events.read() {
         let asset_path = event.path.path();
@@ -443,7 +431,7 @@ fn handle_tile_load_failures(
                         transform.translation.y as i32,
                         fade.tile_zoom,
                     );
-                    spawned_tiles.positions.remove(&key);
+                    tile_grid.occupied.remove(&key);
                     commands.entity(entity).despawn();
                     debug!(
                         "Despawned tile entity with failed texture: {:?}",
@@ -459,7 +447,7 @@ fn handle_tile_load_failures(
 /// Request tiles when the window is resized or maximized so newly exposed areas are filled.
 fn handle_window_resize(
     mut resize_events: MessageReader<bevy::window::WindowResized>,
-    mut download_events: MessageWriter<DownloadSlippyTilesMessage>,
+    mut download_events: MessageWriter<DownloadTilesRequest>,
     map_state: Res<MapState>,
     zoom_state: Res<ZoomState>,
     view3d_state: Res<view3d::View3DState>,
@@ -471,14 +459,12 @@ fn handle_window_resize(
             zoom_state.camera_zoom,
             Some(&view3d_state),
         );
-        download_events.write(DownloadSlippyTilesMessage {
-            tile_size: constants::DEFAULT_TILE_SIZE,
-            zoom_level: map_state.zoom_level,
-            coordinates: Coordinates::from_latitude_longitude(
-                map_state.latitude,
-                map_state.longitude,
-            ),
+        download_events.write(DownloadTilesRequest {
+            latitude: map_state.latitude,
+            longitude: map_state.longitude,
+            zoom: map_state.zoom_level.to_u8(),
             radius: Radius(radius),
+            priority: DownloadPriority::Near,
             use_cache: true,
         });
     }
@@ -489,24 +475,23 @@ fn handle_window_resize(
 /// When returning to 2D, clears spawned tile tracking so tiles are freshly re-displayed.
 fn handle_3d_view_tile_refresh(
     view3d_state: Res<view3d::View3DState>,
-    mut download_events: MessageWriter<DownloadSlippyTilesMessage>,
+    mut download_events: MessageWriter<DownloadTilesRequest>,
     mut map_state: ResMut<MapState>,
     zoom_state: Res<ZoomState>,
     window_query: Query<&Window>,
-    mut spawned_tiles: ResMut<SpawnedTiles>,
+    mut tile_grid: ResMut<super::pool::TileGrid>,
 ) {
     if !view3d_state.is_changed() {
         return;
     }
 
-    // When we've just returned to 2D mode, clear the spawned tiles tracker
+    // When we've just returned to 2D mode, clear the tile grid tracker
     // and restore the saved 2D zoom level.
     // 3D mode uses multi-resolution tiles at different zoom levels and scales;
-    // without clearing, the dedup check in display_tiles_filtered would skip
-    // re-spawning tiles at the current zoom level, leaving a blank map.
+    // without clearing, the dedup check would skip re-spawning tiles at the
+    // current zoom level, leaving a blank map.
     if matches!(view3d_state.mode, view3d::ViewMode::Map2D) && !view3d_state.is_transitioning() {
-        spawned_tiles.positions.clear();
-        // Restore the 2D zoom level that was saved when entering 3D mode
+        tile_grid.occupied.clear();
         if let Some(saved_zoom) = view3d_state.saved_2d_zoom_level {
             if let Ok(zoom) = ZoomLevel::try_from(saved_zoom) {
                 map_state.zoom_level = zoom;
@@ -524,36 +509,26 @@ fn handle_3d_view_tile_refresh(
         zoom_state.camera_zoom,
         Some(&view3d_state),
     );
-    download_events.write(DownloadSlippyTilesMessage {
-        tile_size: constants::DEFAULT_TILE_SIZE,
-        zoom_level: map_state.zoom_level,
-        coordinates: Coordinates::from_latitude_longitude(map_state.latitude, map_state.longitude),
+    download_events.write(DownloadTilesRequest {
+        latitude: map_state.latitude,
+        longitude: map_state.longitude,
+        zoom: map_state.zoom_level.to_u8(),
         radius: Radius(radius),
+        priority: DownloadPriority::Near,
         use_cache: true,
     });
 }
 
-/// Continuously request multi-resolution tiles in 3D mode so that camera orbit,
-/// pan, and altitude changes fill the visible area without waiting for explicit
-/// View3DState change events.
-///
-/// Three distance bands load tiles at decreasing zoom levels:
-/// - Near (0-40% of ground extent): current zoom_level
-/// - Mid  (40-70%): zoom_level - 1
-/// - Far  (70-100%): zoom_level - 2
-///
-/// Mid and far bands are offset in the camera look direction so tiles load ahead
-/// of where the user is looking. Band radii adapt to pitch: low pitch (looking
-/// toward horizon) favours far tiles; high pitch (looking down) favours near tiles.
-fn request_3d_tiles_continuous(
+/// Update the map zoom level in 3D mode based on camera altitude.
+/// Runs on the refresh timer so zoom changes happen smoothly, not every frame.
+/// When zoom changes, despawns out-of-band tiles to prevent accumulation.
+fn update_3d_adaptive_zoom(
     mut commands: Commands,
     mut timer: ResMut<Tile3DRefreshTimer>,
     time: Res<Time>,
-    mut view3d_state: ResMut<view3d::View3DState>,
+    view3d_state: Res<view3d::View3DState>,
     mut map_state: ResMut<MapState>,
-    tile_settings: Res<SlippyTilesSettings>,
-    mut download_events: MessageWriter<DownloadSlippyTilesMessage>,
-    mut spawned_tiles: ResMut<SpawnedTiles>,
+    mut tile_grid: ResMut<super::pool::TileGrid>,
     tile_query: Query<(Entity, &TileFadeState), With<MapTile>>,
     mut alt_tracker: ResMut<AltitudeChangeTracker>,
 ) {
@@ -566,8 +541,6 @@ fn request_3d_tiles_continuous(
         return;
     }
 
-    // Compute zoom level from camera altitude so that flying close to the
-    // ground automatically loads higher-detail tiles.
     let old_zoom = map_state.zoom_level.to_u8();
     let adaptive_zoom = altitude_to_zoom_level(view3d_state.camera_altitude, old_zoom);
     if let Ok(new_zoom) = ZoomLevel::try_from(adaptive_zoom) {
@@ -579,15 +552,11 @@ fn request_3d_tiles_continuous(
             );
             map_state.zoom_level = new_zoom;
 
-            // When zoom level changes, despawn tiles that are now outside
-            // the new multi-resolution band [new_zoom-4, new_zoom].
-            // Don't clear spawned_tiles — existing in-band tiles should
-            // remain to prevent flashing gaps during transitions.
             let new_z = new_zoom.to_u8();
             let min_band = new_z.saturating_sub(4);
-            spawned_tiles
-                .positions
-                .retain(|&(_, _, z)| z >= min_band && z <= new_z);
+            tile_grid
+                .occupied
+                .retain(|&(_, _, z), _| z >= min_band && z <= new_z);
             let mut despawned = 0u32;
             for (entity, fade_state) in tile_query.iter() {
                 if fade_state.tile_zoom > new_z || fade_state.tile_zoom < min_band {
@@ -602,88 +571,6 @@ fn request_3d_tiles_continuous(
                 );
             }
         }
-    }
-
-    let base_zoom = map_state.zoom_level.to_u8();
-    let lat = map_state.latitude;
-    let lon = map_state.longitude;
-    let yaw_rad = view3d_state.camera_yaw.to_radians();
-    let pitch = view3d_state.camera_pitch;
-
-    // pitch_factor: 0.0 = low pitch (horizon), 1.0 = high pitch (looking down)
-    let pitch_factor = ((pitch - 15.0) / (89.0 - 15.0)).clamp(0.0, 1.0);
-
-    // Adaptive band radii based on pitch
-    let near_radius = 3 + (3.0 * pitch_factor) as u8; // 3-6
-    let mid_radius = 3 + (2.0 * (1.0 - pitch_factor)) as u8; // 3-5
-    let far_radius = 2 + (3.0 * (1.0 - pitch_factor)) as u8; // 2-5
-
-    // --- Near band: current zoom level, centered on map position ---
-    download_events.write(DownloadSlippyTilesMessage {
-        tile_size: constants::DEFAULT_TILE_SIZE,
-        zoom_level: map_state.zoom_level,
-        coordinates: Coordinates::from_latitude_longitude(lat, lon),
-        radius: Radius(near_radius),
-        use_cache: true,
-    });
-
-    // Helper: send a tile request at a given zoom level, offset from (lat, lon)
-    // by `fwd` tiles forward and `side` tiles sideways relative to the camera yaw.
-    let mut request_band = |zoom_offset: u8, fwd: f64, side: f64, radius: u8| {
-        if base_zoom < zoom_offset {
-            return;
-        }
-        let z = base_zoom - zoom_offset;
-        let Ok(zoom) = ZoomLevel::try_from(z) else {
-            return;
-        };
-        let deg_per_tile_lon = 360.0 / (1u64 << z) as f64;
-        let deg_per_tile_lat = deg_per_tile_lon * lat.to_radians().cos();
-        // Forward = along yaw, sideways = perpendicular (yaw + 90°)
-        let offset_lat = fwd * deg_per_tile_lat * yaw_rad.cos() as f64
-            - side * deg_per_tile_lat * yaw_rad.sin() as f64;
-        let offset_lon = fwd * deg_per_tile_lon * yaw_rad.sin() as f64
-            + side * deg_per_tile_lon * yaw_rad.cos() as f64;
-        download_events.write(DownloadSlippyTilesMessage {
-            tile_size: constants::DEFAULT_TILE_SIZE,
-            zoom_level: zoom,
-            coordinates: Coordinates::from_latitude_longitude(
-                clamp_latitude(lat + offset_lat),
-                clamp_longitude(lon + offset_lon),
-            ),
-            radius: Radius(radius),
-            use_cache: true,
-        });
-    };
-
-    // --- Mid band: zoom_level - 1 ---
-    request_band(1, 3.0, 0.0, mid_radius);
-    request_band(1, 2.0, -4.0, mid_radius);
-    request_band(1, 2.0, 4.0, mid_radius);
-
-    // --- Far band: zoom_level - 2 ---
-    request_band(2, 4.0, 0.0, far_radius);
-    request_band(2, 3.0, -5.0, far_radius);
-    request_band(2, 3.0, 5.0, far_radius);
-
-    // --- Horizon bands: zoom_level - 3 and - 4 ---
-    let hr = 4 + (3.0 * (1.0 - pitch_factor)) as u8; // 4-7
-
-    // zoom-3: sweep at multiple forward distances
-    for &fwd in &[2.0, 5.0, 8.0] {
-        request_band(3, fwd, 0.0, hr);
-        let spread = fwd * 1.5 + 4.0;
-        request_band(3, fwd, -spread, hr);
-        request_band(3, fwd, spread, hr);
-    }
-
-    // zoom-4: coarser tiles for the far horizon, even wider sweep
-    let ur = 4 + (2.0 * (1.0 - pitch_factor)) as u8; // 4-6
-    for &fwd in &[2.0, 5.0, 8.0] {
-        request_band(4, fwd, 0.0, ur);
-        let spread = fwd * 2.0 + 5.0;
-        request_band(4, fwd, -spread, ur);
-        request_band(4, fwd, spread, ur);
     }
 }
 
@@ -717,7 +604,6 @@ fn rescale_tiles_on_zoom_change(
     view3d_state: Res<view3d::View3DState>,
     mut prev_zoom: ResMut<Previous3DZoom>,
     mut tile_query: Query<&mut Transform, With<MapTile>>,
-    mut spawned_tiles: ResMut<SpawnedTiles>,
     mut tile_grid: ResMut<super::pool::TileGrid>,
 ) {
     // In 3D mode, use the rendering zoom (stable coordinate space) so tile
@@ -757,17 +643,14 @@ fn rescale_tiles_on_zoom_change(
         count += 1;
     }
 
-    // Rescale spawned_tiles position keys so the dedup check in
-    // display_tiles_filtered correctly detects existing tiles at
-    // their new coordinates and doesn't spawn duplicates.
-    let old_positions: Vec<_> = spawned_tiles.positions.drain().collect();
-    for (x, y, z) in old_positions {
+    // Rescale tile_grid position keys so the dedup check correctly detects
+    // existing tiles at their new coordinates and doesn't spawn duplicates.
+    let old_entries: Vec<_> = tile_grid.occupied.drain().collect();
+    for ((x, y, z), entity) in old_entries {
         let new_x = ((x as f64) * factor as f64).round() as i32;
         let new_y = ((y as f64) * factor as f64).round() as i32;
-        spawned_tiles.positions.insert((new_x, new_y, z));
+        tile_grid.occupied.insert((new_x, new_y, z), entity);
     }
-
-    tile_grid.occupied.clear();
 
     debug!(
         "Rescaled {} tiles by {}x for zoom {} -> {}",
@@ -776,34 +659,43 @@ fn rescale_tiles_on_zoom_change(
     prev_zoom.0 = current;
 }
 
-/// Primary tile loading system. Runs every frame after zoom changes.
-/// Computes which tiles the viewport needs, checks disk cache directly,
-/// spawns cached tiles immediately (zero latency), and requests network
-/// downloads for uncached tiles.
+/// Primary tile loading system. Computes which tiles the viewport needs,
+/// checks disk cache directly, spawns cached tiles immediately (zero latency),
+/// and requests network downloads for uncached tiles.
 ///
-/// In 3D mode, loads multi-zoom bands toward the horizon for perspective
-/// coverage at decreasing detail levels.
+/// In 2D: runs every frame, single zoom band at current level.
+/// In 3D: runs every 300ms (Tile3DRefreshTimer), multi-zoom directional bands
+/// offset toward the camera's look direction for perspective coverage.
 fn load_visible_tiles(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
-    tile_settings: Res<SlippyTilesSettings>,
+    tile_settings: Res<TileRenderSettings>,
     dl_settings: Res<super::download::TileDownloadSettings>,
     map_state: Res<MapState>,
     mut tile_asset_cache: ResMut<TileAssetCache>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     quad_mesh: Option<Res<TileQuadMesh>>,
     mut tile_grid: ResMut<super::pool::TileGrid>,
-    mut download_events: MessageWriter<DownloadSlippyTilesMessage>,
+    mut download_events: MessageWriter<DownloadTilesRequest>,
     view3d_state: Res<view3d::View3DState>,
     basemap_state: Res<crate::config::CurrentBasemapState>,
     window_query: Query<&Window>,
     zoom_state: Res<crate::map::ZoomState>,
     time: Res<Time<Real>>,
+    timer: Res<Tile3DRefreshTimer>,
 ) {
     let Some(ref quad_mesh) = quad_mesh else { return };
+    let is_3d = view3d_state.is_3d_active();
+
+    // In 3D mode, only run when the refresh timer fires (every 300ms).
+    // Computing directional multi-zoom bands every frame is expensive.
+    // The timer is ticked by update_3d_adaptive_zoom which runs earlier.
+    if is_3d && !timer.0.just_finished() && !map_state.is_changed() {
+        return;
+    }
+
     let current_zoom = map_state.zoom_level.to_u8();
     let now = time.elapsed_secs_f64();
-    let is_3d = view3d_state.is_3d_active();
 
     let radius = if let Ok(window) = window_query.single() {
         compute_tile_radius(
@@ -828,64 +720,131 @@ fn load_visible_tiles(
     let [pr, pg, pb] = basemap_state.style.placeholder_color();
     let flat_rot = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
 
-    // Build list of (center_lat, center_lon, zoom, radius) bands to load.
-    // In 2D: single band at current zoom.
-    // In 3D: near band + mid/far bands at lower zoom levels offset toward camera look direction.
     let lat = map_state.latitude;
     let lon = map_state.longitude;
+
+    // -------------------------------------------------------------------------
+    // Build tile bands: which regions and zoom levels to load
+    // -------------------------------------------------------------------------
 
     struct TileBand {
         lat: f64,
         lon: f64,
         zoom: u8,
         radius: u8,
+        /// If true, spawn tile entities. If false, only fire download requests
+        /// to warm the cache (used for lower-zoom bands in 3D to avoid Z-fighting).
+        spawn: bool,
     }
 
-    let mut bands = Vec::with_capacity(8);
-    bands.push(TileBand { lat, lon, zoom: current_zoom, radius });
+    let mut bands = Vec::with_capacity(32);
 
     if is_3d {
-        // In 3D, use a large radius at current zoom, then add lower-zoom
-        // bands all centered on the SAME point for seamless coverage.
-        // Lower-zoom tiles are larger so a smaller radius covers more area.
-        bands[0].radius = radius.max(10);
+        // 3D mode: Only spawn mesh quads at the CURRENT zoom level to avoid
+        // Z-fighting between coplanar tiles at different zoom levels (see
+        // CLAUDE.md "3D Tile Rendering -- Known Pitfalls"). Lower-zoom bands
+        // fire download requests to warm the cache for zoom transitions.
+        let yaw_rad = view3d_state.camera_yaw.to_radians();
+        let pitch = view3d_state.camera_pitch;
+        let pitch_factor = ((pitch - 15.0) / (89.0 - 15.0)).clamp(0.0, 1.0);
 
-        // Lower-zoom bands provide fallback coverage beyond the near band.
-        // Use large radii so they overlap with the near band - overlap is
-        // harmless since tile_grid dedup prevents spawning at occupied positions.
-        for zoom_offset in 1..=3u8 {
-            if current_zoom >= zoom_offset {
-                bands.push(TileBand {
-                    lat, lon,
-                    zoom: current_zoom - zoom_offset,
-                    radius: 10,
-                });
+        // Helper: compute offset lat/lon for a directional band
+        let offset_lat_lon = |zoom_offset: u8, fwd: f64, side: f64| -> Option<(f64, f64, u8)> {
+            if current_zoom < zoom_offset { return None; }
+            let z = current_zoom - zoom_offset;
+            let deg_per_tile_lon = 360.0 / (1u64 << z) as f64;
+            let deg_per_tile_lat = deg_per_tile_lon * lat.to_radians().cos();
+            let offset_lat = fwd * deg_per_tile_lat * (yaw_rad as f64).cos()
+                - side * deg_per_tile_lat * (yaw_rad as f64).sin();
+            let offset_lon = fwd * deg_per_tile_lon * (yaw_rad as f64).sin()
+                + side * deg_per_tile_lon * (yaw_rad as f64).cos();
+            Some((clamp_latitude(lat + offset_lat), clamp_longitude(lon + offset_lon), z))
+        };
+
+        // Spawn bands: current zoom only, centered + directional offsets.
+        // These tiles get mesh quads and are visible.
+        let near_radius = (3 + (3.0 * pitch_factor) as u8).max(radius).max(10);
+        bands.push(TileBand { lat, lon, zoom: current_zoom, radius: near_radius, spawn: true });
+
+        // Additional current-zoom bands offset forward along camera look direction
+        let deg_per_tile_lon = 360.0 / (1u64 << current_zoom) as f64;
+        let deg_per_tile_lat = deg_per_tile_lon * lat.to_radians().cos();
+        for &fwd in &[6.0, 12.0, 18.0] {
+            let offset_lat = fwd * deg_per_tile_lat * (yaw_rad as f64).cos();
+            let offset_lon = fwd * deg_per_tile_lon * (yaw_rad as f64).sin();
+            let fwd_radius = (near_radius / 2).max(5);
+            bands.push(TileBand {
+                lat: clamp_latitude(lat + offset_lat),
+                lon: clamp_longitude(lon + offset_lon),
+                zoom: current_zoom,
+                radius: fwd_radius,
+                spawn: true,
+            });
+        }
+
+        // Download-only bands: lower zoom levels, NOT spawned (avoids Z-fighting).
+        // These warm the cache so tiles are ready when zoom level changes.
+        let mid_radius = 3 + (2.0 * (1.0 - pitch_factor)) as u8;
+        let far_radius = 2 + (3.0 * (1.0 - pitch_factor)) as u8;
+        let horizon_radius = 4 + (3.0 * (1.0 - pitch_factor)) as u8;
+
+        for &(fwd, side) in &[(3.0, 0.0), (2.0, -4.0), (2.0, 4.0)] {
+            if let Some((olat, olon, z)) = offset_lat_lon(1, fwd, side) {
+                bands.push(TileBand { lat: olat, lon: olon, zoom: z, radius: mid_radius, spawn: false });
             }
         }
+        for &(fwd, side) in &[(4.0, 0.0), (3.0, -5.0), (3.0, 5.0)] {
+            if let Some((olat, olon, z)) = offset_lat_lon(2, fwd, side) {
+                bands.push(TileBand { lat: olat, lon: olon, zoom: z, radius: far_radius, spawn: false });
+            }
+        }
+        for &fwd in &[2.0, 5.0, 8.0] {
+            let spread = fwd * 1.5 + 4.0;
+            for &side in &[0.0, -spread, spread] {
+                if let Some((olat, olon, z)) = offset_lat_lon(3, fwd, side) {
+                    bands.push(TileBand { lat: olat, lon: olon, zoom: z, radius: horizon_radius, spawn: false });
+                }
+            }
+        }
+    } else {
+        // 2D mode: single band at current zoom
+        bands.push(TileBand { lat, lon, zoom: current_zoom, radius, spawn: true });
     }
 
-    let mut uncached_requested = false;
+    // -------------------------------------------------------------------------
+    // For each band, check cache and spawn tiles or request downloads
+    // -------------------------------------------------------------------------
+
+    // Render zoom: in 3D use the fixed rendering_zoom for stable coordinates,
+    // in 2D use the current map zoom.
+    let render_zoom = if is_3d {
+        view3d_state.effective_zoom(map_state.zoom_level)
+    } else {
+        map_state.zoom_level
+    };
+    let reference_point = LatitudeLongitudeCoordinates {
+        latitude: tile_settings.reference_latitude,
+        longitude: tile_settings.reference_longitude,
+    };
 
     for band in &bands {
+        // Download-only bands: just fire a download request to warm the cache.
+        // Don't check cache per-tile or spawn entities (avoids Z-fighting in 3D).
+        if !band.spawn {
+            download_events.write(DownloadTilesRequest {
+                latitude: band.lat,
+                longitude: band.lon,
+                zoom: band.zoom,
+                radius: Radius(band.radius),
+                priority: DownloadPriority::Far,
+                use_cache: true,
+            });
+            continue;
+        }
+
         let Ok(band_zoom) = ZoomLevel::try_from(band.zoom) else { continue };
         let center = super::coords::SlippyTileCoordinates::from_latitude_longitude(
             band.lat, band.lon, band_zoom,
-        );
-
-        // Position ALL tiles in render_zoom pixel space for consistent alignment.
-        // Convert each tile's lat/lon to render_zoom pixels directly, avoiding
-        // the band_zoom-to-render_zoom rescale that causes sub-pixel alignment gaps.
-        let render_zoom = if is_3d {
-            view3d_state.effective_zoom(map_state.zoom_level)
-        } else {
-            map_state.zoom_level
-        };
-        let reference_point = LatitudeLongitudeCoordinates {
-            latitude: tile_settings.reference_latitude,
-            longitude: tile_settings.reference_longitude,
-        };
-        let (ref_x, ref_y) = world_coords_to_world_pixel(
-            &reference_point, constants::DEFAULT_TILE_SIZE, render_zoom,
         );
 
         let r = band.radius as i64;
@@ -899,6 +858,10 @@ fn load_visible_tiles(
             1.0
         };
 
+        let ref_at_band = world_coords_to_world_pixel(
+            &reference_point, constants::DEFAULT_TILE_SIZE, band_zoom,
+        );
+
         for dx in -r..=r {
             for dy in -r..=r {
                 let raw_x = center.x as i64 + dx;
@@ -906,12 +869,6 @@ fn load_visible_tiles(
                 if y < 0 || y >= max_tile { continue; }
                 let x = super::coords::wrap_tile_x(raw_x, band.zoom);
 
-                // Position at band's native zoom for pixel-perfect alignment,
-                // then rescale to render_zoom space. Tile edges align exactly
-                // at the native zoom's pixel grid, avoiding Mercator non-linearity.
-                let ref_at_band = world_coords_to_world_pixel(
-                    &reference_point, constants::DEFAULT_TILE_SIZE, band_zoom,
-                );
                 let tc = super::coords::SlippyTileCoordinates { x, y: y as u32 };
                 let ll = tc.to_latitude_longitude(band_zoom);
                 let (tile_x, tile_y) = world_coords_to_world_pixel(
@@ -945,16 +902,14 @@ fn load_visible_tiles(
                 };
 
                 if !cached {
-                    if !uncached_requested {
-                        uncached_requested = true;
-                        download_events.write(DownloadSlippyTilesMessage {
-                            tile_size: constants::DEFAULT_TILE_SIZE,
-                            zoom_level: map_state.zoom_level,
-                            coordinates: Coordinates::from_lat_lon(lat, lon),
-                            radius: Radius(radius),
-                            use_cache: true,
-                        });
-                    }
+                    download_events.write(DownloadTilesRequest {
+                        latitude: band.lat,
+                        longitude: band.lon,
+                        zoom: band.zoom,
+                        radius: Radius(band.radius),
+                        priority: DownloadPriority::Near,
+                        use_cache: true,
+                    });
                     continue;
                 }
 
@@ -1041,8 +996,6 @@ fn cull_offscreen_tiles(
     camera_query: Query<(&Transform, &Projection), With<MapCamera>>,
     tile_query: Query<(Entity, &Transform, &TileFadeState), With<MapTile>>,
     window_query: Query<&Window>,
-    mut spawned_tiles: ResMut<SpawnedTiles>,
-    mut download_status: ResMut<SlippyTileDownloadStatus>,
     mut tile_grid: ResMut<super::pool::TileGrid>,
     view3d_state: Res<view3d::View3DState>,
     alt_tracker: Res<AltitudeChangeTracker>,
@@ -1141,7 +1094,6 @@ fn cull_offscreen_tiles(
         let dx = (tx as f32 - center_x).abs();
         let dy = (ty as f32 - center_y).abs();
         if dx > half_w || dy > half_h {
-            spawned_tiles.positions.remove(&(tx, ty, zoom));
             tile_grid.occupied.remove(&(tx, ty, zoom));
             commands.entity(entity).despawn();
             culled += 1;
@@ -1161,7 +1113,6 @@ fn cull_offscreen_tiles(
     if tiles.len() > tile_limit {
         tiles.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         for &(entity, _, tx, ty, zoom) in &tiles[..tiles.len() - tile_limit] {
-            spawned_tiles.positions.remove(&(tx, ty, zoom));
             tile_grid.occupied.remove(&(tx, ty, zoom));
             commands.entity(entity).despawn();
             culled += 1;
@@ -1188,7 +1139,6 @@ fn animate_tile_fades(
         (Entity, &mut TileFadeState, &Transform, &TileOriginalImage),
         With<MapTile>,
     >,
-    mut spawned_tiles: ResMut<SpawnedTiles>,
     mut tile_grid: ResMut<super::pool::TileGrid>,
     view3d_state: Res<view3d::View3DState>,
 ) {
@@ -1233,7 +1183,6 @@ fn animate_tile_fades(
         if loaded_cells.contains(&(cx, cy)) {
             let tx = (cx as f32 * super::DEFAULT_TILE_PIXELS) as i32;
             let ty = (cy as f32 * super::DEFAULT_TILE_PIXELS) as i32;
-            spawned_tiles.positions.remove(&(tx, ty, zoom));
             tile_grid.occupied.remove(&(tx, ty, zoom));
             commands.entity(entity).despawn();
         }
@@ -1263,7 +1212,6 @@ fn orient_tiles_for_view_mode(
     view3d_state: Res<view3d::View3DState>,
     tile_query: Query<Entity, With<MapTile>>,
     mut tile_grid: ResMut<super::pool::TileGrid>,
-    mut spawned_tiles: ResMut<SpawnedTiles>,
     mut last_3d: Local<Option<bool>>,
 ) {
     let is_3d = view3d_state.is_3d_active();
@@ -1276,7 +1224,6 @@ fn orient_tiles_for_view_mode(
         commands.entity(entity).despawn();
     }
     tile_grid.occupied.clear();
-    spawned_tiles.positions.clear();
 }
 
 // The following 5 systems were removed in the unified mesh redesign:

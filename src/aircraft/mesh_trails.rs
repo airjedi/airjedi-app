@@ -1,7 +1,7 @@
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::PrimitiveTopology;
 use bevy::prelude::*;
-use crate::tiles::SlippyTilesSettings;
+use crate::tiles::TileRenderSettings;
 
 use super::components::Aircraft;
 use super::staleness::{aircraft_age_secs, staleness_opacity};
@@ -79,7 +79,7 @@ pub fn spawn_mesh_trails(
 }
 
 pub fn update_mesh_trails(
-    tile_settings: Res<SlippyTilesSettings>,
+    tile_settings: Res<TileRenderSettings>,
     map_state: Res<MapState>,
     view3d_state: Res<View3DState>,
     trail_config: Res<TrailConfig>,

@@ -141,7 +141,7 @@ const MAX_MESH_ENTRIES: usize = 400;
 pub(crate) fn tile_key_from_transform(
     transform: &Transform,
     fade_state: &TileFadeState,
-    tile_settings: &crate::tiles::SlippyTilesSettings,
+    tile_settings: &crate::tiles::TileRenderSettings,
     zoom_level: crate::tiles::ZoomLevel,
 ) -> TileKey {
     let reference_ll = crate::tiles::LatitudeLongitudeCoordinates {
@@ -257,7 +257,7 @@ fn create_terrain_meshes(
     terrain_state: Res<TerrainState>,
     view3d_state: Res<View3DState>,
     map_state: Res<MapState>,
-    tile_settings: Res<crate::tiles::SlippyTilesSettings>,
+    tile_settings: Res<crate::tiles::TileRenderSettings>,
     heightmap_cache: Res<HeightmapCache>,
     mut terrain_mesh_cache: ResMut<TerrainMeshCache>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -513,7 +513,7 @@ fn create_gpu_terrain_tiles(
     terrain_state: Res<TerrainState>,
     view3d_state: Res<View3DState>,
     map_state: Res<MapState>,
-    tile_settings: Res<crate::tiles::SlippyTilesSettings>,
+    tile_settings: Res<crate::tiles::TileRenderSettings>,
     heightmap_cache: Res<HeightmapCache>,
     grid_mesh: Option<Res<TerrainGridMesh>>,
     mut heightmap_textures: ResMut<HeightmapTextureCache>,

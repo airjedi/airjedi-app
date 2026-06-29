@@ -341,7 +341,7 @@ pub(crate) fn request_heightmaps_for_tiles(
     terrain_state: Res<super::TerrainState>,
     map_state: Res<crate::MapState>,
     mut cache: ResMut<HeightmapCache>,
-    tile_settings: Res<crate::tiles::SlippyTilesSettings>,
+    tile_settings: Res<crate::tiles::TileRenderSettings>,
     tile_query: Query<(&Transform, &crate::tiles::TileFadeState), With<crate::tiles::MapTile>>,
 ) {
     // Only fetch heightmaps when 3D mode is active and terrain is enabled

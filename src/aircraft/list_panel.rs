@@ -1596,7 +1596,7 @@ pub fn toggle_aircraft_list(
 pub fn highlight_selected_aircraft(
     mut gizmos: Gizmos,
     list_state: Res<AircraftListState>,
-    tile_settings: Res<crate::tiles::SlippyTilesSettings>,
+    tile_settings: Res<crate::tiles::TileRenderSettings>,
     map_state: Res<MapState>,
     view3d_state: Res<crate::view3d::View3DState>,
     aircraft_query: Query<&crate::Aircraft>,

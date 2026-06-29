@@ -3,7 +3,7 @@ use std::collections::{HashMap, VecDeque};
 use airjedi_fusion::nalgebra::DMatrix;
 use airjedi_fusion::{TrackQuality, TrackerState};
 use bevy::prelude::*;
-use crate::tiles::SlippyTilesSettings;
+use crate::tiles::TileRenderSettings;
 
 use crate::aircraft::components::FusionTrackLink;
 use crate::aircraft::{Aircraft, AircraftListState, CameraFollowState};
@@ -284,7 +284,7 @@ pub fn draw_estimated_track_cones(
     config: Res<EstimatedTrackConfig>,
     list_state: Res<AircraftListState>,
     follow_state: Res<CameraFollowState>,
-    tile_settings: Res<SlippyTilesSettings>,
+    tile_settings: Res<TileRenderSettings>,
     map_state: Res<MapState>,
     view3d_state: Res<View3DState>,
     heading_history: Res<HeadingHistory>,

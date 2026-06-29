@@ -111,7 +111,7 @@ pub fn predict_position(
 
 /// Helper that encapsulates the repeated reference-point-based coordinate
 /// conversion boilerplate. Construct one per frame/system from
-/// `SlippyTilesSettings` and `MapState`, then use `latlon_to_world` to
+/// `TileRenderSettings` and `MapState`, then use `latlon_to_world` to
 /// convert geographic coordinates to Bevy world-space positions.
 pub struct CoordinateConverter {
     reference_pixel: (f64, f64),
@@ -120,7 +120,7 @@ pub struct CoordinateConverter {
 
 impl CoordinateConverter {
     /// Build a converter from tile settings and a zoom level.
-    pub fn new(tile_settings: &SlippyTilesSettings, zoom_level: ZoomLevel) -> Self {
+    pub fn new(tile_settings: &TileRenderSettings, zoom_level: ZoomLevel) -> Self {
         let reference_ll = LatitudeLongitudeCoordinates {
             latitude: tile_settings.reference_latitude,
             longitude: tile_settings.reference_longitude,

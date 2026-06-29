@@ -9,7 +9,7 @@ use crate::camera::MapCamera;
 use crate::constants::{self, ZOOM_DOWNGRADE_THRESHOLD, ZOOM_UPGRADE_THRESHOLD};
 use crate::dock;
 use crate::map::{MapState, ZoomState};
-use crate::tiles::{compute_tile_radius, request_tiles_at_location, SpawnedTiles, TileFadeState};
+use crate::tiles::{compute_tile_radius, request_tiles_at_location, TileFadeState};
 use crate::view3d;
 use crate::{clamp_latitude, clamp_longitude, ZoomDebugLogger};
 
@@ -144,17 +144,10 @@ fn apply_zoom_level_transition(
     old_tile_zoom: ZoomLevel,
     map_state: &MapState,
     tile_query: &mut Query<(&mut TileFadeState, &mut Transform), With<MapTile>>,
-    spawned_tiles: &mut SpawnedTiles,
-    download_events: &mut MessageWriter<DownloadSlippyTilesMessage>,
-    download_status: &mut SlippyTileDownloadStatus,
+    download_events: &mut MessageWriter<DownloadTilesRequest>,
     tile_grid: &mut crate::tiles::pool::TileGrid,
     radius: u8,
 ) {
-    // Clear dedup tracking so new-zoom tiles can be spawned.
-    // Old tile entities are kept alive - animate_tile_fades will hide them
-    // only once the new-zoom tile covering their grid cell is loaded.
-    spawned_tiles.positions.clear();
-    download_status.0.clear();
     tile_grid.occupied.clear();
 
     let scale_factor = if map_state.zoom_level.to_u8() > old_tile_zoom.to_u8() {
@@ -185,15 +178,13 @@ pub(crate) fn handle_zoom(
     mut scroll_events: MessageReader<MouseWheel>,
     mut map_state: ResMut<MapState>,
     mut zoom_state: ResMut<ZoomState>,
-    mut download_events: MessageWriter<DownloadSlippyTilesMessage>,
+    mut download_events: MessageWriter<DownloadTilesRequest>,
     window_query: Query<&Window>,
     mut tile_query: Query<(&mut TileFadeState, &mut Transform), With<MapTile>>,
     logger: Option<Res<ZoomDebugLogger>>,
     mut contexts: EguiContexts,
     dock_state: Res<dock::DockTreeState>,
-    mut spawned_tiles: ResMut<SpawnedTiles>,
     view3d_state: Res<view3d::View3DState>,
-    mut download_status: ResMut<SlippyTileDownloadStatus>,
     mut tile_grid: ResMut<crate::tiles::pool::TileGrid>,
     mut last_requested_radius: Local<u8>,
 ) {
@@ -345,9 +336,7 @@ pub(crate) fn handle_zoom(
                 old_tile_zoom,
                 &map_state,
                 &mut tile_query,
-                &mut spawned_tiles,
                 &mut download_events,
-                &mut download_status,
                 &mut tile_grid,
                 radius,
             );
@@ -357,14 +346,12 @@ pub(crate) fn handle_zoom(
                 map_state.zoom_level.to_u8()
             );
         } else if radius > *last_requested_radius {
-            download_events.write(DownloadSlippyTilesMessage {
-                tile_size: constants::DEFAULT_TILE_SIZE,
-                zoom_level: map_state.zoom_level,
-                coordinates: Coordinates::from_latitude_longitude(
-                    map_state.latitude,
-                    map_state.longitude,
-                ),
+            download_events.write(DownloadTilesRequest {
+                latitude: map_state.latitude,
+                longitude: map_state.longitude,
+                zoom: map_state.zoom_level.to_u8(),
                 radius: Radius(radius),
+                priority: DownloadPriority::Near,
                 use_cache: true,
             });
             *last_requested_radius = radius;
@@ -383,14 +370,12 @@ pub(crate) fn handle_pinch_zoom(
     mut pinch_events: MessageReader<PinchGesture>,
     mut map_state: ResMut<MapState>,
     mut zoom_state: ResMut<ZoomState>,
-    mut download_events: MessageWriter<DownloadSlippyTilesMessage>,
+    mut download_events: MessageWriter<DownloadTilesRequest>,
     window_query: Query<&Window>,
     mut tile_query: Query<(&mut TileFadeState, &mut Transform), With<MapTile>>,
     mut contexts: EguiContexts,
     dock_state: Res<dock::DockTreeState>,
-    mut spawned_tiles: ResMut<SpawnedTiles>,
     view3d_state: Res<view3d::View3DState>,
-    mut download_status: ResMut<SlippyTileDownloadStatus>,
     mut tile_grid: ResMut<crate::tiles::pool::TileGrid>,
     mut last_requested_radius: Local<u8>,
 ) {
@@ -454,22 +439,18 @@ pub(crate) fn handle_pinch_zoom(
                     old_tile_zoom,
                     &map_state,
                     &mut tile_query,
-                    &mut spawned_tiles,
                     &mut download_events,
-                    &mut download_status,
                     &mut tile_grid,
                     radius,
                 );
                 *last_requested_radius = radius;
             } else if radius > *last_requested_radius {
-                download_events.write(DownloadSlippyTilesMessage {
-                    tile_size: constants::DEFAULT_TILE_SIZE,
-                    zoom_level: map_state.zoom_level,
-                    coordinates: Coordinates::from_latitude_longitude(
-                        map_state.latitude,
-                        map_state.longitude,
-                    ),
+                download_events.write(DownloadTilesRequest {
+                    latitude: map_state.latitude,
+                    longitude: map_state.longitude,
+                    zoom: map_state.zoom_level.to_u8(),
                     radius: Radius(radius),
+                    priority: DownloadPriority::Near,
                     use_cache: true,
                 });
                 *last_requested_radius = radius;

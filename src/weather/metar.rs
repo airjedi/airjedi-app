@@ -502,7 +502,7 @@ pub fn render_weather_indicators(
 pub fn update_weather_indicator_positions(
     mut indicators: Query<(&WeatherIndicator, &mut Transform)>,
     map_state: Res<MapState>,
-    tile_settings: Res<SlippyTilesSettings>,
+    tile_settings: Res<TileRenderSettings>,
     zoom_state: Res<ZoomState>,
     view3d_state: Res<crate::view3d::View3DState>,
 ) {

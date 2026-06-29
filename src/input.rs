@@ -81,7 +81,7 @@ pub(crate) fn handle_pan_drag(
     mut map_state: ResMut<MapState>,
     mut drag_state: ResMut<DragState>,
     zoom_state: Res<ZoomState>,
-    mut download_events: MessageWriter<DownloadSlippyTilesMessage>,
+    mut download_events: MessageWriter<DownloadTilesRequest>,
     mut follow_state: ResMut<crate::aircraft::CameraFollowState>,
     window_query: Query<&Window>,
     egui_wants: Res<EguiWantsPointer>,
@@ -186,14 +186,12 @@ pub(crate) fn handle_pan_drag(
                         zoom_state.camera_zoom,
                         Some(&view3d_state),
                     );
-                    download_events.write(DownloadSlippyTilesMessage {
-                        tile_size: crate::constants::DEFAULT_TILE_SIZE,
-                        zoom_level: map_state.zoom_level,
-                        coordinates: Coordinates::from_latitude_longitude(
-                            map_state.latitude,
-                            map_state.longitude,
-                        ),
+                    download_events.write(DownloadTilesRequest {
+                        latitude: map_state.latitude,
+                        longitude: map_state.longitude,
+                        zoom: map_state.zoom_level.to_u8(),
                         radius: Radius(radius),
+                        priority: DownloadPriority::Near,
                         use_cache: true,
                     });
                     drag_state.last_tile_request_coords =

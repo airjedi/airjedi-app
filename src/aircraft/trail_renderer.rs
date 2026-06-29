@@ -15,7 +15,7 @@ pub fn draw_trails(
     mut gizmos: Gizmos,
     config: Res<TrailConfig>,
     clock: Res<SessionClock>,
-    tile_settings: Res<SlippyTilesSettings>,
+    tile_settings: Res<TileRenderSettings>,
     map_state: Res<MapState>,
     view3d_state: Res<View3DState>,
     trail_query: Query<(&TrailHistory, &Aircraft)>,
