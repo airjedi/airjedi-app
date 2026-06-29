@@ -129,7 +129,7 @@ pub(super) fn setup_render_systems(app: &mut App) {
             .register_type::<GridOverlay>()
             .add_systems(Startup, (setup_tile_quad_mesh, setup_grid_overlay))
             .add_systems(Update, toggle_grid_overlay)
-            .add_systems(Update, handle_basemap_change)
+            .add_systems(Update, handle_basemap_change.before(load_visible_tiles))
             .add_systems(Update, handle_window_resize)
             .add_systems(Update, handle_3d_view_tile_refresh)
             .add_systems(

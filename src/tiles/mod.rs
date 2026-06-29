@@ -231,11 +231,8 @@ impl Plugin for TilesPlugin {
         render::setup_render_systems(app);
 
         app.add_systems(Startup, sync_download_settings_from_slippy)
-            .add_systems(Update, (
-                sync_download_settings_on_change,
-                bridge_download_requests,
-                bridge_tile_ready,
-            ));
+            .add_systems(Update, sync_download_settings_on_change)
+            .add_systems(Update, (bridge_download_requests, bridge_tile_ready));
     }
 }
 
