@@ -13,7 +13,7 @@ use airjedi_fusion::types::{IdentifierType, TargetCategory};
 use airjedi_fusion::{TargetClassification, Track, TrackQuality, TrackStatus, TrackerState};
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
-use bevy_slippy_tiles::SlippyTilesSettings;
+use crate::tiles::SlippyTilesSettings;
 
 pub fn sync_tracks_to_visuals(
     mut commands: Commands,

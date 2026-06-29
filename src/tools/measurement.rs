@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
-use bevy_slippy_tiles::{
+use crate::tiles::{
     world_coords_to_world_pixel, world_pixel_to_world_coords, LatitudeLongitudeCoordinates,
 };
 

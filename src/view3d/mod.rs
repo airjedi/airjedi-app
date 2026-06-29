@@ -162,10 +162,10 @@ impl View3DState {
     /// returns None (callers should use map_state.zoom_level).
     pub fn effective_zoom(
         &self,
-        map_zoom: bevy_slippy_tiles::ZoomLevel,
-    ) -> bevy_slippy_tiles::ZoomLevel {
+        map_zoom: crate::tiles::ZoomLevel,
+    ) -> crate::tiles::ZoomLevel {
         self.rendering_zoom
-            .and_then(|z| bevy_slippy_tiles::ZoomLevel::try_from(z).ok())
+            .and_then(|z| crate::tiles::ZoomLevel::try_from(z).ok())
             .unwrap_or(map_zoom)
     }
 
@@ -486,7 +486,7 @@ pub fn update_3d_camera(
     window_query: Query<&Window>,
     zoom_state: Res<crate::ZoomState>,
     map_state: Res<crate::MapState>,
-    tile_settings: Res<bevy_slippy_tiles::SlippyTilesSettings>,
+    tile_settings: Res<crate::tiles::SlippyTilesSettings>,
 ) {
     if matches!(state.mode, ViewMode::Map2D) && !state.is_transitioning() {
         return;
@@ -649,7 +649,7 @@ pub fn handle_3d_camera_controls(
     mut state: ResMut<View3DState>,
     mut map_state: ResMut<crate::MapState>,
     mut follow_state: ResMut<crate::aircraft::CameraFollowState>,
-    tile_settings: Res<bevy_slippy_tiles::SlippyTilesSettings>,
+    tile_settings: Res<crate::tiles::SlippyTilesSettings>,
     mut contexts: EguiContexts,
     dock_state: Res<crate::dock::DockTreeState>,
 ) {
@@ -801,10 +801,10 @@ pub fn handle_3d_camera_controls(
 /// geographic coordinates and update the shared map state so tiles are loaded.
 fn sync_center_to_map_state(
     state: &View3DState,
-    tile_settings: &bevy_slippy_tiles::SlippyTilesSettings,
+    tile_settings: &crate::tiles::SlippyTilesSettings,
     map_state: &mut crate::MapState,
 ) {
-    use bevy_slippy_tiles::*;
+    use crate::tiles::*;
 
     let reference_ll = LatitudeLongitudeCoordinates {
         latitude: tile_settings.reference_latitude,
@@ -837,7 +837,7 @@ pub fn update_tile_elevation(
     map_state: Res<crate::MapState>,
     mut tile_query: Query<
         (&mut Transform, &crate::tiles::TileFadeState),
-        With<bevy_slippy_tiles::MapTile>,
+        With<crate::tiles::MapTile>,
     >,
 ) {
     if state.is_3d_active() {

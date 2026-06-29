@@ -734,15 +734,16 @@ pub fn manage_camera_mode(
         return;
     };
 
+    // Camera3d is always order 0 (primary), Camera2d is always order 1 (overlay).
+    // Orders are fixed at spawn; only fog and ground visibility change per mode.
+    cam3d.order = 0;
+    cam2d.order = 1;
+
     if state.is_3d_active() {
         fog.falloff = FogFalloff::Linear {
             start: state.visibility_range * 0.4,
             end: state.visibility_range,
         };
-
-        // Camera ordering: Camera2d base (order 0), Camera3d overlay (order 1)
-        cam2d.order = 0;
-        cam3d.order = 1;
 
         if *last_3d != Some(true) {
             *last_3d = Some(true);
@@ -751,19 +752,13 @@ pub fn manage_camera_mode(
             }
         }
     } else {
-        // 2D mode: disable fog, Camera2d is primary
         fog.falloff = FogFalloff::Linear {
             start: 999999.0,
             end: 999999.0,
         };
 
-        cam2d.order = 0;
-        cam3d.order = 1;
-
         if *last_3d != Some(false) {
             *last_3d = Some(false);
-            cam2d.clear_color = ClearColorConfig::Default;
-            cam2d.output_mode = CameraOutputMode::default();
             if let Ok((_, mut gp_vis)) = ground_query.single_mut() {
                 *gp_vis = Visibility::Hidden;
             }

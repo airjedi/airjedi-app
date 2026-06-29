@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use bevy_slippy_tiles::*;
+use crate::tiles::*;
 
 use super::{Airport, AirportFilter, AviationData, LoadingState};
 use crate::constants;

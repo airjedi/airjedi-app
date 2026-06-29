@@ -7,18 +7,19 @@ use bevy::prelude::*;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Returns the platform-appropriate tile cache directory.
-///
-/// - macOS:   `~/Library/Caches/airjedi/tiles`
-/// - Linux:   `~/.cache/airjedi/tiles`
-/// - Windows: `%LOCALAPPDATA%\airjedi\cache\tiles`
+/// Returns the platform-appropriate tile cache root directory.
 pub fn tile_cache_dir() -> PathBuf {
     crate::paths::cache_dir().join("tiles")
 }
 
-/// Ensures the centralized cache directory exists and is symlinked into
-/// `assets/tiles` so bevy_slippy_tiles can read/write through the AssetServer.
-///
+/// Returns the tile cache directory for a specific basemap style.
+/// Each style gets its own subdirectory so different providers' tiles
+/// don't collide (e.g. `~/Library/Caches/airjedi/tiles/carto-dark/`).
+pub fn tile_cache_dir_for_style(style_key: &str) -> PathBuf {
+    crate::paths::cache_dir().join("tiles").join(style_key)
+}
+
+/// Ensures the root tile cache exists and is symlinked into `assets/tiles`.
 /// Called once at startup before any tile downloads.
 pub fn setup_tile_cache() {
     let cache_dir = tile_cache_dir();
@@ -90,6 +91,15 @@ pub fn setup_tile_cache() {
     }
 
     info!("Tile cache: {:?} -> {:?}", assets_tiles, cache_dir);
+}
+
+/// Ensure the per-style subdirectory exists inside the tile cache.
+/// Called when basemap style changes. Does not touch the symlink.
+pub fn setup_tile_cache_for_style(style_key: &str) {
+    let cache_dir = tile_cache_dir_for_style(style_key);
+    if let Err(e) = fs::create_dir_all(&cache_dir) {
+        warn!("Failed to create tile cache for style '{}': {}", style_key, e);
+    }
 }
 
 /// Clears all cached tile files from the centralized cache directory.

@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use bevy_slippy_tiles::*;
+use crate::tiles::*;
 
 use crate::geo::CoordinateConverter;
 use crate::{Aircraft, MapState};

@@ -2,7 +2,8 @@ use bevy::asset::AssetLoadFailedEvent;
 use bevy::image::Image;
 use bevy::pbr::StandardMaterial;
 use bevy::prelude::*;
-use bevy_slippy_tiles::*;
+
+use super::*;
 
 use crate::camera::MapCamera;
 use crate::constants;
@@ -19,37 +20,37 @@ use bevy::camera::visibility::RenderLayers;
 
 /// Component to track tile fade state for smooth zoom transitions.
 #[derive(Component)]
-pub(crate) struct TileFadeState {
-    pub(crate) alpha: f32,
+pub struct TileFadeState {
+    pub alpha: f32,
     /// The zoom level this tile was spawned for
-    pub(crate) tile_zoom: u8,
+    pub tile_zoom: u8,
     /// When this tile was spawned (seconds since startup)
-    pub(crate) spawn_time: f64,
+    pub spawn_time: f64,
 }
 
 /// Links a tile entity to its 3D mesh quad companion (used in 3D mode only).
 #[derive(Component)]
-pub(crate) struct TileMeshQuad(pub Entity);
+pub struct TileMeshQuad(pub Entity);
 
 /// Marker on 3D mesh quad companion entities so orphans can be detected.
 #[derive(Component)]
-pub(crate) struct TileQuad3d;
+pub struct TileQuad3d;
 
 /// Shared mesh handle for all 3D tile quads (sized to match DEFAULT_TILE_PIXELS).
 #[derive(Resource)]
-pub(crate) struct TileQuadMesh(pub Handle<Mesh>);
+pub struct TileQuadMesh(pub Handle<Mesh>);
 
 /// Tracks which tile positions have been spawned to prevent duplicate entities.
 /// Key is (transform_x rounded, transform_y rounded, zoom_level).
 #[derive(Resource, Default)]
-pub(crate) struct SpawnedTiles {
-    pub(crate) positions: std::collections::HashSet<(i32, i32, u8)>,
+pub struct SpawnedTiles {
+    pub positions: std::collections::HashSet<(i32, i32, u8)>,
 }
 
 /// Timer that triggers periodic tile re-requests in 3D mode so that camera
 /// orbit, pan, and altitude changes continuously fill visible areas.
 #[derive(Resource)]
-pub(crate) struct Tile3DRefreshTimer(Timer);
+pub struct Tile3DRefreshTimer(Timer);
 
 impl Default for Tile3DRefreshTimer {
     fn default() -> Self {
@@ -94,7 +95,7 @@ impl Default for AltitudeChangeTracker {
 
 /// Stores the original tile image handle so the grid overlay can be toggled off.
 #[derive(Component)]
-pub(crate) struct TileOriginalImage(pub Handle<Image>);
+pub struct TileOriginalImage(pub Handle<Image>);
 
 /// Retains strong handles to recently-loaded tile images so they survive entity
 /// despawns. Without this, Bevy drops the GPU texture when the last entity
@@ -108,25 +109,18 @@ struct TileAssetCache {
 /// Controls whether tiles display a procedural grid instead of their imagery.
 #[derive(Resource, Reflect)]
 #[reflect(Resource)]
-pub(crate) struct GridOverlay {
+pub struct GridOverlay {
     pub enabled: bool,
     #[reflect(ignore)]
     pub texture: Handle<Image>,
 }
 
-/// Fixed emissive boost for 3D tile materials. With emissive_exposure_weight=0.0
-/// the emissive bypasses both per-material and global exposure in the tonemapping
-/// pass, so a fixed multiplier gives consistent brightness at any EV.
-const TILE_EMISSIVE_BOOST: f32 = 8.0;
 
 // =============================================================================
 // Plugin
 // =============================================================================
 
-pub(crate) struct TilesPlugin;
-
-impl Plugin for TilesPlugin {
-    fn build(&self, app: &mut App) {
+pub(super) fn setup_render_systems(app: &mut App) {
         app.init_resource::<SpawnedTiles>()
             .init_resource::<Tile3DRefreshTimer>()
             .init_resource::<AltitudeChangeTracker>()
@@ -149,24 +143,13 @@ impl Plugin for TilesPlugin {
             .add_systems(Update, handle_tile_load_failures)
             .add_systems(
                 Update,
-                display_tiles_filtered
-                    .after(bevy::ecs::schedule::ApplyDeferred)
+                load_visible_tiles
+                    .after(ZoomSet::Change)
                     .after(rescale_tiles_on_zoom_change),
             )
-            .add_systems(Update, animate_tile_fades.after(display_tiles_filtered))
-            .add_systems(Update, cull_offscreen_tiles.after(display_tiles_filtered))
-            .add_systems(Update, sync_tile_mesh_quads.after(animate_tile_fades))
-            .add_systems(Update, sync_tile_mesh_alpha.after(sync_tile_mesh_quads))
-            .add_systems(
-                Update,
-                sync_tile_mesh_transforms.after(sync_tile_mesh_quads),
-            )
-            .add_systems(Update, hide_tile_sprites_in_3d.after(sync_tile_mesh_quads))
-            .add_systems(
-                Update,
-                cleanup_orphaned_tile_quads.after(sync_tile_mesh_quads),
-            );
-    }
+            .add_systems(Update, animate_tile_fades.after(load_visible_tiles))
+            .add_systems(Update, cull_offscreen_tiles.after(load_visible_tiles))
+            .add_systems(Update, orient_tiles_for_view_mode.after(load_visible_tiles));
 }
 
 // =============================================================================
@@ -222,45 +205,35 @@ fn setup_grid_overlay(mut commands: Commands, mut images: ResMut<Assets<Image>>)
     });
 }
 
-/// When `GridOverlay.enabled` changes, swap all tile sprite images between
-/// the grid texture and their original imagery. Also force 3D mesh quad
-/// recreation by stripping `TileMeshQuad` and despawning companions.
+/// When `GridOverlay.enabled` changes, update all tile materials to swap
+/// between the grid texture and their original imagery.
 fn toggle_grid_overlay(
-    mut commands: Commands,
     grid: Res<GridOverlay>,
-    mut tiles: Query<
-        (
-            Entity,
-            &mut Sprite,
-            &TileOriginalImage,
-            Option<&TileMeshQuad>,
-        ),
-        With<MapTile>,
-    >,
-    quad_entities: Query<Entity, With<TileQuad3d>>,
+    tiles: Query<(&TileOriginalImage, &MeshMaterial3d<StandardMaterial>), With<MapTile>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    view3d_state: Res<view3d::View3DState>,
 ) {
     if !grid.is_changed() {
         return;
     }
 
-    for (entity, mut sprite, original, mesh_quad) in tiles.iter_mut() {
-        if grid.enabled {
-            sprite.image = grid.texture.clone();
-        } else {
-            sprite.image = original.0.clone();
-        }
-        // Force mesh quad recreation so the 3D material picks up the new texture
-        if let Some(quad) = mesh_quad {
-            commands.entity(quad.0).despawn();
-            commands.entity(entity).remove::<TileMeshQuad>();
-        }
-    }
+    let boost = if view3d_state.is_3d_active() {
+        super::TILE_EMISSIVE_BOOST
+    } else {
+        1.0
+    };
 
-    if grid.enabled {
-        // Also despawn any orphaned quads
-        for quad_entity in quad_entities.iter() {
-            commands.entity(quad_entity).despawn();
-        }
+    for (original, mat_handle) in tiles.iter() {
+        let Some(mut mat) = materials.get_mut(mat_handle) else {
+            continue;
+        };
+        let texture = if grid.enabled {
+            grid.texture.clone()
+        } else {
+            original.0.clone()
+        };
+        mat.emissive_texture = Some(texture);
+        mat.emissive = bevy::color::LinearRgba::new(boost, boost, boost, 1.0);
     }
 }
 
@@ -285,7 +258,7 @@ fn raw_altitude_to_zoom(altitude_ft: f32) -> f32 {
 /// Uses asymmetric hysteresis: 0.7 to upgrade (biased toward staying at
 /// lower zoom), 0.6 to downgrade, preventing the rapid 14↔15 oscillation
 /// seen at altitude boundaries.
-pub(crate) fn altitude_to_zoom_level(altitude_ft: f32, current_zoom: u8) -> u8 {
+pub fn altitude_to_zoom_level(altitude_ft: f32, current_zoom: u8) -> u8 {
     let raw = raw_altitude_to_zoom(altitude_ft);
     let target = raw.round() as u8;
     let current = current_zoom as f32;
@@ -315,7 +288,7 @@ pub(crate) fn altitude_to_zoom_level(altitude_ft: f32, current_zoom: u8) -> u8 {
 /// In 2D (orthographic): each tile occupies `256 * camera_zoom` screen pixels.
 /// In 3D (perspective): the tilted camera sees a larger ground footprint, so we
 /// estimate the visible ground extent from the camera distance, pitch, and FOV.
-pub(crate) fn compute_tile_radius(
+pub fn compute_tile_radius(
     window_width: f32,
     window_height: f32,
     camera_zoom: f32,
@@ -362,7 +335,7 @@ pub(crate) fn compute_tile_radius(
 }
 
 /// Send a tile download request for the current map location.
-pub(crate) fn request_tiles_at_location(
+pub fn request_tiles_at_location(
     download_events: &mut MessageWriter<DownloadSlippyTilesMessage>,
     latitude: f64,
     longitude: f64,
@@ -388,10 +361,12 @@ pub(crate) fn request_tiles_at_location(
 fn handle_basemap_change(
     mut commands: Commands,
     basemap_state: Res<crate::config::CurrentBasemapState>,
-    tile_query: Query<(Entity, Option<&TileMeshQuad>), With<MapTile>>,
+    tile_query: Query<Entity, With<MapTile>>,
     mut spawned_tiles: ResMut<SpawnedTiles>,
     mut download_status: ResMut<SlippyTileDownloadStatus>,
     mut tile_asset_cache: ResMut<TileAssetCache>,
+    mut tile_grid: ResMut<super::pool::TileGrid>,
+    mut downloaded_tiles: ResMut<super::download::DownloadedTiles>,
     mut download_events: MessageWriter<DownloadSlippyTilesMessage>,
     map_state: Res<MapState>,
     zoom_state: Res<ZoomState>,
@@ -414,16 +389,15 @@ fn handle_basemap_change(
         current
     );
 
-    for (entity, mesh_quad) in tile_query.iter() {
-        if let Some(quad) = mesh_quad {
-            commands.entity(quad.0).despawn();
-        }
+    for entity in tile_query.iter() {
         commands.entity(entity).despawn();
     }
 
     spawned_tiles.positions.clear();
+    tile_grid.occupied.clear();
     download_status.0.clear();
     tile_asset_cache.entries.clear();
+    super::download::clear_download_tracking(&mut downloaded_tiles);
 
     let radius = if let Ok(window) = window_query.single() {
         compute_tile_radius(window.width(), window.height(), zoom_state.camera_zoom, Some(&view3d_state))
@@ -446,37 +420,24 @@ fn handle_tile_load_failures(
     mut commands: Commands,
     mut failed_events: MessageReader<AssetLoadFailedEvent<Image>>,
     tile_query: Query<
-        (
-            Entity,
-            &Sprite,
-            &Transform,
-            Option<&TileMeshQuad>,
-            &TileFadeState,
-        ),
+        (Entity, &TileOriginalImage, &Transform, &TileFadeState),
         With<MapTile>,
     >,
     mut spawned_tiles: ResMut<SpawnedTiles>,
 ) {
     for event in failed_events.read() {
         let asset_path = event.path.path();
-        // Only handle tile files
         let path_str = asset_path.to_string_lossy();
         if path_str.contains(".tile.") {
             warn!(
-                "Tile asset load failed: {:?} — checking for corrupt cache file",
+                "Tile asset load failed: {:?} - checking for corrupt cache file",
                 asset_path
             );
             tile_cache::remove_corrupt_cached_tile(asset_path);
 
-            // Despawn the tile entity (and its mesh quad) that references
-            // the failed texture so it doesn't render as a black rectangle.
-            // Clearing its spawned_tiles entry allows re-download.
             let failed_id = event.id;
-            for (entity, sprite, transform, mesh_quad, fade) in tile_query.iter() {
-                if sprite.image.id() == failed_id {
-                    if let Some(quad) = mesh_quad {
-                        commands.entity(quad.0).despawn();
-                    }
+            for (entity, original, transform, fade) in tile_query.iter() {
+                if original.0.id() == failed_id {
                     let key = (
                         transform.translation.x as i32,
                         transform.translation.y as i32,
@@ -593,7 +554,7 @@ fn request_3d_tiles_continuous(
     tile_settings: Res<SlippyTilesSettings>,
     mut download_events: MessageWriter<DownloadSlippyTilesMessage>,
     mut spawned_tiles: ResMut<SpawnedTiles>,
-    tile_query: Query<(Entity, &TileFadeState, Option<&TileMeshQuad>), With<MapTile>>,
+    tile_query: Query<(Entity, &TileFadeState), With<MapTile>>,
     mut alt_tracker: ResMut<AltitudeChangeTracker>,
 ) {
     if !view3d_state.is_3d_active() {
@@ -628,12 +589,8 @@ fn request_3d_tiles_continuous(
                 .positions
                 .retain(|&(_, _, z)| z >= min_band && z <= new_z);
             let mut despawned = 0u32;
-            for (entity, fade_state, mesh_quad) in tile_query.iter() {
+            for (entity, fade_state) in tile_query.iter() {
                 if fade_state.tile_zoom > new_z || fade_state.tile_zoom < min_band {
-                    // Despawn the mesh quad companion first to prevent orphans
-                    if let Some(quad) = mesh_quad {
-                        commands.entity(quad.0).despawn();
-                    }
                     commands.entity(entity).despawn();
                     despawned += 1;
                 }
@@ -786,7 +743,6 @@ fn rescale_tiles_on_zoom_change(
     for mut transform in tile_query.iter_mut() {
         transform.translation.x *= factor;
         transform.translation.y *= factor;
-        // Z is managed by update_tile_elevation, don't touch it
         transform.scale.x *= factor;
         transform.scale.y *= factor;
         count += 1;
@@ -809,152 +765,190 @@ fn rescale_tiles_on_zoom_change(
     prev_zoom.0 = current;
 }
 
-/// Custom tile display system that filters tiles by current zoom level.
-/// When new tiles arrive at the current zoom, old tiles from previous zoom levels
-/// are marked for delayed despawn so the screen is never blank.
-fn display_tiles_filtered(
+/// Primary tile loading system. Runs every frame after zoom changes.
+/// Computes which tiles the viewport needs, checks disk cache directly,
+/// spawns cached tiles immediately (zero latency), and requests network
+/// downloads for uncached tiles.
+fn load_visible_tiles(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
-    images: Res<Assets<Image>>,
     tile_settings: Res<SlippyTilesSettings>,
+    dl_settings: Res<super::download::TileDownloadSettings>,
     map_state: Res<MapState>,
-    mut tile_events: MessageReader<SlippyTileDownloadedMessage>,
-    mut _tile_query: Query<(Entity, &mut TileFadeState), With<MapTile>>,
-    mut spawned_tiles: ResMut<SpawnedTiles>,
     mut tile_asset_cache: ResMut<TileAssetCache>,
-    logger: Option<Res<ZoomDebugLogger>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    quad_mesh: Option<Res<TileQuadMesh>>,
+    mut tile_grid: ResMut<super::pool::TileGrid>,
+    mut download_events: MessageWriter<DownloadSlippyTilesMessage>,
     view3d_state: Res<view3d::View3DState>,
-    grid: Option<Res<GridOverlay>>,
     basemap_state: Res<crate::config::CurrentBasemapState>,
+    window_query: Query<&Window>,
+    zoom_state: Res<crate::map::ZoomState>,
     time: Res<Time<Real>>,
 ) {
+    let Some(ref quad_mesh) = quad_mesh else { return };
     let current_zoom = map_state.zoom_level.to_u8();
     let now = time.elapsed_secs_f64();
 
-    // Scale factor to compensate when the tile server returns smaller images
-    // than the requested tile size (e.g. ESRI returns 256px for @2x/512 requests).
-    let native_px = basemap_state.style.native_tile_pixels() as f32;
-    let requested_px = constants::DEFAULT_TILE_SIZE.to_pixels() as f32;
-    let tile_scale = requested_px / native_px;
+    let radius = if let Ok(window) = window_query.single() {
+        compute_tile_radius(
+            window.width(), window.height(),
+            zoom_state.camera_zoom, Some(&view3d_state),
+        )
+    } else {
+        constants::TILE_DOWNLOAD_RADIUS
+    };
 
-    for event in tile_events.read() {
-        // In 3D mode, accept tiles within 4 zoom levels below current (multi-resolution bands).
-        // In 2D mode, only accept tiles at the exact current zoom level.
-        let event_zoom = event.zoom_level.to_u8();
-        if view3d_state.is_3d_active() {
-            if event_zoom > current_zoom || current_zoom - event_zoom > 4 {
+    let center = super::coords::SlippyTileCoordinates::from_latitude_longitude(
+        map_state.latitude, map_state.longitude, map_state.zoom_level,
+    );
+
+    let reference_point = LatitudeLongitudeCoordinates {
+        latitude: tile_settings.reference_latitude,
+        longitude: tile_settings.reference_longitude,
+    };
+    let (ref_x, ref_y) = world_coords_to_world_pixel(
+        &reference_point, constants::DEFAULT_TILE_SIZE, map_state.zoom_level,
+    );
+
+    let cache_dir = crate::tile_cache::tile_cache_dir_for_style(&dl_settings.cache_key);
+    let flat_cache_dir = crate::tile_cache::tile_cache_dir();
+    let ext = dl_settings.tile_format.extension();
+    let tile_px = constants::DEFAULT_TILE_SIZE.to_pixels();
+
+    let boost = if view3d_state.is_3d_active() {
+        super::TILE_EMISSIVE_BOOST
+    } else {
+        1.0
+    };
+    let tile_z = if view3d_state.is_3d_active() {
+        view3d_state.altitude_to_z(view3d_state.ground_elevation_ft)
+    } else {
+        tile_settings.z_layer + 0.1
+    };
+
+    let r = radius as i64;
+    let max_tile = 1i64 << current_zoom;
+    let mut uncached_requested = false;
+
+    for dx in -r..=r {
+        for dy in -r..=r {
+            let raw_x = center.x as i64 + dx;
+            let y = center.y as i64 + dy;
+            if y < 0 || y >= max_tile { continue; }
+            let x = super::coords::wrap_tile_x(raw_x, current_zoom);
+
+            // Compute world pixel position for this tile
+            let tc = super::coords::SlippyTileCoordinates { x, y: y as u32 };
+            let ll = tc.to_latitude_longitude(map_state.zoom_level);
+            let (tile_x, tile_y) = world_coords_to_world_pixel(
+                &ll, constants::DEFAULT_TILE_SIZE, map_state.zoom_level,
+            );
+            let half = tile_px as f64 / 2.0;
+            let tx = ((tile_x + half) - ref_x) as f32;
+            let ty = ((tile_y - half) - ref_y) as f32;
+
+            let tile_key = (tx as i32, ty as i32, current_zoom);
+            if tile_grid.occupied.contains_key(&tile_key) {
                 continue;
             }
-        } else if event.zoom_level != map_state.zoom_level {
-            continue;
-        }
 
-        // Calculate tile position (same logic as bevy_slippy_tiles display_tiles)
-        let reference_point = LatitudeLongitudeCoordinates {
-            latitude: tile_settings.reference_latitude,
-            longitude: tile_settings.reference_longitude,
-        };
-        let (ref_x, ref_y) =
-            world_coords_to_world_pixel(&reference_point, event.tile_size, event.zoom_level);
+            // Check disk cache (per-style first, then flat fallback)
+            let filename = format!(
+                "{}.{}.{}.{}.tile.{}", current_zoom, x, y as u32, tile_px, ext
+            );
+            let style_path = cache_dir.join(&filename);
+            let flat_path = flat_cache_dir.join(&filename);
 
-        let current_coords = match &event.coordinates {
-            Coordinates::LatitudeLongitude(coords) => *coords,
-            Coordinates::SlippyTile(coords) => coords.to_latitude_longitude(event.zoom_level),
-        };
-        let (tile_x, tile_y) =
-            world_coords_to_world_pixel(&current_coords, event.tile_size, event.zoom_level);
-
-        let half_tile = event.tile_size.to_pixels() as f64 / 2.0;
-        let tile_center_x = tile_x + half_tile;
-        let tile_center_y = tile_y - half_tile;
-
-        let mut transform_x = (tile_center_x - ref_x) as f32;
-        let mut transform_y = (tile_center_y - ref_y) as f32;
-
-        // In 3D mode, tiles must be positioned in rendering_zoom space
-        // (not LOD zoom space) so they align with entities. Rescale from
-        // the tile's native zoom to rendering_zoom.
-        let render_zoom = view3d_state.effective_zoom(map_state.zoom_level).to_u8();
-        let target_zoom = if view3d_state.is_3d_active() {
-            render_zoom
-        } else {
-            current_zoom
-        };
-        let zoom_diff = target_zoom.saturating_sub(event_zoom) as u32;
-        let rescale = if view3d_state.is_3d_active() && zoom_diff > 0 {
-            let s = (1u32 << zoom_diff) as f32; // 2, 4, 8, 16
-            transform_x *= s;
-            transform_y *= s;
-            s
-        } else {
-            1.0
-        };
-
-        // Skip if a tile entity already exists at this position and zoom level
-        let tile_key = (transform_x as i32, transform_y as i32, event_zoom);
-        if !spawned_tiles.positions.insert(tile_key) {
-            continue; // Already spawned
-        }
-
-        let tile_path = event.path.clone();
-        let path_key = tile_path.to_string_lossy().to_string();
-
-        let tile_handle: Handle<Image> =
-            if let Some(cached) = tile_asset_cache.entries.get(&path_key) {
-                cached.clone()
+            let cached = if style_path.exists() {
+                true
+            } else if flat_path.exists() {
+                if let Some(p) = style_path.parent() {
+                    let _ = std::fs::create_dir_all(p);
+                }
+                let _ = std::fs::copy(&flat_path, &style_path);
+                true
             } else {
-                let h: Handle<Image> = asset_server.load(tile_path);
-                tile_asset_cache.entries.insert(path_key, h.clone());
-                h
+                false
             };
 
-        let already_loaded = images.contains(&tile_handle);
-        let initial_alpha = if already_loaded { 1.0 } else { 0.0 };
+            if !cached {
+                // Request download for uncached tiles (once per frame, batch)
+                if !uncached_requested {
+                    uncached_requested = true;
+                    download_events.write(DownloadSlippyTilesMessage {
+                        tile_size: constants::DEFAULT_TILE_SIZE,
+                        zoom_level: map_state.zoom_level,
+                        coordinates: Coordinates::from_lat_lon(
+                            map_state.latitude, map_state.longitude,
+                        ),
+                        radius: Radius(radius),
+                        use_cache: true,
+                    });
+                }
+                continue;
+            }
 
-        // Use grid texture if the overlay is enabled, otherwise use the tile image
-        let display_handle = match &grid {
-            Some(g) if g.enabled => g.texture.clone(),
-            _ => tile_handle.clone(),
-        };
-
-        // Spawn new tiles translucent and slightly above old tiles so they
-        // fade in on top, hiding the old zoom level progressively.
-        // In 3D mode, spawn at ground elevation so tiles are coplanar with
-        // airports, runways, and other ground-level features.
-        // Lower-zoom tiles sit slightly below so higher-zoom tiles win depth.
-        let tile_z = if view3d_state.is_3d_active() {
-            view3d_state.altitude_to_z(view3d_state.ground_elevation_ft) - zoom_diff as f32 * 0.05
-        } else {
-            tile_settings.z_layer + 0.1
-        };
-        commands.spawn((
-            Name::new(format!("Map Tile z{}", event_zoom)),
-            Sprite {
-                image: display_handle,
-                color: Color::srgba(1.0, 1.0, 1.0, initial_alpha),
-                custom_size: if tile_scale != 1.0 {
-                    Some(Vec2::splat(requested_px))
+            // Cached tile - load and spawn immediately
+            let asset_path = format!("tiles/{}/{}", dl_settings.cache_key, filename);
+            let tile_handle: Handle<Image> =
+                if let Some(h) = tile_asset_cache.entries.get(&asset_path) {
+                    h.clone()
                 } else {
-                    None
-                },
-                ..default()
-            },
-            TileOriginalImage(tile_handle),
-            Transform::from_xyz(transform_x, transform_y, tile_z).with_scale(Vec3::splat(rescale)),
-            MapTile,
-            TileFadeState {
-                alpha: initial_alpha,
-                tile_zoom: event_zoom,
-                spawn_time: now,
-            },
-            RenderLayers::layer(RenderCategory::TILES_2D),
-        ));
+                    let h: Handle<Image> = asset_server.load(&asset_path);
+                    tile_asset_cache.entries.insert(asset_path, h.clone());
+                    h
+                };
 
-        if let Some(ref log) = logger {
-            log.log(&format!(
-                "TILE DISPLAYED: zoom={} pos=({:.0}, {:.0})",
-                current_zoom, transform_x, transform_y
-            ));
+            let [pr, pg, pb] = basemap_state.style.placeholder_color();
+            let material = materials.add(StandardMaterial {
+                base_color: Color::srgb(pr, pg, pb),
+                emissive: bevy::color::LinearRgba::new(boost, boost, boost, 1.0),
+                emissive_texture: Some(tile_handle.clone()),
+                emissive_exposure_weight: 0.0,
+                perceptual_roughness: 1.0,
+                metallic: 0.0,
+                alpha_mode: AlphaMode::Opaque,
+                ..default()
+            });
+
+            // Position and orient based on view mode:
+            // 2D: Z-up (x, y, z_layer), no rotation
+            // 3D: Y-up (x, z_layer, -y), rotated flat on XZ plane
+            let (tile_pos, tile_rot, tile_scale) = if view3d_state.is_3d_active() {
+                (
+                    Vec3::new(tx, tile_z, -ty),
+                    Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2),
+                    Vec3::new(1.0, 1.0, 1.0),
+                )
+            } else {
+                (
+                    Vec3::new(tx, ty, tile_z),
+                    Quat::IDENTITY,
+                    Vec3::ONE,
+                )
+            };
+
+            let entity = commands.spawn((
+                Name::new(format!("Map Tile z{}", current_zoom)),
+                Mesh3d(quad_mesh.0.clone()),
+                MeshMaterial3d(material),
+                Transform::from_translation(tile_pos)
+                    .with_rotation(tile_rot)
+                    .with_scale(tile_scale),
+                Visibility::Inherited,
+                TileOriginalImage(tile_handle),
+                MapTile,
+                TileFadeState {
+                    alpha: 1.0,
+                    tile_zoom: current_zoom,
+                    spawn_time: now,
+                },
+                Pickable::IGNORE,
+                RenderLayers::layer(crate::RenderCategory::TILES),
+            )).id();
+
+            tile_grid.occupied.insert(tile_key, entity);
         }
     }
 }
@@ -984,9 +978,17 @@ fn cull_offscreen_tiles(
     window_query: Query<&Window>,
     mut spawned_tiles: ResMut<SpawnedTiles>,
     mut download_status: ResMut<SlippyTileDownloadStatus>,
+    mut tile_grid: ResMut<super::pool::TileGrid>,
     view3d_state: Res<view3d::View3DState>,
     alt_tracker: Res<AltitudeChangeTracker>,
 ) {
+    // In 3D mode, tiles use Y-up coordinates but MapCamera uses Z-up.
+    // Skip viewport culling in 3D - tile count is managed by the entity
+    // budget and animate_tile_fades handles zoom-level cleanup.
+    if view3d_state.is_3d_active() {
+        return;
+    }
+
     let Ok((camera_tf, projection)) = camera_query.single() else {
         return;
     };
@@ -994,6 +996,9 @@ fn cull_offscreen_tiles(
         return;
     };
 
+    // MapCamera (Camera2d) position is in Z-up map space (x, y, z).
+    // Tile meshes are in Y-up space (x, height, -z_map). Convert camera
+    // position to tile coordinate space for distance comparison.
     let cam_x = camera_tf.translation.x;
     let cam_y = camera_tf.translation.y;
 
@@ -1048,13 +1053,12 @@ fn cull_offscreen_tiles(
     let center_x = cam_x + forward_bias_x;
     let center_y = cam_y + forward_bias_y;
 
-    // Collect all tiles with their distance from camera for sorting
     let mut tiles: Vec<(Entity, f32, i32, i32, u8)> = tile_query
         .iter()
         .map(|(entity, tile_tf, fade_state)| {
             let dx = (tile_tf.translation.x - cam_x).abs();
             let dy = (tile_tf.translation.y - cam_y).abs();
-            let dist = dx.max(dy); // Chebyshev distance
+            let dist = dx.max(dy);
             (
                 entity,
                 dist,
@@ -1073,6 +1077,7 @@ fn cull_offscreen_tiles(
         let dy = (ty as f32 - center_y).abs();
         if dx > half_w || dy > half_h {
             spawned_tiles.positions.remove(&(tx, ty, zoom));
+            tile_grid.occupied.remove(&(tx, ty, zoom));
             commands.entity(entity).despawn();
             culled += 1;
             false
@@ -1082,7 +1087,6 @@ fn cull_offscreen_tiles(
     });
 
     // Second pass: if still over budget, cull farthest tiles.
-    // Raise the limit during active altitude changes to avoid thrashing.
     let base_limit = max_tile_entities(Some(&view3d_state));
     let tile_limit = if view3d_state.is_3d_active() && alt_tracker.idle_secs < 0.5 {
         base_limit + 200
@@ -1093,6 +1097,7 @@ fn cull_offscreen_tiles(
         tiles.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         for &(entity, _, tx, ty, zoom) in &tiles[..tiles.len() - tile_limit] {
             spawned_tiles.positions.remove(&(tx, ty, zoom));
+            tile_grid.occupied.remove(&(tx, ty, zoom));
             commands.entity(entity).despawn();
             culled += 1;
         }
@@ -1107,35 +1112,30 @@ fn cull_offscreen_tiles(
     }
 }
 
-/// Animate tile fade-in and despawn old tiles only when covered by fully-loaded new tiles.
+/// Show tiles once their texture is loaded. Despawn old-zoom tiles only
+/// when their grid cell is fully covered by a loaded new-zoom tile.
+/// No timeout-based removal - old tiles stay visible until replaced.
 fn animate_tile_fades(
     mut commands: Commands,
-    time: Res<Time>,
-    real_time: Res<Time<Real>>,
     map_state: Res<MapState>,
-    mut tile_query: Query<(Entity, &mut TileFadeState, &mut Sprite, &Transform), With<MapTile>>,
+    images: Res<Assets<Image>>,
+    mut tile_query: Query<
+        (Entity, &mut TileFadeState, &Transform, &TileOriginalImage),
+        With<MapTile>,
+    >,
     mut spawned_tiles: ResMut<SpawnedTiles>,
-    mut download_status: ResMut<SlippyTileDownloadStatus>,
+    mut tile_grid: ResMut<super::pool::TileGrid>,
     view3d_state: Res<view3d::View3DState>,
 ) {
-    let delta = time.delta_secs();
-    let now = real_time.elapsed_secs_f64();
     let current_zoom = map_state.zoom_level.to_u8();
-
-    // In 3D mode, tiles within the multi-resolution band (current_zoom to
-    // current_zoom - 4) are intentional and should NOT be treated as "old."
     let is_3d = view3d_state.is_3d_active();
 
-    // Collect grid cells covered by fully-opaque new tiles.
-    // Quantize positions to 256px cells so old (rescaled) tiles can be matched.
+    // Track grid cells that have a fully-loaded tile at the current zoom.
     let mut loaded_cells: std::collections::HashSet<(i32, i32)> = std::collections::HashSet::new();
-    let mut old_tiles: Vec<(Entity, i32, i32, u8, f64)> = Vec::new();
+    let mut old_tiles: Vec<(Entity, i32, i32, u8)> = Vec::new();
 
-    for (entity, mut fade_state, mut sprite, transform) in tile_query.iter_mut() {
+    for (entity, mut fade_state, transform, original) in tile_query.iter_mut() {
         let dominated = if is_3d {
-            // In 3D mode, tiles within the multi-resolution band
-            // (current_zoom to current_zoom - 4) are intentional. Tiles
-            // outside this band are stale from a previous zoom level.
             fade_state.tile_zoom > current_zoom
                 || current_zoom.saturating_sub(fade_state.tile_zoom) > 4
         } else {
@@ -1143,55 +1143,33 @@ fn animate_tile_fades(
         };
 
         if !dominated {
-            // Current / active tile: fade in.
-            // In 3D mode, use fast fade (appear in ~2 frames) to minimize
-            // gaps during zoom transitions while still giving textures a
-            // frame to load (prevents Bevy's default magenta showing).
-            if fade_state.alpha < 1.0 {
-                let speed = if is_3d {
-                    30.0
-                } else {
-                    constants::TILE_FADE_SPEED
-                };
-                fade_state.alpha += speed * delta;
-                fade_state.alpha = fade_state.alpha.min(1.0);
-                sprite.color = Color::srgba(1.0, 1.0, 1.0, fade_state.alpha);
-            }
-            // Track fully-opaque tiles by grid cell
-            if fade_state.alpha >= 1.0 {
+            if images.contains(&original.0) {
+                fade_state.alpha = 1.0;
+                // In 3D, map-Y is stored in -translation.z; in 2D it's translation.y
+                let map_y = if is_3d { -transform.translation.z } else { transform.translation.y };
                 let cell = (
-                    (transform.translation.x / constants::DEFAULT_TILE_PIXELS).round() as i32,
-                    (transform.translation.y / constants::DEFAULT_TILE_PIXELS).round() as i32,
+                    (transform.translation.x / super::DEFAULT_TILE_PIXELS).round() as i32,
+                    (map_y / super::DEFAULT_TILE_PIXELS).round() as i32,
                 );
                 loaded_cells.insert(cell);
             }
         } else {
-            // Old-zoom tile: record for coverage check
+            let map_y = if is_3d { -transform.translation.z } else { transform.translation.y };
             let cell = (
-                (transform.translation.x / constants::DEFAULT_TILE_PIXELS).round() as i32,
-                (transform.translation.y / constants::DEFAULT_TILE_PIXELS).round() as i32,
+                (transform.translation.x / super::DEFAULT_TILE_PIXELS).round() as i32,
+                (map_y / super::DEFAULT_TILE_PIXELS).round() as i32,
             );
-            old_tiles.push((
-                entity,
-                cell.0,
-                cell.1,
-                fade_state.tile_zoom,
-                fade_state.spawn_time,
-            ));
+            old_tiles.push((entity, cell.0, cell.1, fade_state.tile_zoom));
         }
     }
 
-    // Despawn old-zoom tiles when their grid cell is covered by a fully-loaded
-    // new tile. In 2D mode, also expire after 3 seconds as a fallback to prevent
-    // accumulation from grid cell misalignment. In 3D mode, skip time-based expiry
-    // since lower-zoom tiles provide intentional fallback coverage at distance.
-    for (entity, cx, cy, zoom, spawn_time) in old_tiles {
-        let covered = loaded_cells.contains(&(cx, cy));
-        let expired = !is_3d && (now - spawn_time) > 3.0;
-        if covered || expired {
-            let tx = (cx as f32 * constants::DEFAULT_TILE_PIXELS) as i32;
-            let ty = (cy as f32 * constants::DEFAULT_TILE_PIXELS) as i32;
+    // Only despawn old-zoom tiles when their cell is covered by a loaded new tile.
+    for (entity, cx, cy, zoom) in old_tiles {
+        if loaded_cells.contains(&(cx, cy)) {
+            let tx = (cx as f32 * super::DEFAULT_TILE_PIXELS) as i32;
+            let ty = (cy as f32 * super::DEFAULT_TILE_PIXELS) as i32;
             spawned_tiles.positions.remove(&(tx, ty, zoom));
+            tile_grid.occupied.remove(&(tx, ty, zoom));
             commands.entity(entity).despawn();
         }
     }
@@ -1203,191 +1181,56 @@ fn animate_tile_fades(
 
 /// Create the shared mesh used by all tile 3D quads.
 fn setup_tile_quad_mesh(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
-    let mesh = meshes.add(Plane3d::new(
-        Vec3::Y,
-        Vec2::splat(constants::DEFAULT_TILE_PIXELS / 2.0),
+    let mesh = meshes.add(Rectangle::new(
+        constants::DEFAULT_TILE_PIXELS,
+        constants::DEFAULT_TILE_PIXELS,
     ));
     commands.insert_resource(TileQuadMesh(mesh));
 }
 
-/// Spawn or despawn 3D mesh quad companions for tile entities based on view mode.
-///
-/// In 3D mode: for each tile lacking a `TileMeshQuad`, spawn a `StandardMaterial`
-/// mesh entity using the sprite's texture. In 2D mode: despawn all companions.
-fn sync_tile_mesh_quads(
-    mut commands: Commands,
+/// Orient tile meshes for the current view mode.
+/// - 2D: Rectangle faces -Z (orthographic camera looks down -Z). No rotation.
+/// - 3D: Rectangle rotated -90deg around X to lie flat on the XZ ground plane.
+/// Also converts tile positions between Z-up (2D) and Y-up (3D) coordinate systems.
+fn orient_tiles_for_view_mode(
     view3d_state: Res<view3d::View3DState>,
-    map_state: Res<MapState>,
-    quad_mesh: Option<Res<TileQuadMesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    tiles_without_quad: Query<
-        (Entity, &Sprite, &Transform, &TileFadeState),
-        (With<MapTile>, Without<TileMeshQuad>),
-    >,
-    tiles_with_quad: Query<(Entity, &TileMeshQuad, &TileFadeState), With<MapTile>>,
-    all_quad_entities: Query<Entity, With<TileQuad3d>>,
+    mut tile_query: Query<&mut Transform, With<MapTile>>,
+    mut last_3d: Local<Option<bool>>,
 ) {
-    let Some(quad_mesh) = quad_mesh else { return };
-
-    if view3d_state.is_3d_active() {
-        let lod_zoom = map_state.zoom_level.to_u8();
-
-        // Create mesh quads for tiles at LOD zoom AND one zoom level
-        // below (fallback). When zoom changes, the previous zoom's mesh
-        // quads persist as visual fallback until new tiles arrive and their
-        // mesh quads replace them. This prevents the ground from going
-        // blank during zoom transitions. Minor Z-fighting between adjacent
-        // zoom levels at grazing angles near the horizon is acceptable
-        // since those tiles are already faded by distance fog.
-        let min_quad_zoom = lod_zoom.saturating_sub(1);
-        for (tile_entity, sprite, transform, fade_state) in tiles_without_quad.iter() {
-            if fade_state.tile_zoom < min_quad_zoom || fade_state.tile_zoom > lod_zoom {
-                continue;
-            }
-
-            // Emissive material with exposure_weight=0.0 bypasses all
-            // camera exposure so tiles render at consistent brightness.
-            let m = TILE_EMISSIVE_BOOST;
-            let material = materials.add(StandardMaterial {
-                base_color: Color::BLACK,
-                emissive: bevy::color::LinearRgba::new(m, m, m, 1.0),
-                emissive_texture: Some(sprite.image.clone()),
-                emissive_exposure_weight: 0.0,
-                perceptual_roughness: 1.0,
-                metallic: 0.0,
-                alpha_mode: AlphaMode::Opaque,
-                ..default()
-            });
-
-            let pos_yup = view3d::zup_to_yup(transform.translation);
-            let mesh_entity = commands
-                .spawn((
-                    TileQuad3d,
-                    Mesh3d(quad_mesh.0.clone()),
-                    MeshMaterial3d(material),
-                    Transform::from_translation(pos_yup).with_scale(Vec3::new(
-                        transform.scale.x,
-                        1.0,
-                        transform.scale.x,
-                    )),
-                    Pickable::IGNORE,
-                    RenderLayers::layer(RenderCategory::TILES_3D),
-                ))
-                .id();
-
-            commands
-                .entity(tile_entity)
-                .queue_silenced(move |mut entity: EntityWorldMut| {
-                    entity.insert(TileMeshQuad(mesh_entity));
-                });
-        }
-
-        // Despawn mesh quads for tiles more than 1 zoom level away from
-        // current LOD. Adjacent-zoom quads are kept as fallback.
-        for (tile_entity, quad, fade_state) in tiles_with_quad.iter() {
-            if fade_state.tile_zoom < min_quad_zoom || fade_state.tile_zoom > lod_zoom {
-                commands.entity(quad.0).despawn();
-                commands.entity(tile_entity).remove::<TileMeshQuad>();
-            }
-        }
-    } else {
-        // 2D mode: remove TileMeshQuad component from tiles
-        for (tile_entity, _, _) in tiles_with_quad.iter() {
-            commands.entity(tile_entity).remove::<TileMeshQuad>();
-        }
-        // Despawn all companion mesh entities (referenced + orphans)
-        for quad_entity in all_quad_entities.iter() {
-            commands.entity(quad_entity).despawn();
-        }
-    }
-}
-
-/// Sync mesh companion visibility with the tile's fade state.
-/// Mesh quads are always AlphaMode::Opaque (required for depth writes so the
-/// atmosphere post-process doesn't overwrite them). Tiles that haven't finished
-/// loading (alpha near 0) are hidden entirely to avoid showing placeholder white.
-fn sync_tile_mesh_alpha(
-    view3d_state: Res<view3d::View3DState>,
-    tile_query: Query<(&TileFadeState, &TileMeshQuad), With<MapTile>>,
-    mut vis_query: Query<&mut Visibility>,
-) {
-    if !view3d_state.is_3d_active() {
+    let is_3d = view3d_state.is_3d_active();
+    if *last_3d == Some(is_3d) {
         return;
     }
+    let was_3d = *last_3d;
+    *last_3d = Some(is_3d);
 
-    for (fade_state, quad) in tile_query.iter() {
-        let Ok(mut vis) = vis_query.get_mut(quad.0) else {
-            continue;
-        };
-        // Show the mesh quad once the tile texture has started loading.
-        // A very low threshold (0.01) makes tiles appear within 1 frame of
-        // spawning, reducing the dark-flash gap during rapid zoom.  The mesh
-        // uses AlphaMode::Opaque so any non-zero alpha is fully visible.
-        *vis = if fade_state.alpha > 0.01 {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        };
-    }
-}
+    let flat_rotation = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
 
-/// Sync mesh companion transforms with tile sprite transforms.
-pub(crate) fn sync_tile_mesh_transforms(
-    view3d_state: Res<view3d::View3DState>,
-    tile_query: Query<(&Transform, &TileMeshQuad), With<MapTile>>,
-    mut mesh_transforms: Query<&mut Transform, Without<MapTile>>,
-) {
-    if !view3d_state.is_3d_active() {
-        return;
-    }
-
-    for (tile_tf, quad) in tile_query.iter() {
-        let Ok(mut mesh_tf) = mesh_transforms.get_mut(quad.0) else {
-            continue;
-        };
-        let pos_yup = view3d::zup_to_yup(tile_tf.translation);
-        mesh_tf.translation = pos_yup;
-        mesh_tf.scale = Vec3::new(tile_tf.scale.x, 1.0, tile_tf.scale.x);
-    }
-}
-
-/// Hide ALL tile sprites in 3D mode so Camera2d shows nothing for tiles.
-/// Camera2d subscribes to TILES_2D at startup (can't change at runtime
-/// without deferred commands that break Metal). Any visible tile sprite
-/// would render on Camera2d (order 1) and paint over Camera3d's aircraft.
-/// Sets sprite alpha to 0 for ALL tiles, not just those with mesh quads.
-/// In 2D mode this is a no-op since sprites already have correct alpha.
-fn hide_tile_sprites_in_3d(
-    view3d_state: Res<view3d::View3DState>,
-    mut tile_query: Query<&mut Sprite, With<MapTile>>,
-) {
-    if !view3d_state.is_3d_active() {
-        return;
-    }
-
-    for mut sprite in tile_query.iter_mut() {
-        sprite.color = Color::srgba(1.0, 1.0, 1.0, 0.0);
-    }
-}
-
-/// Despawn companion mesh entities that are no longer referenced by any tile.
-/// This catches orphans created when tiles are culled in the same frame as
-/// companion spawning (deferred commands mean the tile despawn and companion
-/// spawn can race).
-fn cleanup_orphaned_tile_quads(
-    mut commands: Commands,
-    view3d_state: Res<view3d::View3DState>,
-    quad_entities: Query<Entity, With<TileQuad3d>>,
-    tile_quads: Query<&TileMeshQuad, With<MapTile>>,
-) {
-    // In 2D mode, sync_tile_mesh_quads already despawns all companions
-    if !view3d_state.is_3d_active() {
-        return;
-    }
-    let referenced: std::collections::HashSet<Entity> = tile_quads.iter().map(|q| q.0).collect();
-    for entity in quad_entities.iter() {
-        if !referenced.contains(&entity) {
-            commands.entity(entity).despawn();
+    for mut transform in tile_query.iter_mut() {
+        if is_3d {
+            // 2D -> 3D: rotate flat, convert position from Z-up to Y-up
+            // Z-up (x, y, z) -> Y-up (x, z, -y) then tile lies on XZ plane
+            let pos = transform.translation;
+            transform.translation = Vec3::new(pos.x, pos.z, -pos.y);
+            transform.rotation = flat_rotation;
+            // Scale: (sx, sy, 1) -> (sx, 1, sy) for XZ plane
+            let s = transform.scale;
+            transform.scale = Vec3::new(s.x, 1.0, s.y);
+        } else if was_3d.is_some() {
+            // 3D -> 2D: undo rotation, convert Y-up back to Z-up
+            let pos = transform.translation;
+            transform.translation = Vec3::new(pos.x, -pos.z, pos.y);
+            transform.rotation = Quat::IDENTITY;
+            let s = transform.scale;
+            transform.scale = Vec3::new(s.x, s.z, 1.0);
         }
     }
 }
+
+// The following 5 systems were removed in the unified mesh redesign:
+// - sync_tile_mesh_quads (was: spawn companion Mesh3d entities for Sprites)
+// - sync_tile_mesh_alpha (was: sync companion visibility with sprite fade)
+// - sync_tile_mesh_transforms (was: copy sprite position to companion mesh)
+// - hide_tile_sprites_in_3d (was: zero sprite alpha so Camera2d doesn't show tiles)
+// - cleanup_orphaned_tile_quads (was: despawn orphaned companions from deferred command races)
+// Tiles are now unified Mesh3d entities rendered by Camera3d in both modes.

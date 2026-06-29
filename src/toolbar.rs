@@ -4,7 +4,7 @@
 /// with a narrow egui side panel containing icon toggle buttons for all features.
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
-use bevy_slippy_tiles::{DownloadSlippyTilesMessage, MapTile, SlippyTileDownloadStatus};
+use crate::tiles::{DownloadSlippyTilesMessage, MapTile, SlippyTileDownloadStatus};
 
 use egui_phosphor::regular;
 

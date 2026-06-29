@@ -3,7 +3,7 @@ use std::collections::{HashMap, VecDeque};
 use airjedi_fusion::nalgebra::DMatrix;
 use airjedi_fusion::{TrackQuality, TrackerState};
 use bevy::prelude::*;
-use bevy_slippy_tiles::SlippyTilesSettings;
+use crate::tiles::SlippyTilesSettings;
 
 use crate::aircraft::components::FusionTrackLink;
 use crate::aircraft::{Aircraft, AircraftListState, CameraFollowState};

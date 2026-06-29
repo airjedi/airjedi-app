@@ -1,7 +1,7 @@
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::PrimitiveTopology;
 use bevy::prelude::*;
-use bevy_slippy_tiles::SlippyTilesSettings;
+use crate::tiles::SlippyTilesSettings;
 
 use super::components::Aircraft;
 use super::staleness::{aircraft_age_secs, staleness_opacity};

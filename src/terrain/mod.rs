@@ -12,7 +12,7 @@ pub(crate) mod provider;
 use std::collections::HashMap;
 
 use bevy::prelude::*;
-use bevy_slippy_tiles::MapTile;
+use crate::tiles::MapTile;
 
 use crate::constants;
 use crate::map::MapState;
@@ -141,14 +141,14 @@ const MAX_MESH_ENTRIES: usize = 400;
 pub(crate) fn tile_key_from_transform(
     transform: &Transform,
     fade_state: &TileFadeState,
-    tile_settings: &bevy_slippy_tiles::SlippyTilesSettings,
-    zoom_level: bevy_slippy_tiles::ZoomLevel,
+    tile_settings: &crate::tiles::SlippyTilesSettings,
+    zoom_level: crate::tiles::ZoomLevel,
 ) -> TileKey {
-    let reference_ll = bevy_slippy_tiles::LatitudeLongitudeCoordinates {
+    let reference_ll = crate::tiles::LatitudeLongitudeCoordinates {
         latitude: tile_settings.reference_latitude,
         longitude: tile_settings.reference_longitude,
     };
-    let reference_pixel = bevy_slippy_tiles::world_coords_to_world_pixel(
+    let reference_pixel = crate::tiles::world_coords_to_world_pixel(
         &reference_ll,
         constants::DEFAULT_TILE_SIZE,
         zoom_level,
@@ -157,13 +157,13 @@ pub(crate) fn tile_key_from_transform(
     let world_px_x = transform.translation.x as f64 + reference_pixel.0;
     let world_px_y = transform.translation.y as f64 + reference_pixel.1;
 
-    let ll = bevy_slippy_tiles::world_pixel_to_world_coords(
+    let ll = crate::tiles::world_pixel_to_world_coords(
         world_px_x,
         world_px_y,
         constants::DEFAULT_TILE_SIZE,
         zoom_level,
     );
-    let tile_coords = bevy_slippy_tiles::SlippyTileCoordinates::from_latitude_longitude(
+    let tile_coords = crate::tiles::SlippyTileCoordinates::from_latitude_longitude(
         ll.latitude,
         ll.longitude,
         zoom_level,
@@ -257,7 +257,7 @@ fn create_terrain_meshes(
     terrain_state: Res<TerrainState>,
     view3d_state: Res<View3DState>,
     map_state: Res<MapState>,
-    tile_settings: Res<bevy_slippy_tiles::SlippyTilesSettings>,
+    tile_settings: Res<crate::tiles::SlippyTilesSettings>,
     heightmap_cache: Res<HeightmapCache>,
     mut terrain_mesh_cache: ResMut<TerrainMeshCache>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -415,7 +415,7 @@ fn update_ground_elevation(
     let zoom_level = map_state.zoom_level;
 
     // Ensure the heightmap for the camera center tile is requested
-    let tile_coords = bevy_slippy_tiles::SlippyTileCoordinates::from_latitude_longitude(
+    let tile_coords = crate::tiles::SlippyTileCoordinates::from_latitude_longitude(
         map_state.latitude,
         map_state.longitude,
         zoom_level,
@@ -513,7 +513,7 @@ fn create_gpu_terrain_tiles(
     terrain_state: Res<TerrainState>,
     view3d_state: Res<View3DState>,
     map_state: Res<MapState>,
-    tile_settings: Res<bevy_slippy_tiles::SlippyTilesSettings>,
+    tile_settings: Res<crate::tiles::SlippyTilesSettings>,
     heightmap_cache: Res<HeightmapCache>,
     grid_mesh: Option<Res<TerrainGridMesh>>,
     mut heightmap_textures: ResMut<HeightmapTextureCache>,

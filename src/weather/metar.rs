@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use crate::aviation::{AirportRenderState, AviationData};
 use crate::geo::CoordinateConverter;
 use crate::{MapState, ZoomState};
-use bevy_slippy_tiles::*;
+use crate::tiles::*;
 
 /// Flight category based on visibility and ceiling
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

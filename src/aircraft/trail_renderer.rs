@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use bevy_slippy_tiles::*;
+use crate::tiles::*;
 
 use super::staleness::{aircraft_age_secs, staleness_opacity};
 use super::trails::{age_opacity, altitude_color, TrailRenderer};

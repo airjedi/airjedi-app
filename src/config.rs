@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiPlugin};
-use bevy_slippy_tiles::{SlippyTilesSettings, TileFormat};
+use crate::tiles::{SlippyTilesSettings, TileFormat};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -67,6 +67,39 @@ impl BasemapStyle {
         match self {
             BasemapStyle::CartoDark | BasemapStyle::CartoLight => 512,
             BasemapStyle::OpenStreetMap | BasemapStyle::EsriSatellite => 256,
+        }
+    }
+
+    /// Whether this provider supports the @2x size postfix in URLs.
+    pub fn supports_retina(&self) -> bool {
+        matches!(self, BasemapStyle::CartoDark | BasemapStyle::CartoLight)
+    }
+
+    /// Whether this provider uses file extensions in tile URLs.
+    /// ESRI MapServer tiles have no extension.
+    pub fn uses_extension_in_url(&self) -> bool {
+        !matches!(self, BasemapStyle::EsriSatellite)
+    }
+
+    /// Placeholder color shown for 1-2 frames while a tile texture loads
+    /// from disk to GPU. Matches the basemap's average background color
+    /// so the loading flash is invisible.
+    pub fn placeholder_color(&self) -> [f32; 3] {
+        match self {
+            BasemapStyle::CartoDark => [0.08, 0.08, 0.10],
+            BasemapStyle::CartoLight => [0.88, 0.87, 0.84],
+            BasemapStyle::OpenStreetMap => [0.91, 0.90, 0.87],
+            BasemapStyle::EsriSatellite => [0.12, 0.15, 0.10],
+        }
+    }
+
+    /// Short identifier for cache directory naming.
+    pub fn cache_key(&self) -> &'static str {
+        match self {
+            BasemapStyle::CartoDark => "carto-dark",
+            BasemapStyle::CartoLight => "carto-light",
+            BasemapStyle::OpenStreetMap => "osm",
+            BasemapStyle::EsriSatellite => "esri-satellite",
         }
     }
 

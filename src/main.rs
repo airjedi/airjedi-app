@@ -4,7 +4,7 @@ use bevy::{
     light::SunDisk,
     prelude::*,
 };
-use bevy_slippy_tiles::*;
+use tiles::*;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 
@@ -94,7 +94,7 @@ pub(crate) mod constants {
     pub const MAX_CAMERA_ZOOM: f32 = 10.0;
 
     // Tile size: Large = 512px (@2x) for sharper map tiles
-    pub const DEFAULT_TILE_SIZE: bevy_slippy_tiles::TileSize = bevy_slippy_tiles::TileSize::Large;
+    pub const DEFAULT_TILE_SIZE: crate::tiles::TileSize = crate::tiles::TileSize::Large;
     pub const DEFAULT_TILE_PIXELS: f32 = 512.0;
 
     // Tile download settings
@@ -201,7 +201,6 @@ fn main() {
                 filter: "info,wgpu=warn,naga=warn,bevy_render=info".to_string(),
                 ..default()
             }),
-        SlippyTilesPlugin,
         ConfigPlugin,
         aviation::AviationPlugin,
         aircraft::AircraftPlugin,
@@ -427,43 +426,17 @@ pub(crate) fn setup_map(
         ray_cast_visibility: RayCastVisibility::Visible,
     });
 
-    // Set up 2D camera for map tiles and labels.
-    // Layer 0 = default content (tiles, sprites, text).
-    // Layer 2 = gizmos (trails, navaids, runways) — kept off Camera3d to prevent
-    //           double-rendering during 2D↔3D transitions.
+    // Camera3d is the PRIMARY camera (order 0). Renders tiles (as Mesh3d
+    // planes), aircraft, sky dome, ground plane. In 2D mode uses orthographic
+    // projection synced to MapCamera; in 3D mode uses perspective.
     let dark_bg = Color::srgb(20.0 / 255.0, 21.0 / 255.0, 24.0 / 255.0);
-    commands.spawn((
-        Name::new("Map Camera"),
-        Camera2d,
-        Camera {
-            clear_color: ClearColorConfig::Custom(dark_bg),
-            ..default()
-        },
-        MapCamera,
-        render_layers::layers_camera2d_all(),
-    ));
-
-    // Set up 3D camera for aircraft models (renders on top of 2D).
-    // No Atmosphere component — Bevy 0.18's atmosphere triggers multi-camera
-    // HDR tonemapping bugs on Metal (#18901, #18902, #17530) that non-
-    // deterministically produce a black screen. A gradient sky dome mesh
-    // replaces the atmosphere sky visually. See GitHub issue for tech debt.
-    //
-    // Without Atmosphere/HDR, this camera's output supports alpha compositing
-    // over Camera2d, eliminating the need for the separate AircraftCamera2d.
-    // Camera2d (order 0) renders first; this camera (order 1) alpha-blends
-    // on top via CameraOutputMode::Write.
     commands.spawn((
         Name::new("Aircraft Camera"),
         Camera3d::default(),
         AircraftCamera,
         Camera {
-            order: 1,
-            clear_color: ClearColorConfig::Custom(Color::NONE),
-            output_mode: CameraOutputMode::Write {
-                blend_state: Some(bevy::render::render_resource::BlendState::ALPHA_BLENDING),
-                clear_color: ClearColorConfig::None,
-            },
+            order: 0,
+            clear_color: ClearColorConfig::Custom(dark_bg),
             ..default()
         },
         Projection::Orthographic(OrthographicProjection::default_2d()),
@@ -479,6 +452,25 @@ pub(crate) fn setup_map(
                 end: 5000.0,
             },
         },
+    ));
+
+    // Camera2d is the OVERLAY camera (order 1). Renders gizmos, labels,
+    // and overlays with alpha blending on top of Camera3d's output.
+    // Never renders tiles - those are Mesh3d planes on Camera3d.
+    commands.spawn((
+        Name::new("Map Camera"),
+        Camera2d,
+        Camera {
+            order: 1,
+            clear_color: ClearColorConfig::None,
+            output_mode: CameraOutputMode::Write {
+                blend_state: Some(bevy::render::render_resource::BlendState::ALPHA_BLENDING),
+                clear_color: ClearColorConfig::None,
+            },
+            ..default()
+        },
+        MapCamera,
+        render_layers::layers_camera2d_all(),
     ));
 
     // Dedicated UI camera for egui. Renders last (order 100) with no clear so it

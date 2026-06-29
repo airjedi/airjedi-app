@@ -3,7 +3,7 @@ use bevy::input::gestures::PinchGesture;
 use bevy::input::mouse::MouseWheel;
 use bevy::prelude::*;
 use bevy_egui::EguiContexts;
-use bevy_slippy_tiles::*;
+use crate::tiles::*;
 
 use crate::camera::MapCamera;
 use crate::constants::{self, ZOOM_DOWNGRADE_THRESHOLD, ZOOM_UPGRADE_THRESHOLD};
@@ -147,10 +147,16 @@ fn apply_zoom_level_transition(
     spawned_tiles: &mut SpawnedTiles,
     download_events: &mut MessageWriter<DownloadSlippyTilesMessage>,
     download_status: &mut SlippyTileDownloadStatus,
+    tile_grid: &mut crate::tiles::pool::TileGrid,
     radius: u8,
 ) {
+    // Clear dedup tracking so new-zoom tiles can be spawned.
+    // Old tile entities are kept alive - animate_tile_fades will hide them
+    // only once the new-zoom tile covering their grid cell is loaded.
     spawned_tiles.positions.clear();
     download_status.0.clear();
+    tile_grid.occupied.clear();
+
     let scale_factor = if map_state.zoom_level.to_u8() > old_tile_zoom.to_u8() {
         2.0_f32
     } else {
@@ -188,6 +194,7 @@ pub(crate) fn handle_zoom(
     mut spawned_tiles: ResMut<SpawnedTiles>,
     view3d_state: Res<view3d::View3DState>,
     mut download_status: ResMut<SlippyTileDownloadStatus>,
+    mut tile_grid: ResMut<crate::tiles::pool::TileGrid>,
     mut last_requested_radius: Local<u8>,
 ) {
     // In 3D mode, scroll is handled by handle_3d_camera_controls
@@ -341,6 +348,7 @@ pub(crate) fn handle_zoom(
                 &mut spawned_tiles,
                 &mut download_events,
                 &mut download_status,
+                &mut tile_grid,
                 radius,
             );
             *last_requested_radius = radius;
@@ -383,6 +391,7 @@ pub(crate) fn handle_pinch_zoom(
     mut spawned_tiles: ResMut<SpawnedTiles>,
     view3d_state: Res<view3d::View3DState>,
     mut download_status: ResMut<SlippyTileDownloadStatus>,
+    mut tile_grid: ResMut<crate::tiles::pool::TileGrid>,
     mut last_requested_radius: Local<u8>,
 ) {
     // In 3D mode, zoom is handled by handle_3d_camera_controls
@@ -448,6 +457,7 @@ pub(crate) fn handle_pinch_zoom(
                     &mut spawned_tiles,
                     &mut download_events,
                     &mut download_status,
+                    &mut tile_grid,
                     radius,
                 );
                 *last_requested_radius = radius;

@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
-use bevy_slippy_tiles::ZoomLevel;
+use crate::tiles::ZoomLevel;
 
 use crate::aircraft::AircraftListState;
 use crate::config::{save_config, AircraftBookmark, AppConfig, LocationBookmark};

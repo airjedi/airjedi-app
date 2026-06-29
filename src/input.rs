@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use bevy_egui::EguiContexts;
-use bevy_slippy_tiles::*;
+use crate::tiles::*;
 
 use crate::constants;
 use crate::dock;

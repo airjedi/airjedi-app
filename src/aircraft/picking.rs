@@ -80,7 +80,7 @@ pub fn follow_aircraft_3d(
     follow_state: Res<CameraFollowState>,
     aircraft_query: Query<&Aircraft>,
     time: Res<Time>,
-    tile_settings: Res<bevy_slippy_tiles::SlippyTilesSettings>,
+    tile_settings: Res<crate::tiles::SlippyTilesSettings>,
     map_state: Res<crate::MapState>,
 ) {
     use crate::view3d::{TransitionState, ViewMode};

@@ -5,7 +5,7 @@
 //! that were previously scattered across multiple modules.
 
 use bevy::prelude::*;
-use bevy_slippy_tiles::*;
+use crate::tiles::*;
 
 // =============================================================================
 // Aviation Constants

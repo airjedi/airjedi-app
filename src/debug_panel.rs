@@ -390,7 +390,7 @@ pub fn render_debug_panel(
 mod tests {
     use super::*;
     use crate::map::{MapState, ZoomState};
-    use bevy_slippy_tiles::ZoomLevel;
+    use crate::tiles::ZoomLevel;
     use egui_kittest::kittest::Queryable;
     use egui_kittest::Harness;
 
