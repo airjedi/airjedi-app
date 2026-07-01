@@ -135,6 +135,11 @@ pub(super) fn setup_render_systems(app: &mut App) {
             .add_systems(Update, handle_tile_load_failures)
             .add_systems(
                 Update,
+                request_3d_directional_downloads
+                    .after(update_3d_adaptive_zoom),
+            )
+            .add_systems(
+                Update,
                 load_visible_tiles
                     .after(ZoomSet::Change)
                     .after(rescale_tiles_on_zoom_change),
@@ -659,13 +664,15 @@ fn rescale_tiles_on_zoom_change(
     prev_zoom.0 = current;
 }
 
-/// Primary tile loading system. Computes which tiles the viewport needs,
-/// checks disk cache directly, spawns cached tiles immediately (zero latency),
-/// and requests network downloads for uncached tiles.
+/// Primary tile loading system. Runs every frame. Checks disk cache directly,
+/// spawns cached tiles immediately (zero latency), and requests network
+/// downloads for uncached tiles.
 ///
-/// In 2D: runs every frame, single zoom band at current level.
-/// In 3D: runs every 300ms (Tile3DRefreshTimer), multi-zoom directional bands
-/// offset toward the camera's look direction for perspective coverage.
+/// In 2D: single band at current zoom.
+/// In 3D: current zoom + lower-zoom bands centered on camera for coverage.
+/// Directional tile downloads are handled separately by
+/// `request_3d_directional_downloads` which fills the cache; this system
+/// picks up newly-cached tiles on the next frame.
 fn load_visible_tiles(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
@@ -682,20 +689,11 @@ fn load_visible_tiles(
     window_query: Query<&Window>,
     zoom_state: Res<crate::map::ZoomState>,
     time: Res<Time<Real>>,
-    timer: Res<Tile3DRefreshTimer>,
 ) {
     let Some(ref quad_mesh) = quad_mesh else { return };
-    let is_3d = view3d_state.is_3d_active();
-
-    // In 3D mode, only run when the refresh timer fires (every 300ms).
-    // Computing directional multi-zoom bands every frame is expensive.
-    // The timer is ticked by update_3d_adaptive_zoom which runs earlier.
-    if is_3d && !timer.0.just_finished() {
-        return;
-    }
-
     let current_zoom = map_state.zoom_level.to_u8();
     let now = time.elapsed_secs_f64();
+    let is_3d = view3d_state.is_3d_active();
 
     let radius = if let Ok(window) = window_query.single() {
         compute_tile_radius(
@@ -718,141 +716,57 @@ fn load_visible_tiles(
         tile_settings.z_layer + 0.1
     };
     let [pr, pg, pb] = basemap_state.style.placeholder_color();
-    let flat_rot = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+    // Plane3d mesh is in XZ plane (flat). For 2D mode, rotate to XY plane.
+    let upright_rot = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
 
     let lat = map_state.latitude;
     let lon = map_state.longitude;
-
-    // -------------------------------------------------------------------------
-    // Build tile bands: which regions and zoom levels to load
-    // -------------------------------------------------------------------------
 
     struct TileBand {
         lat: f64,
         lon: f64,
         zoom: u8,
         radius: u8,
-        /// If true, spawn tile entities. If false, only fire download requests
-        /// to warm the cache (used for lower-zoom bands in 3D to avoid Z-fighting).
-        spawn: bool,
     }
 
-    let mut bands = Vec::with_capacity(32);
+    let mut bands = Vec::with_capacity(8);
+    bands.push(TileBand { lat, lon, zoom: current_zoom, radius });
 
     if is_3d {
-        // 3D mode: Only spawn mesh quads at the CURRENT zoom level to avoid
-        // Z-fighting between coplanar tiles at different zoom levels (see
-        // CLAUDE.md "3D Tile Rendering -- Known Pitfalls"). Lower-zoom bands
-        // fire download requests to warm the cache for zoom transitions.
-        let yaw_rad = view3d_state.camera_yaw.to_radians();
-        let pitch = view3d_state.camera_pitch;
-        let pitch_factor = ((pitch - 15.0) / (89.0 - 15.0)).clamp(0.0, 1.0);
+        bands[0].radius = radius.max(10);
 
-        // Helper: compute offset lat/lon for a directional band
-        let offset_lat_lon = |zoom_offset: u8, fwd: f64, side: f64| -> Option<(f64, f64, u8)> {
-            if current_zoom < zoom_offset { return None; }
-            let z = current_zoom - zoom_offset;
-            let deg_per_tile_lon = 360.0 / (1u64 << z) as f64;
-            let deg_per_tile_lat = deg_per_tile_lon * lat.to_radians().cos();
-            let offset_lat = fwd * deg_per_tile_lat * (yaw_rad as f64).cos()
-                - side * deg_per_tile_lat * (yaw_rad as f64).sin();
-            let offset_lon = fwd * deg_per_tile_lon * (yaw_rad as f64).sin()
-                + side * deg_per_tile_lon * (yaw_rad as f64).cos();
-            Some((clamp_latitude(lat + offset_lat), clamp_longitude(lon + offset_lon), z))
-        };
-
-        // Multi-zoom bands with Y-offset separation to prevent Z-fighting.
-        // Current-zoom tiles render at tile_z. Lower-zoom tiles render
-        // slightly below (tile_z - offset), providing geometric separation
-        // that works at all viewing angles including grazing.
-        //
-        // Near band: current zoom centered on camera position.
-        // Mid/far/horizon bands: lower zoom levels offset forward along
-        // camera yaw for perspective coverage toward the horizon.
-        let near_radius = (3 + (3.0 * pitch_factor) as u8).max(radius).max(10);
-        bands.push(TileBand { lat, lon, zoom: current_zoom, radius: near_radius, spawn: true });
-
-        // Mid bands (zoom-1): forward + left/right, 2x tile coverage
-        let mid_radius = 3 + (2.0 * (1.0 - pitch_factor)) as u8;
-        for &(fwd, side) in &[(3.0, 0.0), (2.0, -4.0), (2.0, 4.0)] {
-            if let Some((olat, olon, z)) = offset_lat_lon(1, fwd, side) {
-                bands.push(TileBand { lat: olat, lon: olon, zoom: z, radius: mid_radius, spawn: true });
+        for zoom_offset in 1..=3u8 {
+            if current_zoom >= zoom_offset {
+                bands.push(TileBand {
+                    lat, lon,
+                    zoom: current_zoom - zoom_offset,
+                    radius: 10,
+                });
             }
         }
-
-        // Far bands (zoom-2): wider forward coverage, 4x tile size
-        let far_radius = 2 + (3.0 * (1.0 - pitch_factor)) as u8;
-        for &(fwd, side) in &[(4.0, 0.0), (3.0, -5.0), (3.0, 5.0)] {
-            if let Some((olat, olon, z)) = offset_lat_lon(2, fwd, side) {
-                bands.push(TileBand { lat: olat, lon: olon, zoom: z, radius: far_radius, spawn: true });
-            }
-        }
-
-        // Horizon bands (zoom-3, zoom-4): coarse tiles for distant ground
-        let horizon_radius = 4 + (3.0 * (1.0 - pitch_factor)) as u8;
-        let ultra_radius = 4 + (2.0 * (1.0 - pitch_factor)) as u8;
-
-        for &fwd in &[2.0, 5.0, 8.0] {
-            let spread = fwd * 1.5 + 4.0;
-            for &side in &[0.0, -spread, spread] {
-                if let Some((olat, olon, z)) = offset_lat_lon(3, fwd, side) {
-                    bands.push(TileBand { lat: olat, lon: olon, zoom: z, radius: horizon_radius, spawn: true });
-                }
-            }
-        }
-        for &fwd in &[2.0, 5.0, 8.0] {
-            let spread = fwd * 2.0 + 5.0;
-            for &side in &[0.0, -spread, spread] {
-                if let Some((olat, olon, z)) = offset_lat_lon(4, fwd, side) {
-                    bands.push(TileBand { lat: olat, lon: olon, zoom: z, radius: ultra_radius, spawn: true });
-                }
-            }
-        }
-    } else {
-        // 2D mode: single band at current zoom
-        bands.push(TileBand { lat, lon, zoom: current_zoom, radius, spawn: true });
     }
 
-    // -------------------------------------------------------------------------
-    // For each band, check cache and spawn tiles or request downloads
-    // -------------------------------------------------------------------------
-
-    // Render zoom: in 3D use the fixed rendering_zoom for stable coordinates,
-    // in 2D use the current map zoom.
-    let render_zoom = if is_3d {
-        view3d_state.effective_zoom(map_state.zoom_level)
-    } else {
-        map_state.zoom_level
-    };
-    let reference_point = LatitudeLongitudeCoordinates {
-        latitude: tile_settings.reference_latitude,
-        longitude: tile_settings.reference_longitude,
-    };
+    let mut uncached_requested = false;
 
     for band in &bands {
-        // Download-only bands: just fire a download request to warm the cache.
-        // Don't check cache per-tile or spawn entities (avoids Z-fighting in 3D).
-        if !band.spawn {
-            download_events.write(DownloadTilesRequest {
-                latitude: band.lat,
-                longitude: band.lon,
-                zoom: band.zoom,
-                radius: Radius(band.radius),
-                priority: DownloadPriority::Far,
-                use_cache: true,
-            });
-            continue;
-        }
-
         let Ok(band_zoom) = ZoomLevel::try_from(band.zoom) else { continue };
         let center = super::coords::SlippyTileCoordinates::from_latitude_longitude(
             band.lat, band.lon, band_zoom,
         );
 
+        let render_zoom = if is_3d {
+            view3d_state.effective_zoom(map_state.zoom_level)
+        } else {
+            map_state.zoom_level
+        };
+        let reference_point = LatitudeLongitudeCoordinates {
+            latitude: tile_settings.reference_latitude,
+            longitude: tile_settings.reference_longitude,
+        };
+
         let r = band.radius as i64;
         let max_tile = 1i64 << band.zoom;
 
-        // Visual scale: lower-zoom tiles cover more ground area
         let zoom_diff = render_zoom.to_u8().saturating_sub(band.zoom) as u32;
         let rescale = if zoom_diff > 0 {
             (1u32 << zoom_diff) as f32
@@ -904,14 +818,17 @@ fn load_visible_tiles(
                 };
 
                 if !cached {
-                    download_events.write(DownloadTilesRequest {
-                        latitude: band.lat,
-                        longitude: band.lon,
-                        zoom: band.zoom,
-                        radius: Radius(band.radius),
-                        priority: DownloadPriority::Near,
-                        use_cache: true,
-                    });
+                    if !uncached_requested {
+                        uncached_requested = true;
+                        download_events.write(DownloadTilesRequest {
+                            latitude: lat,
+                            longitude: lon,
+                            zoom: map_state.zoom_level.to_u8(),
+                            radius: Radius(radius),
+                            priority: DownloadPriority::Near,
+                            use_cache: true,
+                        });
+                    }
                     continue;
                 }
 
@@ -937,19 +854,17 @@ fn load_visible_tiles(
                 });
 
                 let (tile_pos, tile_rot, tile_sc) = if is_3d {
-                    // Lower-zoom tiles render slightly below current-zoom tiles
-                    // to prevent Z-fighting between coplanar mesh quads.
-                    // Each zoom level down gets -2.0 units of Y offset.
-                    let zoom_depth = current_zoom.saturating_sub(band.zoom) as f32 * -2.0;
+                    // Plane3d is already in XZ plane - no rotation needed
                     (
-                        Vec3::new(tx, tile_z + zoom_depth, -ty),
-                        flat_rot,
+                        Vec3::new(tx, tile_z, -ty),
+                        Quat::IDENTITY,
                         Vec3::new(rescale, 1.0, rescale),
                     )
                 } else {
+                    // Rotate from XZ to XY for 2D orthographic view
                     (
                         Vec3::new(tx, ty, tile_z),
-                        Quat::IDENTITY,
+                        upright_rot,
                         Vec3::ONE,
                     )
                 };
@@ -976,6 +891,79 @@ fn load_visible_tiles(
                 tile_grid.occupied.insert(tile_key, entity);
             }
         }
+    }
+
+}
+
+/// Send directional download requests in 3D mode so that tiles ahead of the
+/// camera get fetched and cached. `load_visible_tiles` (running every frame)
+/// picks them up from cache on the next frame.
+fn request_3d_directional_downloads(
+    timer: Res<Tile3DRefreshTimer>,
+    view3d_state: Res<view3d::View3DState>,
+    map_state: Res<MapState>,
+    mut download_events: MessageWriter<DownloadTilesRequest>,
+) {
+    if !view3d_state.is_3d_active() || !timer.0.just_finished() {
+        return;
+    }
+
+    let base_zoom = map_state.zoom_level.to_u8();
+    let lat = map_state.latitude;
+    let lon = map_state.longitude;
+    let yaw_rad = view3d_state.camera_yaw.to_radians();
+    let pitch = view3d_state.camera_pitch;
+    let pitch_factor = ((pitch - 15.0) / (89.0 - 15.0)).clamp(0.0, 1.0);
+
+    let near_radius = 3 + (3.0 * pitch_factor) as u8;
+    let mid_radius = 3 + (2.0 * (1.0 - pitch_factor)) as u8;
+    let far_radius = 2 + (3.0 * (1.0 - pitch_factor)) as u8;
+
+    download_events.write(DownloadTilesRequest {
+        latitude: lat, longitude: lon,
+        zoom: base_zoom, radius: Radius(near_radius),
+        priority: DownloadPriority::Near, use_cache: true,
+    });
+
+    let mut request_band = |zoom_offset: u8, fwd: f64, side: f64, radius: u8, priority: DownloadPriority| {
+        if base_zoom < zoom_offset { return; }
+        let z = base_zoom - zoom_offset;
+        let deg_per_tile_lon = 360.0 / (1u64 << z) as f64;
+        let deg_per_tile_lat = deg_per_tile_lon * lat.to_radians().cos();
+        let offset_lat = fwd * deg_per_tile_lat * yaw_rad.cos() as f64
+            - side * deg_per_tile_lat * yaw_rad.sin() as f64;
+        let offset_lon = fwd * deg_per_tile_lon * yaw_rad.sin() as f64
+            + side * deg_per_tile_lon * yaw_rad.cos() as f64;
+        download_events.write(DownloadTilesRequest {
+            latitude: clamp_latitude(lat + offset_lat),
+            longitude: clamp_longitude(lon + offset_lon),
+            zoom: z, radius: Radius(radius),
+            priority, use_cache: true,
+        });
+    };
+
+    request_band(1, 3.0, 0.0, mid_radius, DownloadPriority::Mid);
+    request_band(1, 2.0, -4.0, mid_radius, DownloadPriority::Mid);
+    request_band(1, 2.0, 4.0, mid_radius, DownloadPriority::Mid);
+
+    request_band(2, 4.0, 0.0, far_radius, DownloadPriority::Far);
+    request_band(2, 3.0, -5.0, far_radius, DownloadPriority::Far);
+    request_band(2, 3.0, 5.0, far_radius, DownloadPriority::Far);
+
+    let hr = 4 + (3.0 * (1.0 - pitch_factor)) as u8;
+    for &fwd in &[2.0, 5.0, 8.0] {
+        request_band(3, fwd, 0.0, hr, DownloadPriority::Far);
+        let spread = fwd * 1.5 + 4.0;
+        request_band(3, fwd, -spread, hr, DownloadPriority::Far);
+        request_band(3, fwd, spread, hr, DownloadPriority::Far);
+    }
+
+    let ur = 4 + (2.0 * (1.0 - pitch_factor)) as u8;
+    for &fwd in &[2.0, 5.0, 8.0] {
+        request_band(4, fwd, 0.0, ur, DownloadPriority::Far);
+        let spread = fwd * 2.0 + 5.0;
+        request_band(4, fwd, -spread, ur, DownloadPriority::Far);
+        request_band(4, fwd, spread, ur, DownloadPriority::Far);
     }
 }
 
@@ -1166,7 +1154,6 @@ fn animate_tile_fades(
         if !dominated {
             if images.contains(&original.0) {
                 fade_state.alpha = 1.0;
-                // In 3D, map-Y is stored in -translation.z; in 2D it's translation.y
                 let map_y = if is_3d { -transform.translation.z } else { transform.translation.y };
                 let cell = (
                     (transform.translation.x / super::DEFAULT_TILE_PIXELS).round() as i32,
@@ -1193,6 +1180,7 @@ fn animate_tile_fades(
             commands.entity(entity).despawn();
         }
     }
+
 }
 
 // =============================================================================
@@ -1204,10 +1192,9 @@ fn setup_tile_quad_mesh(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>
     // Slightly oversized (0.5px overlap) to prevent sub-pixel gaps between
     // adjacent tiles from showing the background through at grazing angles.
     let overlap = 0.5;
-    let mesh = meshes.add(Rectangle::new(
-        constants::DEFAULT_TILE_PIXELS + overlap,
-        constants::DEFAULT_TILE_PIXELS + overlap,
-    ));
+    let size = constants::DEFAULT_TILE_PIXELS + overlap;
+    // Use Plane3d (XZ plane, normal=Y) so tiles lie flat without rotation.
+    let mesh = meshes.add(Plane3d::new(Vec3::Y, Vec2::new(size / 2.0, size / 2.0)));
     commands.insert_resource(TileQuadMesh(mesh));
 }
 
