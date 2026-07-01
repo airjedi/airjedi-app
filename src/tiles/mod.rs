@@ -28,13 +28,13 @@ pub use types::*;
 
 // Re-export rendering types so `use crate::tiles::*` works as before
 pub use render::{
-    TileFadeState, TileMeshQuad, TileQuad3d, TileQuadMesh,
+    TileFadeState, TileMeshQuad, TileQuadMesh,
     Tile3DRefreshTimer, TileOriginalImage, GridOverlay,
     altitude_to_zoom_level, compute_tile_radius, request_tiles_at_location,
 };
 
-// sync_tile_mesh_transforms was removed in the unified mesh redesign.
-// Provide a no-op stub for any external references.
+/// Deprecated: was part of the old dual-entity tile design. Kept as a no-op
+/// stub because terrain/mod.rs orders systems `.after()` this function.
 pub fn sync_tile_mesh_transforms() {}
 
 use bevy::prelude::*;
@@ -109,7 +109,6 @@ pub fn world_pixel_to_world_coords(
 // ---------------------------------------------------------------------------
 
 pub const TILE_EMISSIVE_BOOST: f32 = 8.0;
-pub const TILE_FADE_SPEED: f32 = 3.0;
 pub const DEFAULT_TILE_PIXELS: f32 = 512.0;
 
 pub struct TilesPlugin;

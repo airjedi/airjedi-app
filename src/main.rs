@@ -113,9 +113,6 @@ pub(crate) mod constants {
     pub const LABEL_SCREEN_OFFSET: f32 = 25.0;
     pub const BUTTON_FONT_SIZE: f32 = 16.0;
 
-    // Tile fade/despawn timing
-    pub const TILE_FADE_SPEED: f32 = 3.0;
-
     // Z-layers
     pub const TILE_Z_LAYER: f32 = 0.0;
     pub const AIRCRAFT_Z_LAYER: f32 = 10.0;

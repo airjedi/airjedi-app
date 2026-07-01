@@ -28,15 +28,13 @@ pub struct TileFadeState {
     pub spawn_time: f64,
 }
 
-/// Links a tile entity to its 3D mesh quad companion (used in 3D mode only).
+/// Deprecated: was used to link tile entities to companion Mesh3d quads in the
+/// old dual-entity design. Tiles are now unified Mesh3d entities. Kept as a
+/// stub for terrain module compilation - no tiles have this component.
 #[derive(Component)]
 pub struct TileMeshQuad(pub Entity);
 
-/// Marker on 3D mesh quad companion entities so orphans can be detected.
-#[derive(Component)]
-pub struct TileQuad3d;
-
-/// Shared mesh handle for all 3D tile quads (sized to match DEFAULT_TILE_PIXELS).
+/// Shared mesh handle for all tile quads (sized to match DEFAULT_TILE_PIXELS).
 #[derive(Resource)]
 pub struct TileQuadMesh(pub Handle<Mesh>);
 
@@ -417,7 +415,9 @@ fn handle_tile_load_failures(
         With<MapTile>,
     >,
     mut tile_grid: ResMut<super::pool::TileGrid>,
+    view3d_state: Res<view3d::View3DState>,
 ) {
+    let is_3d = view3d_state.is_3d_active();
     for event in failed_events.read() {
         let asset_path = event.path.path();
         let path_str = asset_path.to_string_lossy();
@@ -431,9 +431,11 @@ fn handle_tile_load_failures(
             let failed_id = event.id;
             for (entity, original, transform, fade) in tile_query.iter() {
                 if original.0.id() == failed_id {
+                    // In 3D mode, map-Y is in -translation.z; in 2D it's translation.y
+                    let map_y = if is_3d { -transform.translation.z } else { transform.translation.y };
                     let key = (
                         transform.translation.x as i32,
-                        transform.translation.y as i32,
+                        map_y as i32,
                         fade.tile_zoom,
                     );
                     tile_grid.occupied.remove(&key);
@@ -992,7 +994,6 @@ fn cull_offscreen_tiles(
     window_query: Query<&Window>,
     mut tile_grid: ResMut<super::pool::TileGrid>,
     view3d_state: Res<view3d::View3DState>,
-    alt_tracker: Res<AltitudeChangeTracker>,
 ) {
     // In 3D mode, tiles use Y-up coordinates but MapCamera uses Z-up.
     // Skip viewport culling in 3D - tile count is managed by the entity
@@ -1008,62 +1009,18 @@ fn cull_offscreen_tiles(
         return;
     };
 
-    // MapCamera (Camera2d) position is in Z-up map space (x, y, z).
-    // Tile meshes are in Y-up space (x, height, -z_map). Convert camera
-    // position to tile coordinate space for distance comparison.
     let cam_x = camera_tf.translation.x;
     let cam_y = camera_tf.translation.y;
 
-    // Compute culling extents depending on mode
-    let (half_w, half_h, forward_bias_x, forward_bias_y) = if view3d_state.is_3d_active() {
-        // 3D mode: compute ground footprint from frustum geometry
-        let fov = 60.0_f32.to_radians();
-        let aspect = window.width() / window.height();
-        let half_vfov = fov / 2.0;
-        let half_hfov = (aspect * half_vfov.tan()).atan();
-        let pitch_rad = view3d_state.camera_pitch.to_radians();
-        let effective_distance = view3d_state.altitude_to_distance();
-        let camera_height = effective_distance * pitch_rad.sin();
-
-        let far_angle = (pitch_rad - half_vfov).max(0.05);
-        let far_ground_dist = camera_height / far_angle.tan();
-        let center_ground_dist = effective_distance * pitch_rad.cos();
-        let half_width_at_horizon = far_ground_dist * half_hfov.tan();
-
-        // Widen margin during active altitude changes so tiles survive
-        // long enough for replacements to load.  Cooldown of ~0.5s.
-        // Base margin 3.5x covers the full perspective view to the horizon.
-        let margin = if alt_tracker.idle_secs < 0.5 {
-            5.0
-        } else {
-            3.5
-        };
-        let hw = half_width_at_horizon * margin;
-        let hh = far_ground_dist.max(center_ground_dist) * margin;
-
-        // Directional bias: extend forward culling margin by 1.5x, reduce backward to 1.0x
-        let yaw_rad = view3d_state.camera_yaw.to_radians();
-        let bias_magnitude = far_ground_dist * 0.25;
-        let bias_x = bias_magnitude * yaw_rad.sin();
-        let bias_y = bias_magnitude * yaw_rad.cos();
-
-        (hw, hh, bias_x, bias_y)
+    // 2D mode: orthographic viewport extents
+    let ortho_scale = if let Projection::Orthographic(ref ortho) = projection {
+        ortho.scale
     } else {
-        // 2D mode: orthographic viewport extents
-        let ortho_scale = if let Projection::Orthographic(ref ortho) = projection {
-            ortho.scale
-        } else {
-            1.0
-        };
-        let margin = 1.5;
-        let hw = (window.width() / 2.0) * ortho_scale * margin;
-        let hh = (window.height() / 2.0) * ortho_scale * margin;
-        (hw, hh, 0.0, 0.0)
+        1.0
     };
-
-    // Effective center shifted by forward bias (tiles ahead of camera get extra margin)
-    let center_x = cam_x + forward_bias_x;
-    let center_y = cam_y + forward_bias_y;
+    let margin = 1.5;
+    let half_w = (window.width() / 2.0) * ortho_scale * margin;
+    let half_h = (window.height() / 2.0) * ortho_scale * margin;
 
     let mut tiles: Vec<(Entity, f32, i32, i32, u8)> = tile_query
         .iter()
@@ -1083,10 +1040,9 @@ fn cull_offscreen_tiles(
 
     let mut culled = 0u32;
 
-    // First pass: cull tiles outside the viewport margin (using biased center)
     tiles.retain(|&(entity, _, tx, ty, zoom)| {
-        let dx = (tx as f32 - center_x).abs();
-        let dy = (ty as f32 - center_y).abs();
+        let dx = (tx as f32 - cam_x).abs();
+        let dy = (ty as f32 - cam_y).abs();
         if dx > half_w || dy > half_h {
             tile_grid.occupied.remove(&(tx, ty, zoom));
             commands.entity(entity).despawn();
@@ -1097,13 +1053,7 @@ fn cull_offscreen_tiles(
         }
     });
 
-    // Second pass: if still over budget, cull farthest tiles.
-    let base_limit = max_tile_entities(Some(&view3d_state));
-    let tile_limit = if view3d_state.is_3d_active() && alt_tracker.idle_secs < 0.5 {
-        base_limit + 200
-    } else {
-        base_limit
-    };
+    let tile_limit = max_tile_entities(Some(&view3d_state));
     if tiles.len() > tile_limit {
         tiles.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         for &(entity, _, tx, ty, zoom) in &tiles[..tiles.len() - tile_limit] {
@@ -1141,7 +1091,7 @@ fn animate_tile_fades(
 
     // Track grid cells that have a fully-loaded tile at the current zoom.
     let mut loaded_cells: std::collections::HashSet<(i32, i32)> = std::collections::HashSet::new();
-    let mut old_tiles: Vec<(Entity, i32, i32, u8)> = Vec::new();
+    let mut old_tiles: Vec<(Entity, i32, i32, i32, i32, u8)> = Vec::new();
 
     for (entity, mut fade_state, transform, original) in tile_query.iter_mut() {
         let dominated = if is_3d {
@@ -1151,32 +1101,30 @@ fn animate_tile_fades(
             fade_state.tile_zoom != current_zoom
         };
 
+        let map_y = if is_3d { -transform.translation.z } else { transform.translation.y };
+        let cell = (
+            (transform.translation.x / super::DEFAULT_TILE_PIXELS).round() as i32,
+            (map_y / super::DEFAULT_TILE_PIXELS).round() as i32,
+        );
+
         if !dominated {
             if images.contains(&original.0) {
                 fade_state.alpha = 1.0;
-                let map_y = if is_3d { -transform.translation.z } else { transform.translation.y };
-                let cell = (
-                    (transform.translation.x / super::DEFAULT_TILE_PIXELS).round() as i32,
-                    (map_y / super::DEFAULT_TILE_PIXELS).round() as i32,
-                );
                 loaded_cells.insert(cell);
             }
         } else {
-            let map_y = if is_3d { -transform.translation.z } else { transform.translation.y };
-            let cell = (
-                (transform.translation.x / super::DEFAULT_TILE_PIXELS).round() as i32,
-                (map_y / super::DEFAULT_TILE_PIXELS).round() as i32,
-            );
-            old_tiles.push((entity, cell.0, cell.1, fade_state.tile_zoom));
+            // Store cell coords for coverage check AND raw coords for tile_grid key
+            old_tiles.push((
+                entity, cell.0, cell.1,
+                transform.translation.x as i32, map_y as i32,
+                fade_state.tile_zoom,
+            ));
         }
     }
 
-    // Only despawn old-zoom tiles when their cell is covered by a loaded new tile.
-    for (entity, cx, cy, zoom) in old_tiles {
+    for (entity, cx, cy, grid_x, grid_y, zoom) in old_tiles {
         if loaded_cells.contains(&(cx, cy)) {
-            let tx = (cx as f32 * super::DEFAULT_TILE_PIXELS) as i32;
-            let ty = (cy as f32 * super::DEFAULT_TILE_PIXELS) as i32;
-            tile_grid.occupied.remove(&(tx, ty, zoom));
+            tile_grid.occupied.remove(&(grid_x, grid_y, zoom));
             commands.entity(entity).despawn();
         }
     }
@@ -1219,10 +1167,3 @@ fn orient_tiles_for_view_mode(
     tile_grid.occupied.clear();
 }
 
-// The following 5 systems were removed in the unified mesh redesign:
-// - sync_tile_mesh_quads (was: spawn companion Mesh3d entities for Sprites)
-// - sync_tile_mesh_alpha (was: sync companion visibility with sprite fade)
-// - sync_tile_mesh_transforms (was: copy sprite position to companion mesh)
-// - hide_tile_sprites_in_3d (was: zero sprite alpha so Camera2d doesn't show tiles)
-// - cleanup_orphaned_tile_quads (was: despawn orphaned companions from deferred command races)
-// Tiles are now unified Mesh3d entities rendered by Camera3d in both modes.

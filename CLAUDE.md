@@ -358,50 +358,34 @@ world_mutate_resources(resource: "airjedi_bevy::map::MapState", path: ".longitud
 
 ## 3D Tile Rendering — Known Pitfalls
 
-The 3D tile system in `src/tiles.rs` has several interacting subsystems that can cause visual flashing if modified incorrectly. Read this before changing tile display, zoom transitions, or culling logic.
+The 3D tile system in `src/tiles/render.rs` has several interacting subsystems. Read this before changing tile display, zoom transitions, or culling logic.
 
 ### Architecture
 
-- **Multi-resolution bands**: 3D mode requests tiles at 5 zoom levels (current, -1, -2, -3, -4) for perspective coverage, but only the current zoom level gets 3D mesh quads. Lower-zoom tiles exist as entities for tracking/transitions but are invisible in 3D.
-- **Tile lifecycle**: Download → spawn entity (alpha 0) → fade in → mesh quad created → visible. Each step uses deferred commands, so there are 1-2 frame delays between steps.
-- **The 300ms refresh timer** (`Tile3DRefreshTimer`) continuously re-requests tiles to fill the 3D view as the camera moves.
+- **Two-system coordination**: `load_visible_tiles` runs every frame, checks disk cache, and spawns tile entities immediately. `request_3d_directional_downloads` runs every 300ms and sends download requests for tiles ahead of the camera. The two systems coordinate through the disk cache - downloads fill it, the next frame's load finds them.
+- **Multi-resolution bands**: 3D mode spawns tiles at the current zoom level + 3 lower zoom levels centered on the camera. All zoom levels render as flat Mesh3d quads at the same ground height (`tile_z`). Lower-zoom tiles cover more area with fewer entities, providing horizon coverage.
+- **Adaptive zoom**: `update_3d_adaptive_zoom` adjusts `map_state.zoom_level` based on camera altitude every 300ms with hysteresis to prevent oscillation.
+- **Dedup via TileGrid**: `tile_grid.occupied` (HashMap keyed by `(tx, ty, zoom)`) prevents spawning duplicate entities at the same position.
+
+### Critical: Use Plane3d, Not Rectangle
+
+Tile meshes MUST use `Plane3d` (natively in the XZ plane) for ground tiles. **Do NOT use `Rectangle` + `rotation_x(-PI/2)`** - the Rectangle mesh has zero Z-extent, and after rotation Bevy 0.19's bounding box computation treats the mesh as degenerate, causing tiles to appear as a thin strip instead of a ground plane. The `Plane3d` mesh has correct bounds in XZ and needs no rotation for 3D mode.
+
+For 2D mode, `Plane3d` is rotated to XY via `rotation_x(PI/2)`.
 
 ### Common Causes of Tile Flashing
 
-1. **Z-fighting between zoom levels**: Never render mesh quads from multiple zoom levels simultaneously. `AlphaMode::Opaque` mesh quads at similar depths Z-fight unpredictably, especially at grazing angles near the horizon. Geometric depth separation and `StandardMaterial::depth_bias` both fail at grazing angles on Metal. The only reliable fix is single-zoom mesh quads.
+1. **Spawn-cull-respawn cycle**: If the entity budget (`max_tile_entities`) is lower than the number of tiles the request system generates, budget culling removes visible tiles, their positions are cleared from `TileGrid`, and the next frame re-spawns them. Always ensure the budget exceeds the steady-state tile count (~1000-1500 in 3D).
 
-2. **Spawn-cull-respawn cycle**: If the entity budget (`max_tile_entities`) is lower than the number of tiles the request system generates, budget culling removes visible tiles, their positions are cleared from `SpawnedTiles`, and the refresh timer re-requests them — creating perpetual flashing. Always ensure the budget exceeds the steady-state tile count (~1000-1200 in 3D).
+2. **Zoom oscillation**: The altitude-adaptive zoom (`altitude_to_zoom_level`) uses hysteresis to prevent rapid switching. If hysteresis is too narrow, the zoom bounces between levels every 300ms, destroying and recreating tiles each time. Current values: 0.7 to upgrade, 0.6 to downgrade.
 
-3. **Zoom oscillation**: The altitude-adaptive zoom (`altitude_to_zoom_level`) uses hysteresis to prevent rapid switching. If hysteresis is too narrow, the zoom bounces between levels every 300ms, destroying and recreating mesh quads each time. Current values: 0.7 to upgrade, 0.6 to downgrade.
+3. **Stale tile accumulation**: If `animate_tile_fades` doesn't mark out-of-band tiles as dominated, tiles from old zoom levels accumulate indefinitely. The dominated check must mark tiles outside [current_zoom-4, current_zoom] for cleanup.
 
-4. **Fade-in delay**: Tiles spawn at alpha 0 and fade in. In 3D mode, the fade speed is 30.0 (vs 3.0 in 2D) to minimize the gap when mesh quads are created. If set too slow, there's a visible gap during zoom transitions. If set to instant (alpha 1.0 on spawn), Bevy's default magenta checkerboard texture shows before the tile image loads.
-
-5. **Stale tile accumulation**: If `animate_tile_fades` doesn't mark out-of-band tiles as dominated, tiles from old zoom levels accumulate indefinitely. The dominated check must mark tiles outside [current_zoom-4, current_zoom] for cleanup.
+4. **Mode switch tile persistence**: `orient_tiles_for_view_mode` must despawn all tiles on 2D/3D switch because tile coordinate systems differ (Z-up vs Y-up). Using `Visibility::Hidden` instead of `despawn()` leaves invisible tiles that can appear as artifacts (e.g., 2D tiles viewed edge-on in 3D mode show as a thin strip).
 
 ### Debugging Tile Issues
 
-Add a periodic tile census to `animate_tile_fades` to see tile counts per zoom level:
-```rust
-// Temporary diagnostic — add inside animate_tile_fades when is_3d
-use std::sync::atomic::{AtomicU32, Ordering};
-static FRAME: AtomicU32 = AtomicU32::new(0);
-if FRAME.fetch_add(1, Ordering::Relaxed) % 60 == 0 {
-    let mut counts: HashMap<u8, (u32, u32)> = HashMap::new();
-    for (_, fs, _, _) in tile_query.iter() {
-        let e = counts.entry(fs.tile_zoom).or_default();
-        e.0 += 1;
-        if fs.alpha >= 1.0 { e.1 += 1; }
-    }
-    info!("TILE CENSUS zoom={} {:?} total={}", current_zoom, counts, tile_query.iter().count());
-}
-```
-
-Run with `RUST_LOG=airjedi_bevy=info cargo run --release 2>tmp/tile_debug.log` and look for:
+Run with `RUST_LOG=airjedi_bevy::tiles=info cargo run --release 2>tmp/tile_debug.log` and look for:
 - **Total exceeding budget** → spawn-cull cycle
-- **Tiles at alpha 0 that never become opaque** → texture loading or fade issue
 - **Zoom changing every 300ms** → hysteresis too narrow
 - **Tiles outside the band accumulating** → dominated check not working
-
-### Bevy StandardMaterial::depth_bias Warning
-
-`depth_bias` is cast to `i32` internally (`material.depth_bias as i32`). Fractional values like 0.001 or 0.01 are silently truncated to 0 and have no effect. Always use integer values if you need depth bias. Even with correct integer values, depth bias does not reliably prevent Z-fighting between horizontal coplanar mesh quads at grazing angles on Metal.
