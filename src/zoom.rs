@@ -39,72 +39,40 @@ fn calculate_zoom_delta(event: &MouseWheel) -> f32 {
 
 /// Calculate new map center to keep the point under cursor stationary during zoom.
 ///
-/// Returns the new (latitude, longitude) for the map center.
+/// Uses Mercator meter coordinates which are zoom-independent, so changing
+/// the discrete tile zoom level doesn't affect the calculation.
 fn calculate_zoom_to_cursor_center(
     cursor_viewport_pos: Vec2,
     window_size: (f32, f32),
     current_center: (f64, f64),
     camera_zoom_before: f32,
     camera_zoom_after: f32,
-    old_tile_zoom: ZoomLevel,
-    new_tile_zoom: ZoomLevel,
+    _old_tile_zoom: ZoomLevel,
+    _new_tile_zoom: ZoomLevel,
 ) -> (f64, f64) {
-    // Calculate cursor offset from screen center
     let screen_center = (window_size.0 / 2.0, window_size.1 / 2.0);
     let cursor_offset = (
         (cursor_viewport_pos.x - screen_center.0) as f64,
-        -(cursor_viewport_pos.y - screen_center.1) as f64, // Y inverted
+        -(cursor_viewport_pos.y - screen_center.1) as f64,
     );
 
-    // Convert to world pixels before zoom (using old camera zoom)
-    let world_offset_before = (
-        cursor_offset.0 / camera_zoom_before as f64,
-        cursor_offset.1 / camera_zoom_before as f64,
-    );
+    // Convert cursor offset to Mercator meters before and after zoom.
+    // ortho.scale = 1/camera_zoom, so 1 screen pixel = (1/camera_zoom) meters.
+    let ortho_before = 1.0 / camera_zoom_before as f64;
+    let ortho_after = 1.0 / camera_zoom_after as f64;
 
-    // Get current center in world pixels at old zoom level
-    let center_pixel = world_coords_to_world_pixel(
-        &LatitudeLongitudeCoordinates {
-            latitude: current_center.0,
-            longitude: current_center.1,
-        },
-        crate::constants::DEFAULT_TILE_SIZE,
-        old_tile_zoom,
-    );
+    let center_merc = lonlat_to_mercator(current_center.1, current_center.0);
 
-    // Calculate cursor geographic position at old zoom level
-    let cursor_geo = world_pixel_to_world_coords(
-        center_pixel.0 + world_offset_before.0,
-        center_pixel.1 + world_offset_before.1,
-        crate::constants::DEFAULT_TILE_SIZE,
-        old_tile_zoom,
-    );
+    // Cursor position in Mercator meters (same point, same meters, zoom-independent)
+    let cursor_merc_x = center_merc.x + cursor_offset.0 * ortho_before;
+    let cursor_merc_y = center_merc.y + cursor_offset.1 * ortho_before;
 
-    // Calculate world offset after zoom (using new camera zoom)
-    let world_offset_after = (
-        cursor_offset.0 / camera_zoom_after as f64,
-        cursor_offset.1 / camera_zoom_after as f64,
-    );
+    // New center: keep cursor at same Mercator position but at new screen offset
+    let new_center_x = cursor_merc_x - cursor_offset.0 * ortho_after;
+    let new_center_y = cursor_merc_y - cursor_offset.1 * ortho_after;
 
-    // Convert cursor geo back to pixels at new zoom level
-    let cursor_pixel_after = world_coords_to_world_pixel(
-        &LatitudeLongitudeCoordinates {
-            latitude: cursor_geo.latitude,
-            longitude: cursor_geo.longitude,
-        },
-        crate::constants::DEFAULT_TILE_SIZE,
-        new_tile_zoom,
-    );
-
-    // New center = cursor position minus the offset
-    let new_center = world_pixel_to_world_coords(
-        cursor_pixel_after.0 - world_offset_after.0,
-        cursor_pixel_after.1 - world_offset_after.1,
-        crate::constants::DEFAULT_TILE_SIZE,
-        new_tile_zoom,
-    );
-
-    (new_center.latitude, new_center.longitude)
+    let (new_lon, new_lat) = mercator_to_lonlat(bevy::math::DVec2::new(new_center_x, new_center_y));
+    (new_lat, new_lon)
 }
 
 // =============================================================================
@@ -138,28 +106,18 @@ fn check_zoom_level_transition(
     (false, old_tile_zoom)
 }
 
-/// After a zoom level transition, scale existing tiles to match the new
-/// coordinate system and request fresh tiles at the new zoom level.
+/// After a zoom level transition, request fresh tiles at the new zoom level.
+/// In the Mercator meter coordinate system, tile positions are zoom-independent
+/// so no rescaling is needed. Old-zoom tiles are kept visible until new-zoom
+/// tiles load (handled by animate_tile_fades).
 fn apply_zoom_level_transition(
-    old_tile_zoom: ZoomLevel,
+    _old_tile_zoom: ZoomLevel,
     map_state: &MapState,
-    tile_query: &mut Query<(&mut TileFadeState, &mut Transform), With<MapTile>>,
+    _tile_query: &mut Query<(&mut TileFadeState, &mut Transform), With<MapTile>>,
     download_events: &mut MessageWriter<DownloadTilesRequest>,
-    tile_grid: &mut crate::tiles::pool::TileGrid,
+    _tile_grid: &mut crate::tiles::pool::TileGrid,
     radius: u8,
 ) {
-    tile_grid.occupied.clear();
-
-    let scale_factor = if map_state.zoom_level.to_u8() > old_tile_zoom.to_u8() {
-        2.0_f32
-    } else {
-        0.5_f32
-    };
-    for (_fade_state, mut transform) in tile_query.iter_mut() {
-        transform.translation.x *= scale_factor;
-        transform.translation.y *= scale_factor;
-        transform.scale *= scale_factor;
-    }
     request_tiles_at_location(
         download_events,
         map_state.latitude,
@@ -460,16 +418,23 @@ pub(crate) fn handle_pinch_zoom(
 }
 
 /// Apply the camera zoom to the actual camera projection.
+/// In the Mercator meter coordinate system, ortho.scale must account for
+/// the tile zoom level since tiles at different zooms have different meter sizes.
 pub(crate) fn apply_camera_zoom(
     zoom_state: Res<ZoomState>,
+    map_state: Res<crate::map::MapState>,
     mut camera_query: Query<&mut Projection, With<MapCamera>>,
 ) {
     if let Ok(mut projection) = camera_query.single_mut() {
-        // Access the OrthographicProjection within Projection
         if let Projection::Orthographic(ref mut ortho) = projection.as_mut() {
-            // Use camera_zoom directly - tiles are already at correct world-space scale
-            // Smaller scale = more zoomed in, larger scale = more zoomed out
-            ortho.scale = 1.0 / zoom_state.camera_zoom;
+            // Each tile is tile_size_meters across but has 512 texture pixels.
+            // At camera_zoom=1.0 we want each tile to appear as 512 screen pixels
+            // (matching the old pixel-based behavior). So:
+            // ortho.scale = meters_per_tile_pixel / camera_zoom
+            let tile_size_meters = (2.0 * super::tiles::WEB_MERCATOR_EXTENT)
+                / (1u64 << map_state.zoom_level.to_u8()) as f64;
+            let meters_per_tile_pixel = tile_size_meters / crate::constants::DEFAULT_TILE_PIXELS as f64;
+            ortho.scale = (meters_per_tile_pixel / zoom_state.camera_zoom as f64) as f32;
         }
     }
 }

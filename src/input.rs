@@ -132,42 +132,26 @@ pub(crate) fn handle_pan_drag(
             if let Some(last_pos) = drag_state.last_position {
                 let delta = event.position - last_pos;
 
-                // Break follow mode when user manually pans
                 if delta.length() > 2.0 && follow_state.following_icao.is_some() {
                     follow_state.following_icao = None;
                 }
 
-                // Convert screen delta to world delta (account for ortho projection)
-                // When ortho.scale = 1/camera_zoom, world_delta = screen_delta / camera_zoom
-                let delta_world_x = -(delta.x as f64) / zoom_state.camera_zoom as f64;
-                let delta_world_y = (delta.y as f64) / zoom_state.camera_zoom as f64;
+                // Convert screen delta to world delta in meters.
+                // ortho.scale = 1/camera_zoom, so 1 screen pixel = ortho.scale world meters
+                let ortho_scale = 1.0 / zoom_state.camera_zoom as f64;
+                let delta_meters_x = -(delta.x as f64) * ortho_scale;
+                let delta_meters_y = (delta.y as f64) * ortho_scale;
 
-                // Get current center in world pixels
-                let center_ll = LatitudeLongitudeCoordinates {
-                    latitude: map_state.latitude,
-                    longitude: map_state.longitude,
-                };
-                let center_pixel = world_coords_to_world_pixel(
-                    &center_ll,
-                    crate::constants::DEFAULT_TILE_SIZE,
-                    map_state.zoom_level,
+                // Get current center in Mercator meters, apply delta, convert back
+                let center_merc = lonlat_to_mercator(map_state.longitude, map_state.latitude);
+                let new_merc = bevy::math::DVec2::new(
+                    center_merc.x + delta_meters_x,
+                    center_merc.y + delta_meters_y,
                 );
+                let (new_lon, new_lat) = mercator_to_lonlat(new_merc);
 
-                // Calculate new center in world pixels
-                let new_center_x = center_pixel.0 + delta_world_x;
-                let new_center_y = center_pixel.1 + delta_world_y;
-
-                // Convert back to geographic coordinates
-                let new_center_geo = world_pixel_to_world_coords(
-                    new_center_x,
-                    new_center_y,
-                    crate::constants::DEFAULT_TILE_SIZE,
-                    map_state.zoom_level,
-                );
-
-                // Update map coordinates
-                map_state.latitude = clamp_latitude(new_center_geo.latitude);
-                map_state.longitude = clamp_longitude(new_center_geo.longitude);
+                map_state.latitude = clamp_latitude(new_lat);
+                map_state.longitude = clamp_longitude(new_lon);
 
                 // Request tiles periodically during drag to fill visible area
                 let should_request = match drag_state.last_tile_request_coords {

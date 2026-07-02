@@ -282,7 +282,7 @@ fn create_terrain_meshes(
         if let Some(ref quad_mesh) = quad_mesh {
             for (entity, mesh_quad) in terrain_tiles.iter() {
                 if let Ok(mut mesh3d) = mesh_query.get_mut(mesh_quad.0) {
-                    mesh3d.0 = quad_mesh.0.clone();
+                    mesh3d.0 = quad_mesh.meshes_3d.values().next().unwrap().clone();
                 }
                 commands.entity(entity).try_remove::<TerrainTile>();
             }
@@ -291,7 +291,7 @@ fn create_terrain_meshes(
     }
 
     let current_zoom = map_state.zoom_level.to_u8();
-    let altitude_scale = view3d::PIXEL_SCALE * view3d_state.altitude_scale;
+    let altitude_scale = view3d_state.altitude_scale;
 
     for (tile_entity, transform, fade_state, mesh_quad) in tiles_to_upgrade.iter() {
         let tile_key =
@@ -555,7 +555,7 @@ fn create_gpu_terrain_tiles(
 
     let Some(grid_mesh) = grid_mesh else { return };
 
-    let altitude_scale = view3d::PIXEL_SCALE * view3d_state.altitude_scale;
+    let altitude_scale = view3d_state.altitude_scale;
     let transition_factor = match view3d_state.transition {
         TransitionState::Idle => 1.0,
         TransitionState::TransitioningTo3D { progress } => {

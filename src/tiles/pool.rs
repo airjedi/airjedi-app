@@ -13,9 +13,10 @@ pub enum TileState {
     Retiring,
 }
 
-/// Grid-space position key for deduplication: (map_x, map_y, zoom).
-/// map_x and map_y are in world pixel coordinates rounded to integers.
-pub type TileGridKey = (i32, i32, u8);
+/// Grid-space position key for deduplication: (tile_x, tile_y, zoom).
+/// Uses tile coordinates directly, which are the natural dedup key in
+/// the Mercator meter coordinate system.
+pub type TileGridKey = (u32, u32, u8);
 
 /// Maps grid positions to their active tile entity.
 #[derive(Resource, Default)]

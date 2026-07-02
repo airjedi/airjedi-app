@@ -3,7 +3,7 @@ use std::collections::{HashMap, VecDeque};
 use airjedi_fusion::nalgebra::DMatrix;
 use airjedi_fusion::{TrackQuality, TrackerState};
 use bevy::prelude::*;
-use crate::tiles::TileRenderSettings;
+use crate::tiles::LocalOrigin;
 
 use crate::aircraft::components::FusionTrackLink;
 use crate::aircraft::{Aircraft, AircraftListState, CameraFollowState};
@@ -284,7 +284,7 @@ pub fn draw_estimated_track_cones(
     config: Res<EstimatedTrackConfig>,
     list_state: Res<AircraftListState>,
     follow_state: Res<CameraFollowState>,
-    tile_settings: Res<TileRenderSettings>,
+    local_origin: Res<LocalOrigin>,
     map_state: Res<MapState>,
     view3d_state: Res<View3DState>,
     heading_history: Res<HeadingHistory>,
@@ -326,7 +326,7 @@ pub fn draw_estimated_track_cones(
         .unwrap_or(0.0);
 
     let zoom = view3d_state.effective_zoom(map_state.zoom_level);
-    let converter = CoordinateConverter::new(&tile_settings, zoom);
+    let converter = CoordinateConverter::new(&local_origin);
 
     let samples = sample_predicted_track(tracker, &config, turn_rate);
     if samples.is_empty() {

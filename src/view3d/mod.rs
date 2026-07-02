@@ -38,14 +38,16 @@ const MIN_PITCH: f32 = -89.9;
 const MAX_PITCH: f32 = 89.9;
 const MIN_CAMERA_ALTITUDE: f32 = 1000.0;
 const MAX_CAMERA_ALTITUDE: f32 = 120000.0;
-const ALTITUDE_EXAGGERATION: f32 = 20.0;
+/// Vertical exaggeration factor for altitude. In the Mercator meter coordinate
+/// system, real altitude maps 1:1 to world units (1 foot = 0.3048 meters).
+/// At 30,000 ft that's only 9.1km - too small relative to tile extents at
+/// typical zoom levels. This factor scales altitude so terrain and camera
+/// height are visually meaningful. 50x means FL300 = 457km world height.
+const ALTITUDE_EXAGGERATION: f32 = 50.0;
 pub(crate) const CHASE_OFFSET_BEHIND_FT: f32 = 8000.0;
 pub(crate) const CHASE_OFFSET_ABOVE_FT: f32 = 2000.0;
 pub(crate) const CHASE_PITCH: f32 = 5.0;
 pub(crate) const CHASE_TRANSITION_DURATION: f32 = 2.0;
-
-/// Scale factor to convert altitude/distance values to pixel-space.
-pub(crate) const PIXEL_SCALE: f32 = 20.0;
 
 /// View mode for the application
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Reflect)]
@@ -169,17 +171,14 @@ impl View3DState {
             .unwrap_or(map_zoom)
     }
 
-    /// Convert altitude in feet to pixel-space Z offset
+    /// Convert altitude in feet to world-space Z offset (meters with exaggeration).
     pub fn altitude_to_z(&self, altitude_feet: i32) -> f32 {
-        // Convert feet to km, then scale to pixel space
-        let alt_km = altitude_feet as f32 * 0.3048 / 1000.0;
-        alt_km * PIXEL_SCALE * self.altitude_scale
+        altitude_feet as f32 * 0.3048 * self.altitude_scale
     }
 
-    /// Convert camera altitude in feet to pixel-space vertical height
+    /// Convert camera altitude in feet to world-space vertical height (meters with exaggeration).
     pub fn altitude_to_distance(&self) -> f32 {
-        let alt_km = self.camera_altitude * 0.3048 / 1000.0;
-        alt_km * PIXEL_SCALE * self.altitude_scale
+        self.camera_altitude * 0.3048 * self.altitude_scale
     }
 
     /// Calculate the 3D camera transform in Y-up space.
@@ -220,10 +219,8 @@ impl View3DState {
     fn calculate_chase_transform_yup(&self, center: Vec3) -> Transform {
         let yaw_rad = self.camera_yaw.to_radians();
 
-        let behind_dist =
-            CHASE_OFFSET_BEHIND_FT * 0.3048 / 1000.0 * PIXEL_SCALE * self.altitude_scale;
-        let above_dist =
-            CHASE_OFFSET_ABOVE_FT * 0.3048 / 1000.0 * PIXEL_SCALE * self.altitude_scale;
+        let behind_dist = CHASE_OFFSET_BEHIND_FT * 0.3048 * self.altitude_scale;
+        let above_dist = CHASE_OFFSET_ABOVE_FT * 0.3048 * self.altitude_scale;
 
         // Camera position: behind along yaw direction, above center
         // At yaw=0, camera is south (+Z in Y-up), looking north (-Z)
@@ -278,17 +275,7 @@ pub fn toggle_3d_view(
                         Vec2::new(cam_transform.translation.x, cam_transform.translation.y);
                 }
 
-                // Save the 2D zoom level so we can restore it when returning
                 state.saved_2d_zoom_level = Some(map_state.zoom_level.to_u8());
-                // Set rendering_zoom to match the altitude-appropriate zoom,
-                // not the 2D zoom. At FL300 the adaptive zoom is ~12, but
-                // the 2D zoom might be 7-10 - using the 2D zoom would make
-                // everything appear compressed.
-                let adaptive = crate::tiles::altitude_to_zoom_level(
-                    state.camera_altitude,
-                    map_state.zoom_level.to_u8(),
-                );
-                state.rendering_zoom = Some(adaptive);
 
                 // Auto-detect ground elevation from nearest airport
                 detect_ground_elevation(&mut state, &map_state, &aviation_data);
@@ -486,7 +473,7 @@ pub fn update_3d_camera(
     window_query: Query<&Window>,
     zoom_state: Res<crate::ZoomState>,
     map_state: Res<crate::MapState>,
-    tile_settings: Res<crate::tiles::TileRenderSettings>,
+    local_origin: Res<crate::tiles::LocalOrigin>,
 ) {
     if matches!(state.mode, ViewMode::Map2D) && !state.is_transitioning() {
         return;
@@ -508,8 +495,7 @@ pub fn update_3d_camera(
         TransitionState::TransitioningTo2D { progress } => smooth_step(1.0 - progress),
     };
 
-    let render_zoom = state.effective_zoom(map_state.zoom_level);
-    let converter = crate::geo::CoordinateConverter::new(&tile_settings, render_zoom);
+    let converter = crate::geo::CoordinateConverter::new(&local_origin);
     let center_2d = converter.latlon_to_world(map_state.latitude, map_state.longitude);
 
     // When following an aircraft, orbit around its altitude instead of ground.
@@ -649,7 +635,7 @@ pub fn handle_3d_camera_controls(
     mut state: ResMut<View3DState>,
     mut map_state: ResMut<crate::MapState>,
     mut follow_state: ResMut<crate::aircraft::CameraFollowState>,
-    tile_settings: Res<crate::tiles::TileRenderSettings>,
+    local_origin: Res<crate::tiles::LocalOrigin>,
     mut contexts: EguiContexts,
     dock_state: Res<crate::dock::DockTreeState>,
 ) {
@@ -742,7 +728,7 @@ pub fn handle_3d_camera_controls(
                 state.saved_2d_center.x += dx * cam_right_x + dy * cam_fwd_x;
                 state.saved_2d_center.y += dx * cam_right_y + dy * cam_fwd_y;
 
-                sync_center_to_map_state(&state, &tile_settings, &mut map_state);
+                sync_center_to_map_state(&state, &local_origin, &mut map_state);
             }
         }
     } else {
@@ -797,34 +783,21 @@ pub fn handle_3d_camera_controls(
     }
 }
 
-/// Convert saved_2d_center (pixel-space offset from tile reference point) back to
+/// Convert saved_2d_center (local Mercator meter offset) back to
 /// geographic coordinates and update the shared map state so tiles are loaded.
 fn sync_center_to_map_state(
     state: &View3DState,
-    tile_settings: &crate::tiles::TileRenderSettings,
+    local_origin: &crate::tiles::LocalOrigin,
     map_state: &mut crate::MapState,
 ) {
-    use crate::tiles::*;
-
-    let reference_ll = LatitudeLongitudeCoordinates {
-        latitude: tile_settings.reference_latitude,
-        longitude: tile_settings.reference_longitude,
-    };
-    let reference_pixel = world_coords_to_world_pixel(
-        &reference_ll,
-        crate::constants::DEFAULT_TILE_SIZE,
-        map_state.zoom_level,
+    let origin = local_origin.mercator_origin().truncate();
+    let center_merc = bevy::math::DVec2::new(
+        state.saved_2d_center.x as f64 + origin.x,
+        state.saved_2d_center.y as f64 + origin.y,
     );
-
-    let center_geo = world_pixel_to_world_coords(
-        state.saved_2d_center.x as f64 + reference_pixel.0,
-        state.saved_2d_center.y as f64 + reference_pixel.1,
-        crate::constants::DEFAULT_TILE_SIZE,
-        map_state.zoom_level,
-    );
-
-    map_state.latitude = crate::clamp_latitude(center_geo.latitude);
-    map_state.longitude = crate::clamp_longitude(center_geo.longitude);
+    let (lon, lat) = crate::tiles::mercator_to_lonlat(center_merc);
+    map_state.latitude = crate::clamp_latitude(lat);
+    map_state.longitude = crate::clamp_longitude(lon);
 }
 
 /// System to raise map tiles to ground elevation in 3D mode.

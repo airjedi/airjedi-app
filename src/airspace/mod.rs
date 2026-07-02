@@ -29,6 +29,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::data_ingest::canonical::CanonicalRecord;
 use crate::geo::CoordinateConverter;
+use crate::tiles::LocalOrigin;
 use crate::render_layers::RenderCategory;
 use crate::view3d::View3DState;
 
@@ -804,7 +805,7 @@ pub fn update_airspace_meshes(
     display_state: Res<AirspaceDisplayState>,
     view3d_state: Option<Res<View3DState>>,
     map_state: Res<crate::map::MapState>,
-    tile_settings: Res<crate::tiles::TileRenderSettings>,
+    local_origin: Res<LocalOrigin>,
     mut spawned: ResMut<SpawnedAirspaces>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -852,7 +853,7 @@ pub fn update_airspace_meshes(
         .as_ref()
         .map(|v| v.effective_zoom(map_state.zoom_level))
         .unwrap_or(map_state.zoom_level);
-    let converter = CoordinateConverter::new(&tile_settings, render_zoom);
+    let converter = CoordinateConverter::new(&local_origin);
     let is_3d = view3d_state
         .as_ref()
         .is_some_and(|v| v.mode == crate::view3d::ViewMode::Perspective3D);
@@ -1005,7 +1006,7 @@ pub fn draw_airspace_gizmos(
     display_state: Res<AirspaceDisplayState>,
     view3d_state: Option<Res<View3DState>>,
     map_state: Res<crate::map::MapState>,
-    tile_settings: Res<crate::tiles::TileRenderSettings>,
+    local_origin: Res<LocalOrigin>,
 ) {
     if !display_state.enabled || !airspace_data.loaded {
         return;
@@ -1020,11 +1021,7 @@ pub fn draw_airspace_gizmos(
         return;
     }
 
-    let render_zoom = view3d_state
-        .as_ref()
-        .map(|v| v.effective_zoom(map_state.zoom_level))
-        .unwrap_or(map_state.zoom_level);
-    let converter = CoordinateConverter::new(&tile_settings, render_zoom);
+    let converter = CoordinateConverter::new(&local_origin);
     let camera_lat = map_state.latitude;
     let camera_lon = map_state.longitude;
 

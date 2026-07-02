@@ -1,7 +1,7 @@
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::PrimitiveTopology;
 use bevy::prelude::*;
-use crate::tiles::TileRenderSettings;
+use crate::tiles::LocalOrigin;
 
 use super::components::Aircraft;
 use super::staleness::{aircraft_age_secs, staleness_opacity};
@@ -79,7 +79,7 @@ pub fn spawn_mesh_trails(
 }
 
 pub fn update_mesh_trails(
-    tile_settings: Res<TileRenderSettings>,
+    local_origin: Res<LocalOrigin>,
     map_state: Res<MapState>,
     view3d_state: Res<View3DState>,
     trail_config: Res<TrailConfig>,
@@ -102,7 +102,7 @@ pub fn update_mesh_trails(
         return;
     }
 
-    let converter = CoordinateConverter::new(&tile_settings, map_state.zoom_level);
+    let converter = CoordinateConverter::new(&local_origin);
 
     for effect in effect_query.iter() {
         let Ok((trail, aircraft)) = aircraft_query.get(effect.aircraft_entity) else {

@@ -502,12 +502,11 @@ pub fn render_weather_indicators(
 pub fn update_weather_indicator_positions(
     mut indicators: Query<(&WeatherIndicator, &mut Transform)>,
     map_state: Res<MapState>,
-    tile_settings: Res<TileRenderSettings>,
+    local_origin: Res<LocalOrigin>,
     zoom_state: Res<ZoomState>,
     view3d_state: Res<crate::view3d::View3DState>,
 ) {
-    let zoom = view3d_state.effective_zoom(map_state.zoom_level);
-    let converter = CoordinateConverter::new(&tile_settings, zoom);
+    let converter = CoordinateConverter::new(&local_origin);
 
     for (indicator, mut transform) in indicators.iter_mut() {
         let pos = converter.latlon_to_world(indicator.latitude, indicator.longitude);

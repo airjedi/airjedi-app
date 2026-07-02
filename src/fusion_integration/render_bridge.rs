@@ -13,7 +13,7 @@ use airjedi_fusion::types::{IdentifierType, TargetCategory};
 use airjedi_fusion::{TargetClassification, Track, TrackQuality, TrackStatus, TrackerState};
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
-use crate::tiles::TileRenderSettings;
+use crate::tiles::LocalOrigin;
 
 pub fn sync_tracks_to_visuals(
     mut commands: Commands,
@@ -40,7 +40,7 @@ pub fn sync_tracks_to_visuals(
     theme: Res<AppTheme>,
     time: Res<Time<Real>>,
     map_state: Res<MapState>,
-    tile_settings: Res<TileRenderSettings>,
+    local_origin: Res<LocalOrigin>,
     view3d_state: Res<view3d::View3DState>,
 ) {
     let Some(model_registry) = model_registry else {
@@ -158,8 +158,7 @@ pub fn sync_tracks_to_visuals(
                 .unwrap_or(&icao);
             let aircraft_name = display_name;
 
-            let zoom = view3d_state.effective_zoom(map_state.zoom_level);
-            let converter = geo::CoordinateConverter::new(&tile_settings, zoom);
+            let converter = geo::CoordinateConverter::new(&local_origin);
             let pos = converter.latlon_to_world(lat, lon);
 
             let mut entity_commands = commands.spawn((

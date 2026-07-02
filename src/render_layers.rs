@@ -40,7 +40,7 @@ pub fn layers_3d_overlay() -> RenderLayers {
     RenderLayers::from_layers(&[RenderCategory::GIZMOS, RenderCategory::LABELS])
 }
 
-/// All layers Camera2d might ever need (union of 2D + 3D overlay).
+/// All layers Camera2d might ever need (overlays only).
 pub fn layers_camera2d_all() -> RenderLayers {
     RenderLayers::from_layers(&[
         RenderCategory::GIZMOS,

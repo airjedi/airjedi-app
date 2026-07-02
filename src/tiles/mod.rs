@@ -22,6 +22,9 @@ pub mod types;
 pub use coords::{
     lat_lon_to_world_pixel, world_pixel_to_lat_lon, LatLon, SlippyTileCoordinates,
     Coordinates, wrap_tile_x,
+    // Mercator meter coordinate system
+    lonlat_to_mercator, mercator_to_lonlat, tile_to_mercator_aabb,
+    MercatorAabb, LocalOrigin, LocalOriginConversion, WEB_MERCATOR_EXTENT,
 };
 pub use download::{DownloadTilesRequest, TileDownloadSettings, TileReady};
 pub use types::*;

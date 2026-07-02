@@ -109,45 +109,38 @@ pub fn predict_position(
 // Coordinate Converter
 // =============================================================================
 
-/// Helper that encapsulates the repeated reference-point-based coordinate
-/// conversion boilerplate. Construct one per frame/system from
-/// `TileRenderSettings` and `MapState`, then use `latlon_to_world` to
-/// convert geographic coordinates to Bevy world-space positions.
+/// Helper that converts lat/lon to Bevy world-space positions using
+/// Web Mercator meters (EPSG:3857) relative to a floating `LocalOrigin`.
+///
+/// Positions are zoom-independent: the same lat/lon always produces the
+/// same world position regardless of the current tile zoom level.
 pub struct CoordinateConverter {
-    reference_pixel: (f64, f64),
-    zoom_level: ZoomLevel,
+    origin_xy: bevy::math::DVec2,
 }
 
 impl CoordinateConverter {
-    /// Build a converter from tile settings and a zoom level.
-    pub fn new(tile_settings: &TileRenderSettings, zoom_level: ZoomLevel) -> Self {
-        let reference_ll = LatitudeLongitudeCoordinates {
-            latitude: tile_settings.reference_latitude,
-            longitude: tile_settings.reference_longitude,
-        };
-        let reference_pixel = world_coords_to_world_pixel(
-            &reference_ll,
-            crate::constants::DEFAULT_TILE_SIZE,
-            zoom_level,
-        );
+    /// Build a converter from a `LocalOrigin` resource.
+    pub fn new(origin: &LocalOrigin) -> Self {
         Self {
-            reference_pixel,
-            zoom_level,
+            origin_xy: origin.mercator_origin().truncate(),
         }
     }
 
     /// Convert a latitude/longitude to a Bevy world-space Vec2 position,
-    /// relative to the tile reference point.
+    /// relative to the local origin. Units are meters.
     pub fn latlon_to_world(&self, lat: f64, lon: f64) -> Vec2 {
-        let ll = LatitudeLongitudeCoordinates {
-            latitude: lat,
-            longitude: lon,
-        };
-        let pixel =
-            world_coords_to_world_pixel(&ll, crate::constants::DEFAULT_TILE_SIZE, self.zoom_level);
-        Vec2::new(
-            (pixel.0 - self.reference_pixel.0) as f32,
-            (pixel.1 - self.reference_pixel.1) as f32,
-        )
+        let mercator = lonlat_to_mercator(lon, lat);
+        let local = mercator - self.origin_xy;
+        Vec2::new(local.x as f32, local.y as f32)
+    }
+
+    /// Convert a Bevy world-space Vec2 position back to latitude/longitude.
+    pub fn world_to_latlon(&self, world_pos: Vec2) -> (f64, f64) {
+        let mercator = bevy::math::DVec2::new(
+            world_pos.x as f64 + self.origin_xy.x,
+            world_pos.y as f64 + self.origin_xy.y,
+        );
+        let (lon, lat) = mercator_to_lonlat(mercator);
+        (lat, lon)
     }
 }

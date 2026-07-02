@@ -119,61 +119,19 @@ fn follow_aircraft(
 
 fn update_camera_position(
     map_state: Res<MapState>,
-    tile_settings: Res<TileRenderSettings>,
+    local_origin: Res<LocalOrigin>,
     mut camera_query: Query<&mut Transform, With<MapCamera>>,
-    logger: Option<Res<ZoomDebugLogger>>,
     view3d_state: Res<view3d::View3DState>,
 ) {
-    // Don't fight with update_3d_camera during 3D mode or transitions
     if view3d_state.is_3d_active() || view3d_state.is_transitioning() {
         return;
     }
 
-    let zoom_level = map_state.zoom_level;
-
     if let Ok(mut camera_transform) = camera_query.single_mut() {
-        let reference_ll = LatitudeLongitudeCoordinates {
-            latitude: tile_settings.reference_latitude,
-            longitude: tile_settings.reference_longitude,
-        };
-        let reference_pixel = world_coords_to_world_pixel(
-            &reference_ll,
-            crate::constants::DEFAULT_TILE_SIZE,
-            zoom_level,
-        );
-
-        let center_ll = LatitudeLongitudeCoordinates {
-            latitude: map_state.latitude,
-            longitude: map_state.longitude,
-        };
-        let center_pixel = world_coords_to_world_pixel(
-            &center_ll,
-            crate::constants::DEFAULT_TILE_SIZE,
-            zoom_level,
-        );
-
-        let offset_x = center_pixel.0 - reference_pixel.0;
-        let offset_y = center_pixel.1 - reference_pixel.1;
-
-        if let Some(ref log) = logger {
-            if map_state.is_changed() {
-                log.log(&format!(
-                    "=== CAMERA POS UPDATE (zoom: {}) ===",
-                    zoom_level.to_u8()
-                ));
-                log.log(&format!(
-                    "  center: ({:.6}, {:.6}) -> pixel ({:.2}, {:.2})",
-                    map_state.latitude, map_state.longitude, center_pixel.0, center_pixel.1
-                ));
-                log.log(&format!(
-                    "  camera offset: ({:.2}, {:.2})",
-                    offset_x, offset_y
-                ));
-            }
-        }
-
-        camera_transform.translation.x = offset_x as f32;
-        camera_transform.translation.y = offset_y as f32;
+        let converter = geo::CoordinateConverter::new(&local_origin);
+        let pos = converter.latlon_to_world(map_state.latitude, map_state.longitude);
+        camera_transform.translation.x = pos.x;
+        camera_transform.translation.y = pos.y;
     }
 }
 
@@ -271,7 +229,7 @@ fn scale_aircraft_and_labels(
 
 pub(crate) fn update_aircraft_positions(
     map_state: Res<MapState>,
-    tile_settings: Res<TileRenderSettings>,
+    local_origin: Res<LocalOrigin>,
     config: Res<crate::config::AppConfig>,
     view3d_state: Res<view3d::View3DState>,
     mut aircraft_query: Query<(
@@ -280,8 +238,7 @@ pub(crate) fn update_aircraft_positions(
         &mut Transform,
     )>,
 ) {
-    let zoom = view3d_state.effective_zoom(map_state.zoom_level);
-    let converter = geo::CoordinateConverter::new(&tile_settings, zoom);
+    let converter = geo::CoordinateConverter::new(&local_origin);
 
     for (aircraft, interp_opt, mut transform) in aircraft_query.iter_mut() {
         // Use interpolated display position if available and enabled, otherwise raw ADS-B

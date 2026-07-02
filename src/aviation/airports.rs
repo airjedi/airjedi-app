@@ -47,7 +47,7 @@ pub fn spawn_airports(
     mut materials: ResMut<Assets<ColorMaterial>>,
     aviation_data: Res<AviationData>,
     render_state: Res<AirportRenderState>,
-    tile_settings: Res<TileRenderSettings>,
+    local_origin: Res<LocalOrigin>,
     map_state: Res<MapState>,
     view3d_state: Res<crate::view3d::View3DState>,
     existing_airports: Query<Entity, With<AirportMarker>>,
@@ -65,8 +65,7 @@ pub fn spawn_airports(
 
     info!("Spawning airport markers...");
 
-    let zoom = view3d_state.effective_zoom(map_state.zoom_level);
-    let converter = CoordinateConverter::new(&tile_settings, zoom);
+    let converter = CoordinateConverter::new(&local_origin);
 
     let mut count = 0;
     for airport in &aviation_data.airports {
@@ -100,7 +99,7 @@ pub fn spawn_airports(
 
 /// System to update airport positions when map moves
 pub fn update_airport_positions(
-    tile_settings: Res<TileRenderSettings>,
+    local_origin: Res<LocalOrigin>,
     map_state: Res<MapState>,
     aviation_data: Res<AviationData>,
     view3d_state: Res<crate::view3d::View3DState>,
@@ -110,8 +109,7 @@ pub fn update_airport_positions(
         return;
     }
 
-    let zoom = view3d_state.effective_zoom(map_state.zoom_level);
-    let converter = CoordinateConverter::new(&tile_settings, zoom);
+    let converter = CoordinateConverter::new(&local_origin);
 
     // In 3D mode, raise airport markers to ground elevation
     let z = if view3d_state.is_3d_active() {

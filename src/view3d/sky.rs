@@ -735,7 +735,6 @@ pub fn manage_camera_mode(
     };
 
     // Camera3d is always order 0 (primary), Camera2d is always order 1 (overlay).
-    // Orders are fixed at spawn; only fog and ground visibility change per mode.
     cam3d.order = 0;
     cam2d.order = 1;
 

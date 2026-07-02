@@ -245,6 +245,10 @@ fn main() {
         z_layer: 0.0,
         ..default()
     })
+    .insert_resource(tiles::LocalOrigin::from_latlon(
+        constants::DEFAULT_LATITUDE,
+        constants::DEFAULT_LONGITUDE,
+    ))
     .insert_resource(TileDownloadSettings {
         endpoint: config::BasemapStyle::default().endpoint_url().to_string(),
         tiles_directory: std::path::PathBuf::from("tiles/"),
@@ -408,6 +412,7 @@ pub(crate) fn setup_map(
     mut download_events: MessageWriter<DownloadTilesRequest>,
     mut tile_render: ResMut<TileRenderSettings>,
     mut dl_settings: ResMut<TileDownloadSettings>,
+    mut local_origin: ResMut<tiles::LocalOrigin>,
     app_config: Res<config::AppConfig>,
     mut egui_settings: ResMut<EguiGlobalSettings>,
 ) {
@@ -533,6 +538,12 @@ pub(crate) fn setup_map(
     // Update render settings from config
     tile_render.reference_latitude = app_config.map.default_latitude;
     tile_render.reference_longitude = app_config.map.default_longitude;
+
+    // Update local origin for Mercator coordinate system
+    *local_origin = tiles::LocalOrigin::from_latlon(
+        app_config.map.default_latitude,
+        app_config.map.default_longitude,
+    );
 
     // Initialize map state resource from config
     let map_state = MapState {
