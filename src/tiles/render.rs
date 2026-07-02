@@ -788,7 +788,7 @@ fn load_visible_tiles(
                     Mesh3d(tile_mesh.clone()),
                     MeshMaterial3d(material),
                     Transform::from_translation(tile_pos),
-                    Visibility::Inherited,
+                    Visibility::Hidden,
                     TileOriginalImage(tile_handle),
                     MapTile,
                     TileFadeState {
@@ -968,19 +968,50 @@ fn cull_offscreen_tiles(
     }
 }
 
-/// Despawn dominated tiles (wrong zoom level) once current-zoom tiles have loaded.
+/// Show tiles once their texture is loaded. Despawn dominated tiles
+/// (wrong zoom level) once current-zoom tiles are available.
 fn animate_tile_fades(
-    _commands: Commands,
-    _map_state: Res<MapState>,
-    _images: Res<Assets<Image>>,
-    _tile_query: Query<
-        (Entity, &mut TileFadeState, &TileOriginalImage),
+    mut commands: Commands,
+    map_state: Res<MapState>,
+    images: Res<Assets<Image>>,
+    mut tile_query: Query<
+        (Entity, &mut TileFadeState, &mut Visibility, &TileOriginalImage),
         With<MapTile>,
     >,
-    _tile_grid: ResMut<super::pool::TileGrid>,
-    _view3d_state: Res<view3d::View3DState>,
+    mut tile_grid: ResMut<super::pool::TileGrid>,
+    view3d_state: Res<view3d::View3DState>,
 ) {
-    // TODO: Re-enable after tile visibility is verified
+    let current_zoom = map_state.zoom_level.to_u8();
+    let is_3d = view3d_state.is_3d_active();
+
+    let mut has_loaded_current = false;
+    let mut dominated_tiles: Vec<(Entity, u8)> = Vec::new();
+
+    for (entity, mut fade_state, mut visibility, original) in tile_query.iter_mut() {
+        let dominated = if is_3d {
+            fade_state.tile_zoom > current_zoom
+                || current_zoom.saturating_sub(fade_state.tile_zoom) > 4
+        } else {
+            fade_state.tile_zoom != current_zoom
+        };
+
+        if !dominated {
+            if images.contains(&original.0) {
+                fade_state.alpha = 1.0;
+                *visibility = Visibility::Inherited;
+                has_loaded_current = true;
+            }
+        } else {
+            dominated_tiles.push((entity, fade_state.tile_zoom));
+        }
+    }
+
+    if has_loaded_current {
+        for (entity, zoom) in dominated_tiles {
+            tile_grid.occupied.retain(|&(_, _, z), &mut e| !(z == zoom && e == entity));
+            commands.entity(entity).despawn();
+        }
+    }
 }
 
 // =============================================================================

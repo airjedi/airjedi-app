@@ -87,23 +87,30 @@ fn check_zoom_level_transition(
     map_state: &mut MapState,
 ) -> (bool, ZoomLevel) {
     let old_tile_zoom = map_state.zoom_level;
-    let current_tile_zoom = old_tile_zoom.to_u8();
+    let mut changed = false;
 
-    if zoom_state.camera_zoom >= ZOOM_UPGRADE_THRESHOLD && current_tile_zoom < 19 {
-        zoom_state.camera_zoom /= 2.0;
-        if let Ok(new_zoom) = ZoomLevel::try_from(current_tile_zoom + 1) {
-            map_state.zoom_level = new_zoom;
-            return (true, old_tile_zoom);
+    // Loop to handle multiple zoom level crossings from a single large scroll
+    loop {
+        let current_tile_zoom = map_state.zoom_level.to_u8();
+        if zoom_state.camera_zoom >= ZOOM_UPGRADE_THRESHOLD && current_tile_zoom < 19 {
+            zoom_state.camera_zoom /= 2.0;
+            if let Ok(new_zoom) = ZoomLevel::try_from(current_tile_zoom + 1) {
+                map_state.zoom_level = new_zoom;
+                changed = true;
+                continue;
+            }
+        } else if zoom_state.camera_zoom <= ZOOM_DOWNGRADE_THRESHOLD && current_tile_zoom > 0 {
+            zoom_state.camera_zoom *= 2.0;
+            if let Ok(new_zoom) = ZoomLevel::try_from(current_tile_zoom - 1) {
+                map_state.zoom_level = new_zoom;
+                changed = true;
+                continue;
+            }
         }
-    } else if zoom_state.camera_zoom <= ZOOM_DOWNGRADE_THRESHOLD && current_tile_zoom > 0 {
-        zoom_state.camera_zoom *= 2.0;
-        if let Ok(new_zoom) = ZoomLevel::try_from(current_tile_zoom - 1) {
-            map_state.zoom_level = new_zoom;
-            return (true, old_tile_zoom);
-        }
+        break;
     }
 
-    (false, old_tile_zoom)
+    (changed, old_tile_zoom)
 }
 
 /// After a zoom level transition, request fresh tiles at the new zoom level.
