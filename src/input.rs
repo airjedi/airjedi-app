@@ -137,8 +137,12 @@ pub(crate) fn handle_pan_drag(
                 }
 
                 // Convert screen delta to world delta in meters.
-                // ortho.scale = 1/camera_zoom, so 1 screen pixel = ortho.scale world meters
-                let ortho_scale = 1.0 / zoom_state.camera_zoom as f64;
+                // ortho.scale = meters_per_tile_pixel / camera_zoom
+                // 1 screen pixel = ortho.scale world meters
+                let tile_size_meters = (2.0 * crate::tiles::WEB_MERCATOR_EXTENT)
+                    / (1u64 << map_state.zoom_level.to_u8()) as f64;
+                let meters_per_tile_pixel = tile_size_meters / crate::constants::DEFAULT_TILE_PIXELS as f64;
+                let ortho_scale = meters_per_tile_pixel / zoom_state.camera_zoom as f64;
                 let delta_meters_x = -(delta.x as f64) * ortho_scale;
                 let delta_meters_y = (delta.y as f64) * ortho_scale;
 

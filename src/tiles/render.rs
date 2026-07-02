@@ -647,7 +647,6 @@ fn load_visible_tiles(
     };
 
     let cache_dir = crate::tile_cache::tile_cache_dir_for_style(&dl_settings.cache_key);
-    let flat_cache_dir = crate::tile_cache::tile_cache_dir();
     let ext = dl_settings.tile_format.extension();
     let tile_px = constants::DEFAULT_TILE_SIZE.to_pixels();
 
@@ -715,19 +714,7 @@ fn load_visible_tiles(
                     "{}.{}.{}.{}.tile.{}", band.zoom, x, y as u32, tile_px, ext
                 );
                 let style_path = cache_dir.join(&filename);
-                let flat_path = flat_cache_dir.join(&filename);
-
-                let cached = if style_path.exists() {
-                    true
-                } else if flat_path.exists() {
-                    if let Some(p) = style_path.parent() {
-                        let _ = std::fs::create_dir_all(p);
-                    }
-                    let _ = std::fs::copy(&flat_path, &style_path);
-                    true
-                } else {
-                    false
-                };
+                let cached = style_path.exists();
 
                 if !cached {
                     if !uncached_requested {
@@ -744,10 +731,7 @@ fn load_visible_tiles(
                     continue;
                 }
 
-                // Load from the flat asset directory. The style-specific cache
-                // directory is only used for on-disk dedup; the Bevy AssetServer
-                // symlink points to the flat cache.
-                let asset_path = format!("tiles/{}", filename);
+                let asset_path = format!("tiles/{}/{}", dl_settings.cache_key, filename);
                 let tile_handle: Handle<Image> =
                     if let Some(h) = tile_asset_cache.entries.get(&asset_path) {
                         h.clone()
