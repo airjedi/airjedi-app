@@ -301,7 +301,7 @@ pub(crate) fn handle_zoom(
             window.width(),
             window.height(),
             zoom_state.camera_zoom,
-            Some(&view3d_state),
+            Some(&view3d_state), map_state.zoom_level.to_u8(),
         );
         if zoom_level_changed {
             apply_zoom_level_transition(
@@ -404,7 +404,7 @@ pub(crate) fn handle_pinch_zoom(
                 window.width(),
                 window.height(),
                 zoom_state.camera_zoom,
-                Some(&view3d_state),
+                Some(&view3d_state), map_state.zoom_level.to_u8(),
             );
             if zoom_level_changed {
                 apply_zoom_level_transition(

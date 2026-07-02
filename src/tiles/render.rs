@@ -278,8 +278,11 @@ pub fn compute_tile_radius(
     window_height: f32,
     camera_zoom: f32,
     view3d_state: Option<&view3d::View3DState>,
+    zoom_level: u8,
 ) -> u8 {
-    // Check if we're in 3D perspective mode
+    let tile_size_meters = (2.0 * super::WEB_MERCATOR_EXTENT as f32)
+        / (1u64 << zoom_level) as f32;
+
     if let Some(state) = view3d_state {
         if state.is_3d_active() {
             let fov = 60.0_f32.to_radians();
@@ -288,30 +291,21 @@ pub fn compute_tile_radius(
             let half_hfov = (aspect * half_vfov.tan()).atan();
             let pitch_rad = state.camera_pitch.to_radians();
 
-            // Camera height above the map plane
             let effective_distance = state.altitude_to_distance();
             let camera_height = effective_distance * pitch_rad.sin();
 
-            // The far ground edge angle: pitch - half_vfov from horizontal
-            // Ground distance = camera_height / tan(pitch - half_vfov)
-            // Clamp the angle so we don't get infinity when looking near the horizon
             let far_angle = (pitch_rad - half_vfov).max(0.05);
             let far_ground_dist = camera_height / far_angle.tan();
 
-            // Horizontal extent at the ground plane center
             let center_ground_dist = effective_distance * pitch_rad.cos();
             let half_width = center_ground_dist * half_hfov.tan();
 
-            // Use whichever axis demands more tiles
             let max_ground_extent = far_ground_dist.max(half_width);
-            let tile_world_size = constants::DEFAULT_TILE_PIXELS;
-            let tiles_needed = (max_ground_extent / tile_world_size).ceil() as u8 + 1;
-            return tiles_needed.clamp(3, 12);
+            let tiles_needed = (max_ground_extent / tile_size_meters).ceil() as u8 + 1;
+            return tiles_needed.clamp(3, 20);
         }
     }
 
-    // 2D orthographic mode: each tile occupies (tile_pixels * camera_zoom) screen pixels.
-    // Half the viewport in tiles = window_half / (tile_pixels * camera_zoom).
     let tile_screen_px = constants::DEFAULT_TILE_PIXELS * camera_zoom;
     let half_tiles_x = (window_width / (2.0 * tile_screen_px)).ceil() as u8 + 1;
     let half_tiles_y = (window_height / (2.0 * tile_screen_px)).ceil() as u8 + 1;
@@ -381,7 +375,7 @@ fn handle_basemap_change(
     super::download::clear_download_tracking(&mut downloaded_tiles);
 
     let radius = if let Ok(window) = window_query.single() {
-        compute_tile_radius(window.width(), window.height(), zoom_state.camera_zoom, Some(&view3d_state))
+        compute_tile_radius(window.width(), window.height(), zoom_state.camera_zoom, Some(&view3d_state), map_state.zoom_level.to_u8())
     } else {
         constants::TILE_DOWNLOAD_RADIUS
     };
@@ -462,7 +456,7 @@ fn handle_window_resize(
             event.width,
             event.height,
             zoom_state.camera_zoom,
-            Some(&view3d_state),
+            Some(&view3d_state), map_state.zoom_level.to_u8(),
         );
         download_events.write(DownloadTilesRequest {
             latitude: map_state.latitude,
@@ -512,7 +506,7 @@ fn handle_3d_view_tile_refresh(
         window.width(),
         window.height(),
         zoom_state.camera_zoom,
-        Some(&view3d_state),
+        Some(&view3d_state), map_state.zoom_level.to_u8(),
     );
     download_events.write(DownloadTilesRequest {
         latitude: map_state.latitude,
@@ -640,7 +634,7 @@ fn load_visible_tiles(
     let radius = if let Ok(window) = window_query.single() {
         compute_tile_radius(
             window.width(), window.height(),
-            zoom_state.camera_zoom, Some(&view3d_state),
+            zoom_state.camera_zoom, Some(&view3d_state), map_state.zoom_level.to_u8(),
         )
     } else {
         constants::TILE_DOWNLOAD_RADIUS
@@ -910,7 +904,7 @@ fn cull_offscreen_tiles(
     let tile_size_m = (2.0 * super::WEB_MERCATOR_EXTENT as f32) / (1u64 << map_state.zoom_level.to_u8()) as f32;
     let cull_radius = tile_size_m * (compute_tile_radius(
         window.width(), window.height(),
-        zoom_state.camera_zoom, Some(&view3d_state),
+        zoom_state.camera_zoom, Some(&view3d_state), map_state.zoom_level.to_u8(),
     ) as f32 + 2.0);
 
     let mut to_despawn: Vec<Entity> = Vec::new();

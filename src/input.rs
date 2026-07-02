@@ -110,7 +110,7 @@ pub(crate) fn handle_pan_drag(
                 window.width(),
                 window.height(),
                 zoom_state.camera_zoom,
-                Some(&view3d_state),
+                Some(&view3d_state), map_state.zoom_level.to_u8(),
             );
             request_tiles_at_location(
                 &mut download_events,
@@ -172,7 +172,7 @@ pub(crate) fn handle_pan_drag(
                         window.width(),
                         window.height(),
                         zoom_state.camera_zoom,
-                        Some(&view3d_state),
+                        Some(&view3d_state), map_state.zoom_level.to_u8(),
                     );
                     download_events.write(DownloadTilesRequest {
                         latitude: map_state.latitude,
