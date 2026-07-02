@@ -217,8 +217,6 @@ fn main() {
         bevy_inspector_egui::DefaultInspectorConfigPlugin,
         data_ingest::DataIngestPlugin,
     ))
-    // Full speed when focused; ~4 FPS when unfocused to keep ADS-B data
-    // flowing without overwhelming the GPU or triggering macOS throttling.
     .insert_resource(ClearColor(Color::srgb(
         20.0 / 255.0,
         21.0 / 255.0,
@@ -226,7 +224,7 @@ fn main() {
     )))
     .insert_resource(bevy::winit::WinitSettings {
         focused_mode: bevy::winit::UpdateMode::Continuous,
-        unfocused_mode: bevy::winit::UpdateMode::reactive(std::time::Duration::from_millis(250)),
+        unfocused_mode: bevy::winit::UpdateMode::Continuous,
     })
     .init_resource::<HelpOverlayState>()
     .init_resource::<ui_panels::UiPanelManager>()

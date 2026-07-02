@@ -310,13 +310,12 @@ pub fn compute_tile_radius(
         }
     }
 
-    // 2D orthographic mode
-    // +1 accounts for the camera's sub-tile offset: when the camera sits near
-    // a tile edge, the far side needs one extra tile to avoid blank edges.
+    // 2D orthographic mode: each tile occupies (tile_pixels * camera_zoom) screen pixels.
+    // Half the viewport in tiles = window_half / (tile_pixels * camera_zoom).
     let tile_screen_px = constants::DEFAULT_TILE_PIXELS * camera_zoom;
     let half_tiles_x = (window_width / (2.0 * tile_screen_px)).ceil() as u8 + 1;
     let half_tiles_y = (window_height / (2.0 * tile_screen_px)).ceil() as u8 + 1;
-    half_tiles_x.max(half_tiles_y).clamp(3, 8)
+    half_tiles_x.max(half_tiles_y).clamp(3, 25)
 }
 
 /// Send a tile download request for the current map location.
