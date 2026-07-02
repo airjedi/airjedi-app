@@ -89,6 +89,8 @@ fn check_zoom_level_transition(
     let old_tile_zoom = map_state.zoom_level;
     let mut changed = false;
 
+    const MIN_TILE_ZOOM: u8 = 3;
+
     // Loop to handle multiple zoom level crossings from a single large scroll
     loop {
         let current_tile_zoom = map_state.zoom_level.to_u8();
@@ -99,7 +101,7 @@ fn check_zoom_level_transition(
                 changed = true;
                 continue;
             }
-        } else if zoom_state.camera_zoom <= ZOOM_DOWNGRADE_THRESHOLD && current_tile_zoom > 0 {
+        } else if zoom_state.camera_zoom <= ZOOM_DOWNGRADE_THRESHOLD && current_tile_zoom > MIN_TILE_ZOOM {
             zoom_state.camera_zoom *= 2.0;
             if let Ok(new_zoom) = ZoomLevel::try_from(current_tile_zoom - 1) {
                 map_state.zoom_level = new_zoom;
@@ -108,6 +110,11 @@ fn check_zoom_level_transition(
             }
         }
         break;
+    }
+
+    // Clamp camera_zoom so the map always fills the screen at the minimum zoom
+    if map_state.zoom_level.to_u8() == MIN_TILE_ZOOM {
+        zoom_state.camera_zoom = zoom_state.camera_zoom.max(ZOOM_DOWNGRADE_THRESHOLD + 0.01);
     }
 
     (changed, old_tile_zoom)
@@ -428,19 +435,27 @@ pub(crate) fn handle_pinch_zoom(
 /// In the Mercator meter coordinate system, ortho.scale must account for
 /// the tile zoom level since tiles at different zooms have different meter sizes.
 pub(crate) fn apply_camera_zoom(
-    zoom_state: Res<ZoomState>,
+    mut zoom_state: ResMut<ZoomState>,
     map_state: Res<crate::map::MapState>,
     mut camera_query: Query<&mut Projection, With<MapCamera>>,
+    window_query: Query<&Window>,
 ) {
     if let Ok(mut projection) = camera_query.single_mut() {
         if let Projection::Orthographic(ref mut ortho) = projection.as_mut() {
-            // Each tile is tile_size_meters across but has 512 texture pixels.
-            // At camera_zoom=1.0 we want each tile to appear as 512 screen pixels
-            // (matching the old pixel-based behavior). So:
-            // ortho.scale = meters_per_tile_pixel / camera_zoom
             let tile_size_meters = (2.0 * super::tiles::WEB_MERCATOR_EXTENT)
                 / (1u64 << map_state.zoom_level.to_u8()) as f64;
             let meters_per_tile_pixel = tile_size_meters / crate::constants::DEFAULT_TILE_PIXELS as f64;
+
+            // Clamp camera_zoom so the map always fills the viewport width.
+            // min_camera_zoom = window_width * meters_per_tile_pixel / map_width
+            let map_width = 2.0 * super::tiles::WEB_MERCATOR_EXTENT;
+            if let Ok(window) = window_query.single() {
+                let min_zoom = (window.width() as f64 * meters_per_tile_pixel / map_width) as f32;
+                if zoom_state.camera_zoom < min_zoom {
+                    zoom_state.camera_zoom = min_zoom;
+                }
+            }
+
             ortho.scale = (meters_per_tile_pixel / zoom_state.camera_zoom as f64) as f32;
         }
     }
