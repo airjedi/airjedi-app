@@ -739,10 +739,7 @@ pub fn manage_camera_mode(
     cam2d.order = 1;
 
     if state.is_3d_active() {
-        fog.falloff = FogFalloff::Linear {
-            start: state.visibility_range * 0.4,
-            end: state.visibility_range,
-        };
+        // Fog falloff is managed per-frame by update_distance_fog (scales with altitude)
 
         if *last_3d != Some(true) {
             *last_3d = Some(true);
@@ -790,12 +787,11 @@ pub fn update_fog_color_for_time(
         0.0
     };
 
-    // Day: hazy blue matching sky horizon. Night: dark matching tiles.
-    // Fog should blend tiles into the sky dome seamlessly at distance.
-    let r = 0.08 + 0.55 * t;
-    let g = 0.08 + 0.65 * t;
-    let b = 0.10 + 0.80 * t;
-    let a = 0.85 - 0.55 * t; // Night: 0.85, Day: 0.3
+    // Day: subtle blue-gray haze. Night: dark matching tiles.
+    let r = 0.06 + 0.40 * t;
+    let g = 0.06 + 0.48 * t;
+    let b = 0.08 + 0.58 * t;
+    let a = 0.60 - 0.45 * t; // Night: 0.60, Day: 0.15
     fog.color = Color::srgba(r, g, b, a);
 }
 

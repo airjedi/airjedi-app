@@ -452,8 +452,8 @@ pub(crate) fn setup_map(
             directional_light_color: Color::NONE,
             directional_light_exponent: 30.0,
             falloff: bevy::pbr::FogFalloff::Linear {
-                start: 3500.0,
-                end: 5000.0,
+                start: 999999.0,
+                end: 999999.0,
             },
         },
     ));

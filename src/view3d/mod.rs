@@ -527,9 +527,11 @@ pub fn update_3d_camera(
         return;
     }
 
+    let cam_distance = state.altitude_to_distance();
+    let far_plane = (cam_distance * 3.0).max(500_000.0);
     let perspective = PerspectiveProjection {
         fov: base_fov,
-        far: 100_000.0,
+        far: far_plane,
         ..default()
     };
 
@@ -782,11 +784,10 @@ fn sync_center_to_map_state(
     map_state.longitude = crate::clamp_longitude(lon);
 }
 
-/// System to raise map tiles to ground elevation in 3D mode.
-/// In 2D mode, tiles sit at TILE_Z_LAYER + 0.1; in 3D mode, they are raised
-/// to match the ground elevation so the map surface appears at terrain height.
-/// Lower-zoom multi-resolution tiles sit slightly below so higher-zoom tiles
-/// win depth tests and render on top.
+/// Set tile elevation for the current view mode.
+/// In 2D (Z-up): tiles use .z for layer depth.
+/// In 3D (Y-up): tiles use .y for altitude. Lower-zoom tiles sit slightly
+/// below higher-zoom tiles so depth tests render detail on top.
 pub fn update_tile_elevation(
     state: Res<View3DState>,
     map_state: Res<crate::MapState>,
@@ -796,11 +797,11 @@ pub fn update_tile_elevation(
     >,
 ) {
     if state.is_3d_active() {
-        let ground_z = state.altitude_to_z(state.ground_elevation_ft);
+        let ground_y = state.altitude_to_z(state.ground_elevation_ft);
         let current_zoom = map_state.zoom_level.to_u8();
         for (mut transform, fade_state) in tile_query.iter_mut() {
             let zoom_diff = current_zoom.saturating_sub(fade_state.tile_zoom);
-            transform.translation.z = ground_z - zoom_diff as f32 * 0.05;
+            transform.translation.y = ground_y - zoom_diff as f32 * 0.05;
         }
     } else if !state.is_transitioning() {
         for (mut transform, _) in tile_query.iter_mut() {
@@ -920,20 +921,24 @@ pub fn fade_distant_sprites(
     }
 }
 
-/// Update DistanceFog falloff when visibility_range changes.
+/// Scale DistanceFog and visibility_range with camera altitude so tiles
+/// and aircraft fade at appropriate distances.
 fn update_distance_fog(
-    state: Res<View3DState>,
+    mut state: ResMut<View3DState>,
     mut fog_query: Query<&mut DistanceFog, With<Camera3d>>,
 ) {
-    if !state.is_changed() || !state.is_3d_active() {
+    if !state.is_3d_active() {
         return;
     }
     let Ok(mut fog) = fog_query.single_mut() else {
         return;
     };
+    let cam_distance = state.altitude_to_distance();
+    let fog_range = cam_distance * 4.0;
+    state.visibility_range = fog_range;
     fog.falloff = FogFalloff::Linear {
-        start: state.visibility_range * 0.4,
-        end: state.visibility_range,
+        start: fog_range * 0.6,
+        end: fog_range,
     };
 }
 

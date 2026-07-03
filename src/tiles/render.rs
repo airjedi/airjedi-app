@@ -301,8 +301,8 @@ pub fn compute_tile_radius(
             let half_width = center_ground_dist * half_hfov.tan();
 
             let max_ground_extent = far_ground_dist.max(half_width);
-            let tiles_needed = (max_ground_extent / tile_size_meters).ceil() as u8 + 1;
-            return tiles_needed.clamp(3, 20);
+            let tiles_needed = (max_ground_extent / tile_size_meters).ceil() as u16 + 1;
+            return (tiles_needed.min(60)) as u8;
         }
     }
 
@@ -670,12 +670,22 @@ fn load_visible_tiles(
     if is_3d {
         bands[0].radius = radius.max(10);
 
-        for zoom_offset in 1..=3u8 {
-            if current_zoom >= zoom_offset {
+        // Lower-zoom bands provide horizon fill. Each zoom level down
+        // doubles tile size (4x area), so modest radius covers huge ground.
+        // Deeper bands need bigger radii to reach the distant horizon.
+        let horizon_bands: &[(u8, u8)] = &[
+            (1, 12),  // zoom-1: medium detail
+            (2, 10),  // zoom-2: lower detail
+            (3, 15),  // zoom-3: coarse, each tile ~78km at z12 base
+            (4, 20),  // zoom-4: each tile ~156km, 20 tiles = 3,100km
+            (5, 15),  // zoom-5: each tile ~313km, fills to horizon
+        ];
+        for &(offset, band_radius) in horizon_bands {
+            if current_zoom >= offset {
                 bands.push(TileBand {
                     lat, lon,
-                    zoom: current_zoom - zoom_offset,
-                    radius: 10,
+                    zoom: current_zoom - offset,
+                    radius: band_radius,
                 });
             }
         }
@@ -776,6 +786,7 @@ fn load_visible_tiles(
                     },
                     Pickable::IGNORE,
                     RenderLayers::layer(crate::RenderCategory::TILES),
+                    NoFrustumCulling,
                 )).id();
 
                 tile_grid.occupied.insert(tile_key, entity);
@@ -865,7 +876,7 @@ fn request_3d_directional_downloads(
 fn max_tile_entities(view3d_state: Option<&view3d::View3DState>) -> usize {
     if let Some(state) = view3d_state {
         if state.is_3d_active() {
-            return 1500;
+            return 5000;
         }
     }
     500

@@ -496,12 +496,10 @@ pub fn render_view3d_tab(
 
     if state.atmosphere_enabled {
         ui.horizontal(|ui| {
-            ui.label("Visibility:");
-            ui.add(
-                egui::Slider::new(&mut state.visibility_range, 1000.0..=20000.0)
-                    .suffix(" units")
-                    .logarithmic(true),
-            );
+            ui.label(format!(
+                "Fog range: {:.0} m (auto-scales with altitude)",
+                state.visibility_range
+            ));
         });
     }
 
