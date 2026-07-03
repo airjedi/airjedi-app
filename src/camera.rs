@@ -193,34 +193,35 @@ fn sync_aircraft_camera(
 /// projection handle apparent size (closer = bigger, farther = smaller).
 fn scale_aircraft_and_labels(
     zoom_state: Res<ZoomState>,
+    map_state: Res<MapState>,
     view3d_state: Res<crate::view3d::View3DState>,
     mut aircraft_query: Query<&mut Transform, (With<Aircraft>, Without<AircraftLabel>)>,
     mut label_query: Query<(&mut Transform, &mut TextFont), With<AircraftLabel>>,
     new_aircraft: Query<(), Added<Aircraft>>,
 ) {
-    // Update scales when zoom changes, mode changes, or new aircraft are spawned
     if !zoom_state.is_changed() && !view3d_state.is_changed() && new_aircraft.is_empty() {
         return;
     }
 
+    // In Mercator meters, 1 world unit = 1 meter. Scale aircraft and labels
+    // by meters_per_tile_pixel so they appear the same screen size as before.
+    let tile_size_meters = (2.0 * crate::tiles::WEB_MERCATOR_EXTENT)
+        / (1u64 << map_state.zoom_level.to_u8()) as f64;
+    let meters_per_tile_pixel = (tile_size_meters / constants::DEFAULT_TILE_PIXELS as f64) as f32;
+
     if view3d_state.is_3d_active() {
-        // 3D perspective: fixed world-space scale. Perspective projection
-        // naturally makes distant aircraft smaller and nearby aircraft larger.
-        // Scale up significantly so aircraft are visible at altitude distances.
-        let scale = constants::AIRCRAFT_MODEL_SCALE * 10.0;
+        let scale = constants::AIRCRAFT_MODEL_SCALE * meters_per_tile_pixel * 10.0;
         for mut transform in aircraft_query.iter_mut() {
             transform.scale = Vec3::splat(scale);
         }
     } else {
-        // 2D orthographic: scale inversely with zoom for constant screen size
-        let scale = constants::AIRCRAFT_MODEL_SCALE / zoom_state.camera_zoom;
+        let scale = constants::AIRCRAFT_MODEL_SCALE * meters_per_tile_pixel / zoom_state.camera_zoom;
         for mut transform in aircraft_query.iter_mut() {
             transform.scale = Vec3::splat(scale);
         }
     }
 
-    // Labels are always 2D (hidden in 3D mode by update_aircraft_3d_transform)
-    let label_scale = 1.0 / zoom_state.camera_zoom;
+    let label_scale = meters_per_tile_pixel / zoom_state.camera_zoom;
     for (mut transform, mut text_font) in label_query.iter_mut() {
         transform.scale = Vec3::splat(label_scale);
         text_font.font_size = FontSize::Px(constants::BASE_FONT_SIZE);

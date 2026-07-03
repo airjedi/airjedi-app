@@ -36,6 +36,7 @@ impl Plugin for AircraftPlugin {
             .register_type::<CameraFollowState>()
             .init_resource::<SessionClock>()
             .init_resource::<TrailConfig>()
+            .register_type::<TrailConfig>()
             .init_resource::<TrailRecordTimer>()
             .init_resource::<AircraftListState>()
             .init_resource::<AircraftDisplayList>()

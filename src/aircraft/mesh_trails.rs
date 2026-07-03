@@ -22,8 +22,7 @@ pub struct MeshTrailEffect {
     pub material_handle: Handle<StandardMaterial>,
 }
 
-const TRAIL_HALF_WIDTH_2D: f32 = 1.275;
-const TRAIL_HALF_WIDTH_3D: f32 = 3.0;
+// Trail half-widths are now set via TrailConfig and scaled by meters_per_tile_pixel
 
 pub fn spawn_mesh_trails(
     mut commands: Commands,
@@ -104,6 +103,11 @@ pub fn update_mesh_trails(
 
     let converter = CoordinateConverter::new(&local_origin);
 
+    // Scale trail width by meters_per_tile_pixel so trails have consistent screen size
+    let tile_size_meters = (2.0 * crate::tiles::WEB_MERCATOR_EXTENT)
+        / (1u64 << map_state.zoom_level.to_u8()) as f64;
+    let meters_per_tile_pixel = (tile_size_meters / crate::constants::DEFAULT_TILE_PIXELS as f64) as f32;
+
     for effect in effect_query.iter() {
         let Ok((trail, aircraft)) = aircraft_query.get(effect.aircraft_entity) else {
             continue;
@@ -166,9 +170,9 @@ pub fn update_mesh_trails(
             let base_color = altitude_color(point.altitude);
             let linear = base_color.to_linear();
             let base_half_width = if is_3d {
-                TRAIL_HALF_WIDTH_3D
+                trail_config.trail_width_3d * meters_per_tile_pixel / 2.0
             } else {
-                TRAIL_HALF_WIDTH_2D
+                trail_config.trail_width_2d * meters_per_tile_pixel / 2.0
             };
             let segment_estimated = point.estimated || prev_estimated;
 
