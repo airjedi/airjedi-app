@@ -24,7 +24,8 @@ pub use coords::{
     Coordinates, wrap_tile_x,
     // Mercator meter coordinate system
     lonlat_to_mercator, mercator_to_lonlat, tile_to_mercator_aabb,
-    MercatorAabb, LocalOrigin, LocalOriginConversion, WEB_MERCATOR_EXTENT,
+    MercatorAabb, LocalOrigin, LocalOriginConversion, LocalOriginShifted,
+    WEB_MERCATOR_EXTENT,
 };
 pub use download::{DownloadTilesRequest, TileDownloadSettings, TileReady};
 pub use types::*;
@@ -119,6 +120,7 @@ pub struct TilesPlugin;
 impl Plugin for TilesPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TileDownloadSettings>();
+        app.add_message::<LocalOriginShifted>();
         download::setup_download_systems(app);
         pool::setup_pool_systems(app);
         elevation::setup_elevation_systems(app);
@@ -126,6 +128,8 @@ impl Plugin for TilesPlugin {
         render::setup_render_systems(app);
 
         app.add_systems(Update, sync_download_settings_on_basemap_change);
+        app.add_systems(Update, recenter_local_origin);
+        app.add_systems(Update, apply_origin_shift.after(recenter_local_origin));
     }
 }
 
@@ -141,4 +145,74 @@ fn sync_download_settings_on_basemap_change(
     dl.uses_extension_in_url = basemap.style.uses_extension_in_url();
     dl.cache_key = basemap.style.cache_key().to_string();
     crate::tile_cache::setup_tile_cache_for_style(&dl.cache_key);
+}
+
+// ---------------------------------------------------------------------------
+// LocalOrigin recentering
+// ---------------------------------------------------------------------------
+
+fn recenter_local_origin(
+    mut local_origin: ResMut<LocalOrigin>,
+    camera_query: Query<&Transform, With<crate::camera::MapCamera>>,
+    mut shift_events: MessageWriter<LocalOriginShifted>,
+    view3d_state: Res<crate::view3d::View3DState>,
+) {
+    let cam_pos = if view3d_state.is_3d_active() {
+        Vec2::new(
+            view3d_state.saved_2d_center.x,
+            view3d_state.saved_2d_center.y,
+        )
+    } else if let Ok(tf) = camera_query.single() {
+        Vec2::new(tf.translation.x, tf.translation.y)
+    } else {
+        return;
+    };
+
+    let dist = cam_pos.length() as f64;
+    if dist < local_origin.recenter_distance() {
+        return;
+    }
+
+    let shift_merc = bevy::math::DVec3::new(cam_pos.x as f64, cam_pos.y as f64, 0.0);
+    local_origin.shift_mercator_origin(shift_merc);
+
+    let delta = Vec3::new(cam_pos.x, cam_pos.y, 0.0);
+    shift_events.write(LocalOriginShifted { delta });
+    info!(
+        "Recentered LocalOrigin - shifted by ({:.0}, {:.0})m",
+        delta.x, delta.y
+    );
+}
+
+fn apply_origin_shift(
+    mut shift_events: MessageReader<LocalOriginShifted>,
+    mut tile_grid: ResMut<pool::TileGrid>,
+    tile_query: Query<Entity, With<MapTile>>,
+    mut commands: Commands,
+    mut view3d_state: ResMut<crate::view3d::View3DState>,
+    local_origin: Res<LocalOrigin>,
+    map_state: Res<crate::map::MapState>,
+) {
+    let Some(_event) = shift_events.read().last() else {
+        return;
+    };
+
+    // Despawn all tiles and clear the grid. Tiles will be respawned by
+    // load_visible_tiles using the new origin on the next frame.
+    for entity in tile_query.iter() {
+        commands.entity(entity).despawn();
+    }
+    tile_grid.occupied.clear();
+
+    // Recompute saved_2d_center from map_state lat/lon using the new origin.
+    // In 3D mode this is the camera orbit center, accumulated via mouse drags
+    // rather than recomputed every frame, so it needs explicit correction.
+    let converter = crate::geo::CoordinateConverter::new(&local_origin);
+    let new_center = converter.latlon_to_world(map_state.latitude, map_state.longitude);
+    view3d_state.saved_2d_center = new_center;
+
+    // Camera, aircraft, airports, navaids, airspace, etc. all recompute
+    // their positions from lat/lon every frame using CoordinateConverter,
+    // which reads the already-updated LocalOrigin. No manual transform
+    // shifting needed.
 }

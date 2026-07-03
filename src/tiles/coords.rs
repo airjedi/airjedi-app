@@ -95,6 +95,19 @@ impl LocalOrigin {
     pub fn shift_mercator_origin(&mut self, delta: DVec3) {
         self.mercator_origin += delta;
     }
+
+    pub fn set_mercator_origin(&mut self, new_origin: DVec3) {
+        self.mercator_origin = new_origin;
+    }
+}
+
+/// Event fired when LocalOrigin is recentered. Contains the world-space
+/// delta that was subtracted from all positions (old_origin - new_origin
+/// in local coordinates). Listeners should subtract this delta from any
+/// cached world positions.
+#[derive(Message)]
+pub struct LocalOriginShifted {
+    pub delta: Vec3,
 }
 
 /// Trait to convert between local Bevy coordinates and Mercator meters.
