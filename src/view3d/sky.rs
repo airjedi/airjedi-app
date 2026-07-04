@@ -769,16 +769,27 @@ pub fn update_fog_color_for_time(
     state: Res<View3DState>,
     mut fog_query: Query<&mut DistanceFog, With<Camera3d>>,
 ) {
-    if !state.is_3d_active() {
+    let fog_blend = match state.transition {
+        super::TransitionState::TransitioningTo3D { progress } => {
+            super::smooth_step(progress)
+        }
+        super::TransitionState::TransitioningTo2D { progress } => {
+            super::smooth_step(1.0 - progress)
+        }
+        _ if state.is_3d_active() => 1.0,
+        _ => 0.0,
+    };
+
+    if fog_blend < 0.001 {
         return;
     }
+
     let Ok(mut fog) = fog_query.single_mut() else {
         return;
     };
 
     let elev = sun_state.elevation;
 
-    // Blend factor: 1.0 at full day (sun > 10°), 0.0 at night (sun < -6°)
     let t = if elev > 10.0 {
         1.0
     } else if elev > -6.0 {
@@ -787,11 +798,11 @@ pub fn update_fog_color_for_time(
         0.0
     };
 
-    // Day: subtle blue-gray haze. Night: dark matching tiles.
     let r = 0.06 + 0.40 * t;
     let g = 0.06 + 0.48 * t;
     let b = 0.08 + 0.58 * t;
-    let a = 0.60 - 0.45 * t; // Night: 0.60, Day: 0.15
+    let base_a = 0.60 - 0.45 * t;
+    let a = base_a * fog_blend;
     fog.color = Color::srgba(r, g, b, a);
 }
 

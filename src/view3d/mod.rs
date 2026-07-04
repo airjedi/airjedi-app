@@ -501,22 +501,37 @@ pub fn update_3d_camera(
         state.calculate_camera_transform_yup(center_yup)
     };
 
-    // Matching height: perspective altitude that shows the same area as orthographic
+    // Perspective altitude that shows the same ground area as the current ortho view.
+    // ortho.scale = meters_per_tile_pixel / camera_zoom, so visible half-height
+    // in world meters = window.height() * ortho_scale / 2. For perspective at
+    // height h with FOV 60 deg: half-height = h * tan(30). Set equal and solve for h.
     let base_fov = 60.0_f32.to_radians();
+    let tile_size_meters = (2.0 * crate::tiles::WEB_MERCATOR_EXTENT)
+        / (1u64 << map_state.zoom_level.to_u8()) as f64;
+    let mpp = (tile_size_meters / crate::constants::DEFAULT_TILE_PIXELS as f64) as f32;
+    let ortho_scale = mpp / zoom_state.camera_zoom;
     let matching_height = if let Ok(window) = window_query.single() {
-        window.height() / (2.0 * zoom_state.camera_zoom * (base_fov / 2.0).tan())
+        window.height() * ortho_scale / (2.0 * (base_fov / 2.0).tan())
     } else {
         orbit_yup.translation.y * 0.5
     };
 
+    // The visible half-height in world meters that the ortho view shows.
+    // This is the anchor for the dolly-zoom: as FOV widens, height adjusts
+    // to keep this same ground extent visible.
+    let visible_half_h = if let Ok(window) = window_query.single() {
+        window.height() * ortho_scale / 2.0
+    } else {
+        matching_height * (base_fov / 2.0).tan()
+    };
+
     if t < 0.001 {
-        // Pure 2D — restore orthographic, flat position, identity rotation
+        // Pure 2D - restore orthographic, flat position, identity rotation
         let pos_2d = Vec3::new(center_2d.x, center_2d.y, 0.0);
         *proj_2d = Projection::Orthographic(OrthographicProjection::default_2d());
         tf_2d.translation = pos_2d;
         tf_2d.rotation = Quat::IDENTITY;
 
-        // Camera3d mirrors Camera2d in 2D mode
         *tf_3d = *tf_2d;
         *proj_3d = proj_2d.clone();
 
@@ -530,53 +545,58 @@ pub fn update_3d_camera(
 
     let cam_distance = state.altitude_to_distance();
     let far_plane = (cam_distance * 3.0).max(500_000.0);
-    let perspective = PerspectiveProjection {
-        fov: base_fov,
-        far: far_plane,
-        ..default()
-    };
 
     if t > 0.999 {
-        // Pure 3D — Camera3d at Y-up orbit, Camera2d derived via rotation
+        // Pure 3D
+        let perspective = PerspectiveProjection {
+            fov: base_fov,
+            far: far_plane,
+            ..default()
+        };
         *tf_3d = orbit_yup;
         *proj_3d = Projection::Perspective(perspective.clone());
 
-        // Derive Camera2d: rotate Y-up transform to Z-up for tile rendering
-        let rotation = zup_to_yup_rotation().inverse(); // Y-up -> Z-up
+        let rotation = zup_to_yup_rotation().inverse();
         tf_2d.translation = yup_to_zup(tf_3d.translation);
         tf_2d.rotation = rotation * tf_3d.rotation;
         *proj_2d = Projection::Perspective(perspective);
     } else {
-        // Transition: gently tip from overhead to the target orbit with
-        // minimal camera displacement so the view stays recognizable.
+        // Dolly-zoom transition: start with a narrow FOV (nearly orthographic)
+        // and widen to the target 60 deg. Camera height adjusts each frame to
+        // keep the same ground area visible, producing a seamless projection
+        // change with no scale discontinuity.
+        let start_fov = 1.0_f32.to_radians(); // ~1 deg, nearly orthographic
+        let fov = start_fov + (base_fov - start_fov) * t;
+
+        // Height that shows visible_half_h at the current FOV
+        let dolly_height = visible_half_h / (fov / 2.0).tan();
+
         let orbit_pos = orbit_yup.translation;
         let end_height = orbit_pos.y - center_yup.y;
-        let start_height = matching_height.max(end_height);
 
-        let min_height = state.altitude_to_z(5_000);
-        let height = start_height + (end_height - start_height) * t;
-        let height = height.max(min_height);
+        // Blend from dolly height to orbit height
+        let height = dolly_height + (end_height - dolly_height) * t;
+        let height = height.max(state.altitude_to_z(5_000));
 
-        // XZ: only move a fraction toward the orbit offset so the
-        // transition feels like a gentle tilt rather than a flyback.
         let start_xz = Vec3::new(center_yup.x, 0.0, center_yup.z);
         let end_xz = Vec3::new(orbit_pos.x, 0.0, orbit_pos.z);
         let xz = start_xz.lerp(end_xz, t);
 
         tf_3d.translation = Vec3::new(xz.x, center_yup.y + height, xz.z);
 
-        let up = if t < 0.3 {
-            Vec3::NEG_Z
-        } else {
-            Vec3::Y
-        };
+        // Smoothly blend the up vector instead of snapping at t=0.3
+        let up = Vec3::NEG_Z.lerp(Vec3::Y, t.clamp(0.0, 1.0)).normalize();
         tf_3d.rotation = Transform::from_translation(tf_3d.translation)
             .looking_at(center_yup, up)
             .rotation;
 
+        let perspective = PerspectiveProjection {
+            fov,
+            far: far_plane.max(dolly_height * 3.0),
+            ..default()
+        };
         *proj_3d = Projection::Perspective(perspective.clone());
 
-        // Derive Camera2d from Camera3d
         let rotation = zup_to_yup_rotation().inverse();
         tf_2d.translation = yup_to_zup(tf_3d.translation);
         tf_2d.rotation = rotation * tf_3d.rotation;
@@ -585,7 +605,7 @@ pub fn update_3d_camera(
 }
 
 /// Smooth step function for easing transitions
-fn smooth_step(t: f32) -> f32 {
+pub(crate) fn smooth_step(t: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
@@ -918,18 +938,34 @@ fn update_distance_fog(
     mut state: ResMut<View3DState>,
     mut fog_query: Query<&mut DistanceFog, With<Camera3d>>,
 ) {
-    if !state.is_3d_active() {
-        return;
-    }
+    let fog_blend = match state.transition {
+        TransitionState::TransitioningTo3D { progress } => smooth_step(progress),
+        TransitionState::TransitioningTo2D { progress } => smooth_step(1.0 - progress),
+        TransitionState::Idle if state.mode == ViewMode::Perspective3D => 1.0,
+        _ => 0.0,
+    };
+
     let Ok(mut fog) = fog_query.single_mut() else {
         return;
     };
+
+    if fog_blend < 0.001 {
+        fog.falloff = FogFalloff::Linear {
+            start: 999999.0,
+            end: 999999.0,
+        };
+        return;
+    }
+
     let cam_distance = state.altitude_to_distance();
     let fog_range = cam_distance * 4.0;
     state.visibility_range = fog_range;
+
+    // Push fog outward at transition start so it fades in gradually
+    let effective_range = fog_range / fog_blend.max(0.05);
     fog.falloff = FogFalloff::Linear {
-        start: fog_range * 0.6,
-        end: fog_range,
+        start: effective_range * 0.6,
+        end: effective_range,
     };
 }
 

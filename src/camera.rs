@@ -203,22 +203,27 @@ fn scale_aircraft_and_labels(
         return;
     }
 
-    // In Mercator meters, 1 world unit = 1 meter. Scale aircraft and labels
-    // by meters_per_tile_pixel so they appear the same screen size as before.
     let tile_size_meters = (2.0 * crate::tiles::WEB_MERCATOR_EXTENT)
         / (1u64 << map_state.zoom_level.to_u8()) as f64;
     let meters_per_tile_pixel = (tile_size_meters / constants::DEFAULT_TILE_PIXELS as f64) as f32;
 
-    if view3d_state.is_3d_active() {
-        let scale = constants::AIRCRAFT_MODEL_SCALE * meters_per_tile_pixel * 10.0;
-        for mut transform in aircraft_query.iter_mut() {
-            transform.scale = Vec3::splat(scale);
+    // Blend between 2D and 3D scales during transitions to avoid a size flash
+    let t_3d = match view3d_state.transition {
+        view3d::TransitionState::TransitioningTo3D { progress } => {
+            view3d::smooth_step(progress)
         }
-    } else {
-        let scale = constants::AIRCRAFT_MODEL_SCALE * meters_per_tile_pixel / zoom_state.camera_zoom;
-        for mut transform in aircraft_query.iter_mut() {
-            transform.scale = Vec3::splat(scale);
+        view3d::TransitionState::TransitioningTo2D { progress } => {
+            view3d::smooth_step(1.0 - progress)
         }
+        _ if view3d_state.is_3d_active() => 1.0,
+        _ => 0.0,
+    };
+
+    let scale_2d = constants::AIRCRAFT_MODEL_SCALE * meters_per_tile_pixel / zoom_state.camera_zoom;
+    let scale_3d = constants::AIRCRAFT_MODEL_SCALE * meters_per_tile_pixel * 10.0;
+    let scale = scale_2d + (scale_3d - scale_2d) * t_3d;
+    for mut transform in aircraft_query.iter_mut() {
+        transform.scale = Vec3::splat(scale);
     }
 
     let label_scale = meters_per_tile_pixel / zoom_state.camera_zoom;

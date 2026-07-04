@@ -582,25 +582,8 @@ fn update_3d_adaptive_zoom(
                 view3d_state.camera_altitude, adaptive_zoom
             );
             map_state.zoom_level = new_zoom;
-
-            let new_z = new_zoom.to_u8();
-            let min_band = new_z.saturating_sub(4);
-            tile_grid
-                .occupied
-                .retain(|&(_, _, z), _| z >= min_band && z <= new_z);
-            let mut despawned = 0u32;
-            for (entity, fade_state) in tile_query.iter() {
-                if fade_state.tile_zoom > new_z || fade_state.tile_zoom < min_band {
-                    super::pool::release_tile(&mut commands, entity, &mut tile_pool);
-                    despawned += 1;
-                }
-            }
-            if despawned > 0 {
-                debug!(
-                    "Zoom changed {}->{}: despawned {} out-of-band tiles",
-                    old_zoom, new_z, despawned
-                );
-            }
+            // Don't despawn old tiles here - animate_tile_fades handles
+            // gradual replacement once new-zoom tiles have loaded.
         }
     }
 }
@@ -1024,8 +1007,10 @@ fn cull_offscreen_tiles(
     }
 }
 
-/// Show tiles once their texture is loaded. Dominated tiles (wrong zoom
-/// level) are released back to the pool once current-zoom tiles arrive.
+/// Show tiles once their texture is loaded. In 3D mode, dominated tiles
+/// (too detailed or too coarse for the current zoom) are kept visible until
+/// a loaded tile at a closer zoom level covers the same area, preventing
+/// flashing during zoom transitions.
 fn animate_tile_fades(
     mut commands: Commands,
     map_state: Res<MapState>,
@@ -1041,32 +1026,82 @@ fn animate_tile_fades(
     let current_zoom = map_state.zoom_level.to_u8();
     let is_3d = view3d_state.is_3d_active();
 
-    let mut has_loaded_current = false;
-    let mut dominated_tiles: Vec<(Entity, u8)> = Vec::new();
+    // First pass: show tiles whose textures have loaded, track which
+    // grid positions have a loaded tile at or near current zoom.
+    let mut loaded_positions: std::collections::HashSet<(u32, u32)> = Default::default();
 
-    for (entity, mut fade_state, mut visibility, original) in tile_query.iter_mut() {
-        let dominated = if is_3d {
-            fade_state.tile_zoom > current_zoom
-                || current_zoom.saturating_sub(fade_state.tile_zoom) > 4
-        } else {
-            fade_state.tile_zoom != current_zoom
-        };
-
-        if !dominated {
-            if images.contains(&original.0) {
+    for (_, mut fade_state, mut visibility, original) in tile_query.iter_mut() {
+        if images.contains(&original.0) {
+            if *visibility == Visibility::Hidden {
                 fade_state.alpha = 1.0;
                 *visibility = Visibility::Inherited;
-                has_loaded_current = true;
             }
-        } else {
-            dominated_tiles.push((entity, fade_state.tile_zoom));
+            if fade_state.tile_zoom == current_zoom {
+                // Track which tile-grid positions have a loaded current-zoom tile.
+                // We use the tile_grid to find the (x, y) for this entity later.
+                loaded_positions.insert((0, 0)); // placeholder, real check below
+            }
         }
     }
 
-    if has_loaded_current {
-        for (entity, zoom) in dominated_tiles {
+    // Build a set of (x, y) positions that have a loaded current-zoom tile
+    loaded_positions.clear();
+    for (&(tx, ty, z), &ent) in tile_grid.occupied.iter() {
+        if z == current_zoom {
+            if let Ok((_, _, vis, orig)) = tile_query.get(ent) {
+                if *vis == Visibility::Inherited && images.contains(&orig.0) {
+                    loaded_positions.insert((tx, ty));
+                }
+            }
+        }
+    }
+
+    if is_3d {
+        // In 3D, only despawn tiles that are:
+        // 1. More than 5 zoom levels from current (way too coarse/fine)
+        // 2. Higher detail than current AND covered by a loaded current-zoom tile
+        let mut to_release: Vec<(Entity, u8)> = Vec::new();
+
+        for (&(tx, ty, z), &ent) in tile_grid.occupied.iter() {
+            if z == current_zoom {
+                continue;
+            }
+
+            // Tiles way outside the useful band - always remove
+            if z > current_zoom + 1 || current_zoom.saturating_sub(z) > 5 {
+                to_release.push((ent, z));
+                continue;
+            }
+
+            // For tiles 1 level above current zoom: check if the parent
+            // position at current zoom has loaded. Each zoom+1 tile maps
+            // to parent at (x/2, y/2, zoom-1).
+            if z == current_zoom + 1 {
+                let parent_x = tx / 2;
+                let parent_y = ty / 2;
+                if loaded_positions.contains(&(parent_x, parent_y)) {
+                    to_release.push((ent, z));
+                }
+            }
+        }
+
+        for (entity, zoom) in to_release {
             tile_grid.occupied.retain(|&(_, _, z), &mut e| !(z == zoom && e == entity));
             super::pool::release_tile(&mut commands, entity, &mut tile_pool);
+        }
+    } else {
+        // 2D mode: despawn non-current-zoom tiles once any current tile loads
+        if !loaded_positions.is_empty() {
+            let mut to_release: Vec<(Entity, u8)> = Vec::new();
+            for (&(_, _, z), &ent) in tile_grid.occupied.iter() {
+                if z != current_zoom {
+                    to_release.push((ent, z));
+                }
+            }
+            for (entity, zoom) in to_release {
+                tile_grid.occupied.retain(|&(_, _, z), &mut e| !(z == zoom && e == entity));
+                super::pool::release_tile(&mut commands, entity, &mut tile_pool);
+            }
         }
     }
 }
