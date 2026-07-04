@@ -60,34 +60,25 @@ impl TilePool {
 }
 
 /// Pre-warm the pool by spawning a batch of hidden tile entities.
-/// Called at startup and whenever the pool is exhausted.
+/// Entities are spawned with minimal components - the correct mesh and
+/// material are set when the entity is activated via `activate_tile`.
 pub fn grow_pool(
     commands: &mut Commands,
     pool: &mut TilePool,
-    mesh: &Handle<Mesh>,
-    material: &Handle<StandardMaterial>,
     count: usize,
 ) {
     for _ in 0..count {
         let entity = commands
             .spawn((
                 Name::new("Tile (pooled)"),
-                Mesh3d(mesh.clone()),
-                MeshMaterial3d(material.clone()),
                 Transform::default(),
                 Visibility::Hidden,
                 TileState::Idle,
-                super::MapTile,
-                super::render::TileOriginalImage(Handle::default()),
-                super::render::TileFadeState {
-                    alpha: 0.0,
-                    tile_zoom: 0,
-                    spawn_time: 0.0,
-                },
                 Pickable::IGNORE,
                 bevy::camera::visibility::RenderLayers::layer(
                     crate::RenderCategory::TILES,
                 ),
+                bevy::camera::visibility::NoFrustumCulling,
             ))
             .id();
         pool.available.push(entity);
@@ -108,8 +99,9 @@ pub fn retire_tile(
     commands.entity(entity).insert(TileState::Retiring);
 }
 
-/// Transition a tile entity from Retiring (or Active) to Idle.
-/// Hides it and returns it to the pool.
+/// Transition a tile entity from Active/Retiring to Idle.
+/// Removes rendering components and the MapTile marker so idle entities
+/// don't match tile queries (preventing double-release on mode switches).
 pub fn release_tile(
     commands: &mut Commands,
     entity: Entity,
@@ -120,25 +112,35 @@ pub fn release_tile(
         Visibility::Hidden,
         Transform::default(),
     ));
+    commands.entity(entity).remove::<(
+        super::MapTile,
+        Mesh3d,
+        MeshMaterial3d<StandardMaterial>,
+        super::render::TileOriginalImage,
+        super::render::TileFadeState,
+    )>();
     pool.release(entity);
 }
 
-/// Activate a pooled tile entity at a specific position with a material.
+/// Activate a pooled tile entity at a specific position with mesh and material.
 pub fn activate_tile(
     commands: &mut Commands,
     entity: Entity,
     grid: &mut TileGrid,
     key: TileGridKey,
     transform: Transform,
+    mesh: Handle<Mesh>,
     material: Handle<StandardMaterial>,
     original_image: Handle<Image>,
     tile_zoom: u8,
     spawn_time: f64,
 ) {
     commands.entity(entity).insert((
+        super::MapTile,
         TileState::Active,
-        Visibility::Hidden, // starts hidden until texture loads
+        Visibility::Hidden,
         transform,
+        Mesh3d(mesh),
         MeshMaterial3d(material),
         super::render::TileOriginalImage(original_image),
         super::render::TileFadeState {

@@ -16,7 +16,7 @@ use crate::{clamp_latitude, clamp_longitude};
 /// Resource to track pan/drag state.
 #[derive(Resource, Default)]
 pub(crate) struct DragState {
-    is_dragging: bool,
+    pub(crate) is_dragging: bool,
     last_position: Option<Vec2>,
     last_tile_request_coords: Option<(f64, f64)>,
 }

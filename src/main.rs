@@ -415,6 +415,7 @@ pub(crate) fn setup_map(
     mut local_origin: ResMut<tiles::LocalOrigin>,
     app_config: Res<config::AppConfig>,
     mut egui_settings: ResMut<EguiGlobalSettings>,
+    mut cached_tile_set: ResMut<tiles::CachedTileSet>,
 ) {
     // Prevent bevy_egui from auto-attaching to Camera2d. We use a dedicated UI
     // camera so egui stays visible when Camera2d switches to perspective in 3D mode.
@@ -534,6 +535,12 @@ pub(crate) fn setup_map(
     dl_settings.endpoint = app_config.map.basemap_style.endpoint_url().to_string();
     dl_settings.tile_format = app_config.map.basemap_style.tile_format();
     dl_settings.reverse_axes = app_config.map.basemap_style.reverse_axes();
+
+    // Populate in-memory index of cached tiles to avoid per-frame filesystem stats
+    tiles::scan_tile_cache_for_style(
+        &mut cached_tile_set,
+        app_config.map.basemap_style.cache_key(),
+    );
 
     // Update render settings from config
     tile_render.reference_latitude = app_config.map.default_latitude;

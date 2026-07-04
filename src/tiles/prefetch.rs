@@ -1,7 +1,6 @@
 use bevy::prelude::*;
 use std::collections::VecDeque;
 
-use super::coords::SlippyTileCoordinates;
 use super::download::{DownloadTilesRequest, TileDownloadSettings};
 use super::types::{DownloadPriority, Radius};
 use crate::map::MapState;

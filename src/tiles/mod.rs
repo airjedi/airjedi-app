@@ -33,8 +33,9 @@ pub use types::*;
 // Re-export rendering types so `use crate::tiles::*` works as before
 pub use render::{
     TileFadeState, TileMeshQuad, TileQuadMesh,
-    Tile3DRefreshTimer, TileOriginalImage, GridOverlay,
+    Tile3DRefreshTimer, TileOriginalImage, GridOverlay, CachedTileSet,
     altitude_to_zoom_level, compute_tile_radius, request_tiles_at_location,
+    scan_tile_cache_for_style,
 };
 
 /// Deprecated: was part of the old dual-entity tile design. Kept as a no-op
@@ -127,6 +128,7 @@ impl Plugin for TilesPlugin {
         prefetch::setup_prefetch_systems(app);
         render::setup_render_systems(app);
 
+        app.add_systems(Startup, prewarm_tile_pool);
         app.add_systems(Update, sync_download_settings_on_basemap_change);
         app.add_systems(Update, recenter_local_origin);
         app.add_systems(Update, apply_origin_shift.after(recenter_local_origin));
@@ -184,9 +186,14 @@ fn recenter_local_origin(
     );
 }
 
+fn prewarm_tile_pool(mut commands: Commands, mut tile_pool: ResMut<pool::TilePool>) {
+    pool::grow_pool(&mut commands, &mut tile_pool, 256);
+}
+
 fn apply_origin_shift(
     mut shift_events: MessageReader<LocalOriginShifted>,
     mut tile_grid: ResMut<pool::TileGrid>,
+    mut tile_pool: ResMut<pool::TilePool>,
     tile_query: Query<Entity, With<MapTile>>,
     mut commands: Commands,
     mut view3d_state: ResMut<crate::view3d::View3DState>,
@@ -197,10 +204,8 @@ fn apply_origin_shift(
         return;
     };
 
-    // Despawn all tiles and clear the grid. Tiles will be respawned by
-    // load_visible_tiles using the new origin on the next frame.
     for entity in tile_query.iter() {
-        commands.entity(entity).despawn();
+        pool::release_tile(&mut commands, entity, &mut tile_pool);
     }
     tile_grid.occupied.clear();
 

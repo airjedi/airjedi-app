@@ -158,10 +158,17 @@ pub(crate) fn handle_zoom(
     dock_state: Res<dock::DockTreeState>,
     view3d_state: Res<view3d::View3DState>,
     mut tile_grid: ResMut<crate::tiles::pool::TileGrid>,
+    drag_state: Res<crate::input::DragState>,
     mut last_requested_radius: Local<u8>,
 ) {
     // In 3D mode, scroll is handled by handle_3d_camera_controls
     if view3d_state.is_3d_active() || view3d_state.is_transitioning() {
+        return;
+    }
+
+    // Don't zoom while panning - macOS trackpad two-finger drag generates
+    // both cursor movement and scroll events simultaneously.
+    if drag_state.is_dragging {
         return;
     }
 
@@ -349,10 +356,15 @@ pub(crate) fn handle_pinch_zoom(
     dock_state: Res<dock::DockTreeState>,
     view3d_state: Res<view3d::View3DState>,
     mut tile_grid: ResMut<crate::tiles::pool::TileGrid>,
+    drag_state: Res<crate::input::DragState>,
     mut last_requested_radius: Local<u8>,
 ) {
     // In 3D mode, zoom is handled by handle_3d_camera_controls
     if view3d_state.is_3d_active() || view3d_state.is_transitioning() {
+        return;
+    }
+
+    if drag_state.is_dragging {
         return;
     }
 

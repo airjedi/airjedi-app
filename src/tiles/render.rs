@@ -10,9 +10,7 @@ use crate::constants;
 use crate::map::{MapState, ZoomState};
 use crate::tile_cache;
 use crate::view3d;
-use crate::RenderCategory;
-use crate::{clamp_latitude, clamp_longitude, ZoomDebugLogger, ZoomSet};
-use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
+use crate::{clamp_latitude, clamp_longitude, ZoomSet};
 
 // =============================================================================
 // Components and Resources
@@ -85,9 +83,36 @@ pub struct TileOriginalImage(pub Handle<Image>);
 /// despawns. Without this, Bevy drops the GPU texture when the last entity
 /// referencing it is despawned, forcing a disk reload (and gray flash) when the
 /// same tile is re-requested.
+///
+/// Each entry tracks its last-access time for LRU eviction. A periodic
+/// eviction system removes entries not accessed in 30s and not currently
+/// displayed, preventing unbounded VRAM growth during panning.
 #[derive(Resource, Default)]
 struct TileAssetCache {
-    entries: std::collections::HashMap<String, Handle<Image>>,
+    entries: std::collections::HashMap<String, (Handle<Image>, f64)>,
+}
+
+const TILE_ASSET_EVICTION_SECS: f64 = 30.0;
+const TILE_ASSET_CACHE_HARD_CAP: usize = 2000;
+const TILE_FADE_DURATION_SECS: f64 = 0.2;
+
+#[derive(Resource)]
+struct TileAssetEvictionTimer(Timer);
+
+impl Default for TileAssetEvictionTimer {
+    fn default() -> Self {
+        Self(Timer::from_seconds(5.0, TimerMode::Repeating))
+    }
+}
+
+/// In-memory index of tile filenames known to exist in the disk cache.
+/// Eliminates per-frame filesystem stat calls in load_visible_tiles by
+/// replacing path.exists() with a HashSet lookup. Populated at startup
+/// by scanning the cache directory, and updated when TileReady messages
+/// arrive from the download pipeline.
+#[derive(Resource, Default)]
+pub struct CachedTileSet {
+    pub filenames: std::collections::HashSet<String>,
 }
 
 /// Controls whether tiles display a procedural grid instead of their imagery.
@@ -108,6 +133,8 @@ pub(super) fn setup_render_systems(app: &mut App) {
         app.init_resource::<Tile3DRefreshTimer>()
             .init_resource::<AltitudeChangeTracker>()
             .init_resource::<TileAssetCache>()
+            .init_resource::<CachedTileSet>()
+            .init_resource::<TileAssetEvictionTimer>()
             .register_type::<GridOverlay>()
             .add_systems(Startup, (setup_tile_quad_mesh, setup_grid_overlay))
             .add_systems(Update, toggle_grid_overlay)
@@ -134,7 +161,9 @@ pub(super) fn setup_render_systems(app: &mut App) {
             )
             .add_systems(Update, animate_tile_fades.after(load_visible_tiles))
             .add_systems(Update, cull_offscreen_tiles.after(load_visible_tiles))
-            .add_systems(Update, orient_tiles_for_view_mode.after(load_visible_tiles));
+            .add_systems(Update, orient_tiles_for_view_mode.after(load_visible_tiles))
+            .add_systems(Update, update_cached_tile_set.before(load_visible_tiles))
+            .add_systems(Update, evict_stale_tile_assets);
 }
 
 // =============================================================================
@@ -343,12 +372,14 @@ fn handle_basemap_change(
     tile_query: Query<Entity, With<MapTile>>,
     mut tile_asset_cache: ResMut<TileAssetCache>,
     mut tile_grid: ResMut<super::pool::TileGrid>,
+    mut tile_pool: ResMut<super::pool::TilePool>,
     mut downloaded_tiles: ResMut<super::download::DownloadedTiles>,
     mut download_events: MessageWriter<DownloadTilesRequest>,
     map_state: Res<MapState>,
     zoom_state: Res<ZoomState>,
     window_query: Query<&Window>,
     view3d_state: Res<view3d::View3DState>,
+    mut cached_tile_set: ResMut<CachedTileSet>,
     mut last_style: Local<Option<crate::config::BasemapStyle>>,
 ) {
     let current = basemap_state.style;
@@ -367,12 +398,13 @@ fn handle_basemap_change(
     );
 
     for entity in tile_query.iter() {
-        commands.entity(entity).despawn();
+        super::pool::release_tile(&mut commands, entity, &mut tile_pool);
     }
 
     tile_grid.occupied.clear();
     tile_asset_cache.entries.clear();
     super::download::clear_download_tracking(&mut downloaded_tiles);
+    scan_tile_cache_for_style(&mut cached_tile_set, &basemap_state.style.cache_key());
 
     let radius = if let Ok(window) = window_query.single() {
         compute_tile_radius(window.width(), window.height(), zoom_state.camera_zoom, Some(&view3d_state), map_state.zoom_level.to_u8())
@@ -398,6 +430,7 @@ fn handle_tile_load_failures(
         With<MapTile>,
     >,
     mut tile_grid: ResMut<super::pool::TileGrid>,
+    mut tile_pool: ResMut<super::pool::TilePool>,
 ) {
     for event in failed_events.read() {
         let asset_path = event.path.path();
@@ -412,12 +445,10 @@ fn handle_tile_load_failures(
             let failed_id = event.id;
             for (entity, original, fade) in tile_query.iter() {
                 if original.0.id() == failed_id {
-                    // Parse tile coords from filename to find TileGrid key.
-                    // Filename format: {zoom}.{x}.{y}.{size}.tile.{ext}
                     if let Some(key) = parse_tile_key_from_path(&path_str, fade.tile_zoom) {
                         tile_grid.occupied.remove(&key);
                     }
-                    commands.entity(entity).despawn();
+                    super::pool::release_tile(&mut commands, entity, &mut tile_pool);
                     debug!(
                         "Despawned tile entity with failed texture: {:?}",
                         asset_path
@@ -528,6 +559,7 @@ fn update_3d_adaptive_zoom(
     view3d_state: Res<view3d::View3DState>,
     mut map_state: ResMut<MapState>,
     mut tile_grid: ResMut<super::pool::TileGrid>,
+    mut tile_pool: ResMut<super::pool::TilePool>,
     tile_query: Query<(Entity, &TileFadeState), With<MapTile>>,
     mut alt_tracker: ResMut<AltitudeChangeTracker>,
 ) {
@@ -559,7 +591,7 @@ fn update_3d_adaptive_zoom(
             let mut despawned = 0u32;
             for (entity, fade_state) in tile_query.iter() {
                 if fade_state.tile_zoom > new_z || fade_state.tile_zoom < min_band {
-                    commands.entity(entity).despawn();
+                    super::pool::release_tile(&mut commands, entity, &mut tile_pool);
                     despawned += 1;
                 }
             }
@@ -609,7 +641,6 @@ fn track_altitude_changes(
 fn load_visible_tiles(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
-    tile_settings: Res<TileRenderSettings>,
     dl_settings: Res<super::download::TileDownloadSettings>,
     map_state: Res<MapState>,
     local_origin: Res<super::coords::LocalOrigin>,
@@ -617,12 +648,13 @@ fn load_visible_tiles(
     mut materials: ResMut<Assets<StandardMaterial>>,
     quad_mesh: Option<Res<TileQuadMesh>>,
     mut tile_grid: ResMut<super::pool::TileGrid>,
+    mut tile_pool: ResMut<super::pool::TilePool>,
     mut download_events: MessageWriter<DownloadTilesRequest>,
     view3d_state: Res<view3d::View3DState>,
-    basemap_state: Res<crate::config::CurrentBasemapState>,
     window_query: Query<&Window>,
     zoom_state: Res<crate::map::ZoomState>,
     time: Res<Time<Real>>,
+    cached_tile_set: Res<CachedTileSet>,
 ) {
     let Some(ref quad_meshes) = quad_mesh else {
         return;
@@ -640,7 +672,6 @@ fn load_visible_tiles(
         constants::TILE_DOWNLOAD_RADIUS
     };
 
-    let cache_dir = crate::tile_cache::tile_cache_dir_for_style(&dl_settings.cache_key);
     let ext = dl_settings.tile_format.extension();
     let tile_px = constants::DEFAULT_TILE_SIZE.to_pixels();
 
@@ -650,7 +681,6 @@ fn load_visible_tiles(
     } else {
         -1.0
     };
-    let [pr, pg, pb] = basemap_state.style.placeholder_color();
     // No rotation needed: 2D uses Rectangle (XY plane), 3D uses Plane3d (XZ plane)
 
     let lat = map_state.latitude;
@@ -668,17 +698,17 @@ fn load_visible_tiles(
     bands.push(TileBand { lat, lon, zoom: current_zoom, radius });
 
     if is_3d {
-        bands[0].radius = radius.max(10);
+        // Cap primary band - the near ground under the camera doesn't need
+        // 60-tile radius at full zoom. Horizon coverage comes from lower-zoom
+        // bands where each tile covers 4x-32x more area.
+        bands[0].radius = radius.clamp(10, 20);
 
-        // Lower-zoom bands provide horizon fill. Each zoom level down
-        // doubles tile size (4x area), so modest radius covers huge ground.
-        // Deeper bands need bigger radii to reach the distant horizon.
         let horizon_bands: &[(u8, u8)] = &[
-            (1, 12),  // zoom-1: medium detail
-            (2, 10),  // zoom-2: lower detail
-            (3, 15),  // zoom-3: coarse, each tile ~78km at z12 base
-            (4, 20),  // zoom-4: each tile ~156km, 20 tiles = 3,100km
-            (5, 15),  // zoom-5: each tile ~313km, fills to horizon
+            (1, 8),   // zoom-1: medium detail
+            (2, 6),   // zoom-2: lower detail
+            (3, 8),   // zoom-3: coarse
+            (4, 10),  // zoom-4: each tile ~156km
+            (5, 8),   // zoom-5: each tile ~313km, fills to horizon
         ];
         for &(offset, band_radius) in horizon_bands {
             if current_zoom >= offset {
@@ -691,7 +721,7 @@ fn load_visible_tiles(
         }
     }
 
-    let mut uncached_requested = false;
+    let mut requested_zooms = std::collections::HashSet::new();
 
     for band in &bands {
         let Ok(band_zoom) = ZoomLevel::try_from(band.zoom) else { continue };
@@ -717,17 +747,16 @@ fn load_visible_tiles(
                 let filename = format!(
                     "{}.{}.{}.{}.tile.{}", band.zoom, x, y as u32, tile_px, ext
                 );
-                let style_path = cache_dir.join(&filename);
-                let cached = style_path.exists();
+                let cached = cached_tile_set.filenames.contains(&filename);
 
                 if !cached {
-                    if !uncached_requested {
-                        uncached_requested = true;
+                    if !requested_zooms.contains(&band.zoom) {
+                        requested_zooms.insert(band.zoom);
                         download_events.write(DownloadTilesRequest {
-                            latitude: lat,
-                            longitude: lon,
-                            zoom: map_state.zoom_level.to_u8(),
-                            radius: Radius(radius),
+                            latitude: band.lat,
+                            longitude: band.lon,
+                            zoom: band.zoom,
+                            radius: Radius(band.radius),
                             priority: DownloadPriority::Near,
                             use_cache: true,
                         });
@@ -737,11 +766,12 @@ fn load_visible_tiles(
 
                 let asset_path = format!("tiles/{}/{}", dl_settings.cache_key, filename);
                 let tile_handle: Handle<Image> =
-                    if let Some(h) = tile_asset_cache.entries.get(&asset_path) {
+                    if let Some((h, access_time)) = tile_asset_cache.entries.get_mut(&asset_path) {
+                        *access_time = now;
                         h.clone()
                     } else {
                         let h: Handle<Image> = asset_server.load(&asset_path);
-                        tile_asset_cache.entries.insert(asset_path, h.clone());
+                        tile_asset_cache.entries.insert(asset_path, (h.clone(), now));
                         h
                     };
 
@@ -771,25 +801,25 @@ fn load_visible_tiles(
 
                 let Some(tile_mesh) = tile_mesh else { continue };
 
-                let entity = commands.spawn((
-                    Name::new(format!("Map Tile z{}", band.zoom)),
-                    Mesh3d(tile_mesh.clone()),
-                    MeshMaterial3d(material),
+                let entity = match tile_pool.take() {
+                    Some(e) => e,
+                    None => {
+                        super::pool::grow_pool(&mut commands, &mut tile_pool, 64);
+                        tile_pool.take().expect("pool should have entities after grow")
+                    }
+                };
+                super::pool::activate_tile(
+                    &mut commands,
+                    entity,
+                    &mut tile_grid,
+                    tile_key,
                     Transform::from_translation(tile_pos),
-                    Visibility::Hidden,
-                    TileOriginalImage(tile_handle),
-                    MapTile,
-                    TileFadeState {
-                        alpha: 1.0,
-                        tile_zoom: band.zoom,
-                        spawn_time: now,
-                    },
-                    Pickable::IGNORE,
-                    RenderLayers::layer(crate::RenderCategory::TILES),
-                    NoFrustumCulling,
-                )).id();
-
-                tile_grid.occupied.insert(tile_key, entity);
+                    tile_mesh.clone(),
+                    material,
+                    tile_handle,
+                    band.zoom,
+                    now,
+                );
             }
         }
     }
@@ -882,50 +912,78 @@ fn max_tile_entities(view3d_state: Option<&view3d::View3DState>) -> usize {
     500
 }
 
-/// Despawn tile entities that are far outside the visible viewport.
+/// Despawn tile entities that are far outside the visible area.
 /// Without this, tiles accumulate indefinitely as the user pans, causing
 /// frame time to grow continuously until the app becomes unresponsive.
+///
+/// In 2D mode: uses axis-aligned distance from the MapCamera.
+/// In 3D mode: uses ground-plane (XZ) distance from the AircraftCamera.
 fn cull_offscreen_tiles(
     mut commands: Commands,
     camera_query: Query<&Transform, With<MapCamera>>,
+    camera_3d_query: Query<&Transform, With<crate::camera::AircraftCamera>>,
     tile_query: Query<(Entity, &Transform, &TileFadeState), With<MapTile>>,
     window_query: Query<&Window>,
     mut tile_grid: ResMut<super::pool::TileGrid>,
+    mut tile_pool: ResMut<super::pool::TilePool>,
     view3d_state: Res<view3d::View3DState>,
     map_state: Res<MapState>,
     zoom_state: Res<crate::map::ZoomState>,
 ) {
-    if view3d_state.is_3d_active() {
-        return;
-    }
+    let is_3d = view3d_state.is_3d_active();
 
-    let Ok(camera_tf) = camera_query.single() else {
-        return;
-    };
     let Ok(window) = window_query.single() else {
         return;
     };
 
-    let cam_x = camera_tf.translation.x;
-    let cam_y = camera_tf.translation.y;
-
-    // Cull radius: generous distance covering the download radius.
-    // The download radius (3+ tiles) can extend well beyond the viewport.
-    // Use the tile size at current zoom * (download_radius + 1) as the cull distance.
     let tile_size_m = (2.0 * super::WEB_MERCATOR_EXTENT as f32) / (1u64 << map_state.zoom_level.to_u8()) as f32;
-    let cull_radius = tile_size_m * (compute_tile_radius(
+    let visible_radius = compute_tile_radius(
         window.width(), window.height(),
         zoom_state.camera_zoom, Some(&view3d_state), map_state.zoom_level.to_u8(),
-    ) as f32 + 2.0);
+    ) as f32;
+    let cull_radius = tile_size_m * (visible_radius + 2.0);
+
+    // In 3D, the lowest zoom band (zoom-5) has tiles 32x the current tile
+    // size, with radius 8. The cull distance must cover the full extent of
+    // the lowest band plus margin.
+    let cull_radius = if is_3d {
+        let lowest_band_tile_size = tile_size_m * 32.0;
+        (lowest_band_tile_size * 12.0).max(cull_radius * 2.0)
+    } else {
+        cull_radius
+    };
 
     let mut to_despawn: Vec<Entity> = Vec::new();
-    let total_before = tile_query.iter().count();
 
-    for (entity, tile_tf, _fade_state) in tile_query.iter() {
-        let dx = (tile_tf.translation.x - cam_x).abs();
-        let dy = (tile_tf.translation.y - cam_y).abs();
-        if dx > cull_radius || dy > cull_radius {
-            to_despawn.push(entity);
+    if is_3d {
+        // 3D mode: cull by ground-plane distance (XZ in Y-up space)
+        let Ok(cam_tf) = camera_3d_query.single() else {
+            return;
+        };
+        let cam_x = cam_tf.translation.x;
+        let cam_z = cam_tf.translation.z;
+
+        for (entity, tile_tf, _) in tile_query.iter() {
+            let dx = (tile_tf.translation.x - cam_x).abs();
+            let dz = (tile_tf.translation.z - cam_z).abs();
+            if dx > cull_radius || dz > cull_radius {
+                to_despawn.push(entity);
+            }
+        }
+    } else {
+        // 2D mode: cull by XY distance from MapCamera
+        let Ok(camera_tf) = camera_query.single() else {
+            return;
+        };
+        let cam_x = camera_tf.translation.x;
+        let cam_y = camera_tf.translation.y;
+
+        for (entity, tile_tf, _) in tile_query.iter() {
+            let dx = (tile_tf.translation.x - cam_x).abs();
+            let dy = (tile_tf.translation.y - cam_y).abs();
+            if dx > cull_radius || dy > cull_radius {
+                to_despawn.push(entity);
+            }
         }
     }
 
@@ -933,10 +991,19 @@ fn cull_offscreen_tiles(
     let tile_limit = max_tile_entities(Some(&view3d_state));
     let total_tiles = tile_query.iter().count();
     if total_tiles > tile_limit && to_despawn.len() < total_tiles - tile_limit {
+        let cam_pos = if is_3d {
+            camera_3d_query.single().map(|tf| tf.translation).unwrap_or_default()
+        } else {
+            camera_query.single().map(|tf| tf.translation).unwrap_or_default()
+        };
         let mut tiles_by_dist: Vec<(Entity, f32)> = tile_query
             .iter()
             .map(|(e, tf, _)| {
-                let dist = (tf.translation.x - cam_x).abs().max((tf.translation.y - cam_y).abs());
+                let dist = if is_3d {
+                    (tf.translation.x - cam_pos.x).abs().max((tf.translation.z - cam_pos.z).abs())
+                } else {
+                    (tf.translation.x - cam_pos.x).abs().max((tf.translation.y - cam_pos.y).abs())
+                };
                 (e, dist)
             })
             .collect();
@@ -952,13 +1019,13 @@ fn cull_offscreen_tiles(
         let despawn_set: std::collections::HashSet<Entity> = to_despawn.iter().copied().collect();
         tile_grid.occupied.retain(|_, &mut e| !despawn_set.contains(&e));
         for entity in &to_despawn {
-            commands.entity(*entity).despawn();
+            super::pool::release_tile(&mut commands, *entity, &mut tile_pool);
         }
     }
 }
 
-/// Show tiles once their texture is loaded. Despawn dominated tiles
-/// (wrong zoom level) once current-zoom tiles are available.
+/// Show tiles once their texture is loaded. Dominated tiles (wrong zoom
+/// level) are released back to the pool once current-zoom tiles arrive.
 fn animate_tile_fades(
     mut commands: Commands,
     map_state: Res<MapState>,
@@ -968,6 +1035,7 @@ fn animate_tile_fades(
         With<MapTile>,
     >,
     mut tile_grid: ResMut<super::pool::TileGrid>,
+    mut tile_pool: ResMut<super::pool::TilePool>,
     view3d_state: Res<view3d::View3DState>,
 ) {
     let current_zoom = map_state.zoom_level.to_u8();
@@ -998,7 +1066,7 @@ fn animate_tile_fades(
     if has_loaded_current {
         for (entity, zoom) in dominated_tiles {
             tile_grid.occupied.retain(|&(_, _, z), &mut e| !(z == zoom && e == entity));
-            commands.entity(entity).despawn();
+            super::pool::release_tile(&mut commands, entity, &mut tile_pool);
         }
     }
 }
@@ -1030,6 +1098,7 @@ fn orient_tiles_for_view_mode(
     view3d_state: Res<view3d::View3DState>,
     tile_query: Query<Entity, With<MapTile>>,
     mut tile_grid: ResMut<super::pool::TileGrid>,
+    mut tile_pool: ResMut<super::pool::TilePool>,
     mut last_3d: Local<Option<bool>>,
 ) {
     let is_3d = view3d_state.is_3d_active();
@@ -1039,16 +1108,113 @@ fn orient_tiles_for_view_mode(
     let first_run = last_3d.is_none();
     *last_3d = Some(is_3d);
 
-    // Skip on first run (startup) - there are no tiles to clear yet and
-    // clearing tile_grid here would race with load_visible_tiles which
-    // populates it in the same frame.
     if first_run {
         return;
     }
 
     for entity in tile_query.iter() {
-        commands.entity(entity).despawn();
+        super::pool::release_tile(&mut commands, entity, &mut tile_pool);
     }
     tile_grid.occupied.clear();
+}
+
+// =============================================================================
+// Tile Asset Eviction
+// =============================================================================
+
+/// Periodically evict stale entries from TileAssetCache to reclaim GPU memory.
+/// Removes entries not accessed in 30s whose tiles are not currently displayed.
+/// Also enforces a hard cap to prevent unbounded growth.
+fn evict_stale_tile_assets(
+    mut timer: ResMut<TileAssetEvictionTimer>,
+    time: Res<Time>,
+    mut tile_asset_cache: ResMut<TileAssetCache>,
+    tile_grid: Res<super::pool::TileGrid>,
+    tile_query: Query<&TileOriginalImage, With<MapTile>>,
+) {
+    timer.0.tick(time.delta());
+    if !timer.0.just_finished() {
+        return;
+    }
+
+    let now = time.elapsed_secs_f64();
+    let active_handles: std::collections::HashSet<bevy::asset::AssetId<Image>> =
+        tile_query.iter().map(|img| img.0.id()).collect();
+
+    let before = tile_asset_cache.entries.len();
+
+    tile_asset_cache.entries.retain(|_, (handle, access_time)| {
+        if now - *access_time > TILE_ASSET_EVICTION_SECS {
+            !active_handles.contains(&handle.id())
+        } else {
+            true
+        }
+    });
+
+    // Hard cap: if still over limit, evict oldest entries
+    if tile_asset_cache.entries.len() > TILE_ASSET_CACHE_HARD_CAP {
+        let mut by_time: Vec<(String, f64)> = tile_asset_cache
+            .entries
+            .iter()
+            .map(|(k, (_, t))| (k.clone(), *t))
+            .collect();
+        by_time.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        let to_remove = tile_asset_cache.entries.len() - TILE_ASSET_CACHE_HARD_CAP;
+        for (key, _) in by_time.into_iter().take(to_remove) {
+            if let Some((handle, _)) = tile_asset_cache.entries.get(&key) {
+                if !active_handles.contains(&handle.id()) {
+                    tile_asset_cache.entries.remove(&key);
+                }
+            }
+        }
+    }
+
+    let evicted = before.saturating_sub(tile_asset_cache.entries.len());
+    if evicted > 0 {
+        debug!(
+            "Evicted {} tile assets (remaining: {})",
+            evicted,
+            tile_asset_cache.entries.len()
+        );
+    }
+}
+
+// =============================================================================
+// Cached Tile Set (in-memory disk cache index)
+// =============================================================================
+
+/// Scan the tile cache directory for the current basemap style and populate
+/// the CachedTileSet with all tile filenames found on disk. Called at startup
+/// and after basemap changes.
+pub fn scan_tile_cache_for_style(cached_set: &mut CachedTileSet, style_key: &str) {
+    cached_set.filenames.clear();
+    let cache_dir = crate::tile_cache::tile_cache_dir_for_style(style_key);
+    if let Ok(entries) = std::fs::read_dir(&cache_dir) {
+        for entry in entries.flatten() {
+            if let Some(name) = entry.file_name().to_str() {
+                if name.contains(".tile.") {
+                    cached_set.filenames.insert(name.to_string());
+                }
+            }
+        }
+    }
+    info!(
+        "CachedTileSet: indexed {} tiles for style '{}'",
+        cached_set.filenames.len(),
+        style_key
+    );
+}
+
+/// Consume TileReady messages from the download pipeline and add newly
+/// cached tile filenames to the in-memory index.
+fn update_cached_tile_set(
+    mut ready_events: MessageReader<super::download::TileReady>,
+    mut cached_set: ResMut<CachedTileSet>,
+) {
+    for ready in ready_events.read() {
+        if let Some(filename) = ready.path.file_name().and_then(|f| f.to_str()) {
+            cached_set.filenames.insert(filename.to_string());
+        }
+    }
 }
 

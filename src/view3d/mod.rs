@@ -31,8 +31,8 @@ use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy_egui::{egui, EguiContexts};
 
 // Constants for 3D view
-const TRANSITION_DURATION: f32 = 2.0;
-const DEFAULT_PITCH: f32 = 25.0;
+const TRANSITION_DURATION: f32 = 0.8;
+const DEFAULT_PITCH: f32 = 70.0;
 const DEFAULT_CAMERA_ALTITUDE: f32 = 30000.0;
 const MIN_PITCH: f32 = -89.9;
 const MAX_PITCH: f32 = 89.9;
@@ -41,9 +41,10 @@ const MAX_CAMERA_ALTITUDE: f32 = 120000.0;
 /// Vertical exaggeration factor for altitude. In the Mercator meter coordinate
 /// system, real altitude maps 1:1 to world units (1 foot = 0.3048 meters).
 /// At 30,000 ft that's only 9.1km - too small relative to tile extents at
-/// typical zoom levels. This factor scales altitude so terrain and camera
-/// height are visually meaningful. 50x means FL300 = 457km world height.
-const ALTITUDE_EXAGGERATION: f32 = 50.0;
+/// typical zoom levels. 10x gives aircraft visible vertical separation
+/// without towering above the map (FL400 = ~122km world height, about 15%
+/// of the visible map extent at zoom 12).
+const ALTITUDE_EXAGGERATION: f32 = 10.0;
 pub(crate) const CHASE_OFFSET_BEHIND_FT: f32 = 8000.0;
 pub(crate) const CHASE_OFFSET_ABOVE_FT: f32 = 2000.0;
 pub(crate) const CHASE_PITCH: f32 = 5.0;
@@ -546,35 +547,25 @@ pub fn update_3d_camera(
         tf_2d.rotation = rotation * tf_3d.rotation;
         *proj_2d = Projection::Perspective(perspective);
     } else {
-        // Transition: arc the camera from overhead to orbit, always looking at center.
-        //
-        // Interpolate XZ position linearly but arc the altitude so the camera
-        // stays high and sweeps down in a gentle curve. This prevents the
-        // camera from showing the entire map or dipping below ground.
+        // Transition: gently tip from overhead to the target orbit with
+        // minimal camera displacement so the view stays recognizable.
         let orbit_pos = orbit_yup.translation;
-        let start_height = matching_height.max(orbit_pos.y - center_yup.y);
         let end_height = orbit_pos.y - center_yup.y;
+        let start_height = matching_height.max(end_height);
 
-        // Enforce minimum 5,000 ft AGL during transition
         let min_height = state.altitude_to_z(5_000);
-
-        // Arc: blend heights with a sine curve so the camera stays high
-        // through mid-transition, then descends to the orbit altitude.
-        // At t=0: start_height, at t=0.5: biased toward start, at t=1: end_height
-        let arc_blend = (t * std::f32::consts::FRAC_PI_2).sin(); // 0→1, slow start fast end
-        let height = start_height + (end_height - start_height) * arc_blend;
+        let height = start_height + (end_height - start_height) * t;
         let height = height.max(min_height);
 
-        // XZ: lerp horizontally from directly above to the orbit offset
+        // XZ: only move a fraction toward the orbit offset so the
+        // transition feels like a gentle tilt rather than a flyback.
         let start_xz = Vec3::new(center_yup.x, 0.0, center_yup.z);
         let end_xz = Vec3::new(orbit_pos.x, 0.0, orbit_pos.z);
         let xz = start_xz.lerp(end_xz, t);
 
         tf_3d.translation = Vec3::new(xz.x, center_yup.y + height, xz.z);
 
-        // Always look at the orbit center for a stable transition
-        let up = if height > (orbit_pos - center_yup).length() * 0.95 {
-            // Near-overhead: use north as up to avoid gimbal flip
+        let up = if t < 0.3 {
             Vec3::NEG_Z
         } else {
             Vec3::Y

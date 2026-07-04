@@ -110,6 +110,10 @@ pub fn update_mesh_trails(
 
     for effect in effect_query.iter() {
         let Ok((trail, aircraft)) = aircraft_query.get(effect.aircraft_entity) else {
+            if let Some(mut mesh) = meshes.get_mut(&effect.mesh_handle) {
+                mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, Vec::<[f32; 3]>::new());
+                mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, Vec::<[f32; 4]>::new());
+            }
             continue;
         };
 
