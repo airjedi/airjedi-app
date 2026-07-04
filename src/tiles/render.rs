@@ -294,6 +294,43 @@ pub fn altitude_to_zoom_level(altitude_ft: f32, current_zoom: u8) -> u8 {
 }
 
 // =============================================================================
+// Screen-Space Error LOD
+// =============================================================================
+
+/// Maximum screen-space error in pixels before a tile should be refined
+/// to a higher zoom level. Lower values = more detail, more tiles.
+const SSE_THRESHOLD: f32 = 128.0;
+
+/// Minimum zoom level used for the coarsest horizon tiles.
+const MIN_SSE_ZOOM: u8 = 4;
+
+/// Compute the ideal zoom level for a tile at `ground_distance` meters from
+/// the camera. Uses screen-space error: at distance `d`, a tile of size `s`
+/// covers `s * screen_factor / d` pixels. We want that to be <= SSE_THRESHOLD.
+/// Solving: s <= SSE_THRESHOLD * d / screen_factor, and s = extent / 2^zoom,
+/// gives zoom >= log2(extent * screen_factor / (SSE_THRESHOLD * d)).
+fn zoom_for_distance(
+    ground_distance: f32,
+    screen_factor: f32,
+    max_zoom: u8,
+) -> u8 {
+    if ground_distance < 1.0 {
+        return max_zoom;
+    }
+    let extent = 2.0 * super::WEB_MERCATOR_EXTENT as f32;
+    let ideal = (extent * screen_factor / (SSE_THRESHOLD * ground_distance))
+        .log2()
+        .ceil() as i32;
+    (ideal.max(MIN_SSE_ZOOM as i32) as u8).min(max_zoom)
+}
+
+/// Compute the screen_factor used by zoom_for_distance. This converts
+/// world-space tile size to screen pixels: pixels = tile_size * screen_factor / distance.
+fn compute_screen_factor(window_height: f32, fov: f32) -> f32 {
+    window_height / (2.0 * (fov / 2.0).tan())
+}
+
+// =============================================================================
 // Tile Helpers
 // =============================================================================
 
@@ -679,32 +716,45 @@ fn load_visible_tiles(
 
     let mut bands = Vec::with_capacity(8);
     bands.push(TileBand { lat, lon, zoom: current_zoom, radius });
+    let mut requested_zooms = std::collections::HashSet::new();
 
     if is_3d {
-        // Cap primary band - the near ground under the camera doesn't need
-        // 60-tile radius at full zoom. Horizon coverage comes from lower-zoom
-        // bands where each tile covers 4x-32x more area.
-        bands[0].radius = radius.clamp(10, 20);
+        // SSE-driven LOD: each zoom level has a maximum distance threshold
+        // beyond which tiles at that zoom are too detailed. We iterate from
+        // current_zoom (finest, near camera) down to MIN_SSE_ZOOM (coarsest,
+        // horizon), spawning tiles only within their SSE-appropriate distance.
+        let fov = 60.0_f32.to_radians();
+        let screen_factor = if let Ok(window) = window_query.single() {
+            compute_screen_factor(window.height(), fov)
+        } else {
+            540.0
+        };
 
-        let horizon_bands: &[(u8, u8)] = &[
-            (1, 8),   // zoom-1: medium detail
-            (2, 6),   // zoom-2: lower detail
-            (3, 8),   // zoom-3: coarse
-            (4, 10),  // zoom-4: each tile ~156km
-            (5, 8),   // zoom-5: each tile ~313km, fills to horizon
-        ];
-        for &(offset, band_radius) in horizon_bands {
-            if current_zoom >= offset {
-                bands.push(TileBand {
-                    lat, lon,
-                    zoom: current_zoom - offset,
-                    radius: band_radius,
-                });
-            }
+        let cam_merc = super::coords::lonlat_to_mercator(lon, lat);
+        let cam_local = bevy::math::Vec2::new(
+            (cam_merc.x - origin_xy.x) as f32,
+            (cam_merc.y - origin_xy.y) as f32,
+        );
+
+        let min_zoom = current_zoom.saturating_sub(5).max(MIN_SSE_ZOOM);
+        bands.clear();
+
+        // For each zoom level, compute the max distance where SSE is satisfied,
+        // then compute how many tiles that covers as a radius.
+        for zoom in (min_zoom..=current_zoom).rev() {
+            let tile_size = (2.0 * super::WEB_MERCATOR_EXTENT as f32)
+                / (1u64 << zoom) as f32;
+            // max_distance = tile_size * screen_factor / SSE_THRESHOLD
+            let max_dist = tile_size * screen_factor / SSE_THRESHOLD;
+            let tile_radius = ((max_dist / tile_size).ceil() as u8).clamp(3, 25);
+
+            bands.push(TileBand {
+                lat, lon,
+                zoom,
+                radius: tile_radius,
+            });
         }
     }
-
-    let mut requested_zooms = std::collections::HashSet::new();
 
     for band in &bands {
         let Ok(band_zoom) = ZoomLevel::try_from(band.zoom) else { continue };
