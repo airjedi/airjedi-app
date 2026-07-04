@@ -797,11 +797,13 @@ fn sync_center_to_map_state(
 
 /// Set tile elevation for the current view mode.
 /// In 2D (Z-up): tiles use .z for layer depth.
-/// In 3D (Y-up): tiles use .y for altitude. Lower-zoom tiles sit slightly
-/// below higher-zoom tiles so depth tests render detail on top.
+/// In 3D (Y-up): higher zoom tiles sit closer to ground_y (on top),
+/// lower zoom tiles sit below. Uses absolute zoom for depth ordering
+/// so the highest-detail tile always wins the depth test regardless
+/// of which zoom level is "current".
 pub fn update_tile_elevation(
     state: Res<View3DState>,
-    map_state: Res<crate::MapState>,
+    _map_state: Res<crate::MapState>,
     mut tile_query: Query<
         (&mut Transform, &crate::tiles::TileFadeState),
         With<crate::tiles::MapTile>,
@@ -809,10 +811,11 @@ pub fn update_tile_elevation(
 ) {
     if state.is_3d_active() {
         let ground_y = state.altitude_to_z(state.ground_elevation_ft);
-        let current_zoom = map_state.zoom_level.to_u8();
         for (mut transform, fade_state) in tile_query.iter_mut() {
-            let zoom_diff = current_zoom.saturating_sub(fade_state.tile_zoom);
-            transform.translation.y = ground_y - zoom_diff as f32 * 0.05;
+            // Higher zoom = more detail = closer to ground_y (renders on top).
+            // Zoom 19 at ground_y, zoom 0 at ground_y - 1.9
+            let depth = (19u8.saturating_sub(fade_state.tile_zoom)) as f32 * 0.1;
+            transform.translation.y = ground_y - depth;
         }
     } else if !state.is_transitioning() {
         for (mut transform, _) in tile_query.iter_mut() {

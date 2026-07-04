@@ -1026,72 +1026,45 @@ fn animate_tile_fades(
     let current_zoom = map_state.zoom_level.to_u8();
     let is_3d = view3d_state.is_3d_active();
 
-    // First pass: show tiles whose textures have loaded, track which
-    // grid positions have a loaded tile at or near current zoom.
-    let mut loaded_positions: std::collections::HashSet<(u32, u32)> = Default::default();
-
+    // Show tiles whose textures have loaded
     for (_, mut fade_state, mut visibility, original) in tile_query.iter_mut() {
-        if images.contains(&original.0) {
-            if *visibility == Visibility::Hidden {
-                fade_state.alpha = 1.0;
-                *visibility = Visibility::Inherited;
-            }
-            if fade_state.tile_zoom == current_zoom {
-                // Track which tile-grid positions have a loaded current-zoom tile.
-                // We use the tile_grid to find the (x, y) for this entity later.
-                loaded_positions.insert((0, 0)); // placeholder, real check below
-            }
+        if images.contains(&original.0) && *visibility == Visibility::Hidden {
+            fade_state.alpha = 1.0;
+            *visibility = Visibility::Inherited;
         }
     }
 
-    // Build a set of (x, y) positions that have a loaded current-zoom tile
-    loaded_positions.clear();
-    for (&(tx, ty, z), &ent) in tile_grid.occupied.iter() {
-        if z == current_zoom {
-            if let Ok((_, _, vis, orig)) = tile_query.get(ent) {
-                if *vis == Visibility::Inherited && images.contains(&orig.0) {
-                    loaded_positions.insert((tx, ty));
-                }
-            }
-        }
-    }
-
+    // In 3D, depth ordering (update_tile_elevation) ensures higher-zoom
+    // tiles render on top of lower-zoom tiles. We only need to remove tiles
+    // that are way outside the useful zoom band. Distance-based culling
+    // (cull_offscreen_tiles) handles geographic cleanup.
     if is_3d {
-        // In 3D, only despawn tiles that are:
-        // 1. More than 5 zoom levels from current (way too coarse/fine)
-        // 2. Higher detail than current AND covered by a loaded current-zoom tile
+        let min_band = current_zoom.saturating_sub(5);
+        let max_band = current_zoom + 2;
         let mut to_release: Vec<(Entity, u8)> = Vec::new();
-
-        for (&(tx, ty, z), &ent) in tile_grid.occupied.iter() {
-            if z == current_zoom {
-                continue;
-            }
-
-            // Tiles way outside the useful band - always remove
-            if z > current_zoom + 1 || current_zoom.saturating_sub(z) > 5 {
+        for (&(_, _, z), &ent) in tile_grid.occupied.iter() {
+            if z < min_band || z > max_band {
                 to_release.push((ent, z));
-                continue;
-            }
-
-            // For tiles 1 level above current zoom: check if the parent
-            // position at current zoom has loaded. Each zoom+1 tile maps
-            // to parent at (x/2, y/2, zoom-1).
-            if z == current_zoom + 1 {
-                let parent_x = tx / 2;
-                let parent_y = ty / 2;
-                if loaded_positions.contains(&(parent_x, parent_y)) {
-                    to_release.push((ent, z));
-                }
             }
         }
-
         for (entity, zoom) in to_release {
             tile_grid.occupied.retain(|&(_, _, z), &mut e| !(z == zoom && e == entity));
             super::pool::release_tile(&mut commands, entity, &mut tile_pool);
         }
     } else {
-        // 2D mode: despawn non-current-zoom tiles once any current tile loads
-        if !loaded_positions.is_empty() {
+        // 2D: only keep current zoom tiles
+        let mut has_current = false;
+        for (&(_, _, z), &ent) in tile_grid.occupied.iter() {
+            if z == current_zoom {
+                if let Ok((_, _, vis, _)) = tile_query.get(ent) {
+                    if *vis == Visibility::Inherited {
+                        has_current = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if has_current {
             let mut to_release: Vec<(Entity, u8)> = Vec::new();
             for (&(_, _, z), &ent) in tile_grid.occupied.iter() {
                 if z != current_zoom {
