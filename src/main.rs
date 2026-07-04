@@ -4,7 +4,7 @@ use bevy::{
     light::SunDisk,
     prelude::*,
 };
-use bevy_slippy_tiles::*;
+use tiles::*;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 
@@ -94,7 +94,7 @@ pub(crate) mod constants {
     pub const MAX_CAMERA_ZOOM: f32 = 10.0;
 
     // Tile size: Large = 512px (@2x) for sharper map tiles
-    pub const DEFAULT_TILE_SIZE: bevy_slippy_tiles::TileSize = bevy_slippy_tiles::TileSize::Large;
+    pub const DEFAULT_TILE_SIZE: crate::tiles::TileSize = crate::tiles::TileSize::Large;
     pub const DEFAULT_TILE_PIXELS: f32 = 512.0;
 
     // Tile download settings
@@ -112,9 +112,6 @@ pub(crate) mod constants {
     pub const AIRCRAFT_MARKER_RADIUS: f32 = 8.0;
     pub const LABEL_SCREEN_OFFSET: f32 = 25.0;
     pub const BUTTON_FONT_SIZE: f32 = 16.0;
-
-    // Tile fade/despawn timing
-    pub const TILE_FADE_SPEED: f32 = 3.0;
 
     // Z-layers
     pub const TILE_Z_LAYER: f32 = 0.0;
@@ -201,7 +198,6 @@ fn main() {
                 filter: "info,wgpu=warn,naga=warn,bevy_render=info".to_string(),
                 ..default()
             }),
-        SlippyTilesPlugin,
         ConfigPlugin,
         aviation::AviationPlugin,
         aircraft::AircraftPlugin,
@@ -221,8 +217,6 @@ fn main() {
         bevy_inspector_egui::DefaultInspectorConfigPlugin,
         data_ingest::DataIngestPlugin,
     ))
-    // Full speed when focused; ~4 FPS when unfocused to keep ADS-B data
-    // flowing without overwhelming the GPU or triggering macOS throttling.
     .insert_resource(ClearColor(Color::srgb(
         20.0 / 255.0,
         21.0 / 255.0,
@@ -230,7 +224,9 @@ fn main() {
     )))
     .insert_resource(bevy::winit::WinitSettings {
         focused_mode: bevy::winit::UpdateMode::Continuous,
-        unfocused_mode: bevy::winit::UpdateMode::reactive(std::time::Duration::from_millis(250)),
+        unfocused_mode: bevy::winit::UpdateMode::reactive_low_power(
+            std::time::Duration::from_secs_f64(1.0 / 10.0),
+        ),
     })
     .init_resource::<HelpOverlayState>()
     .init_resource::<ui_panels::UiPanelManager>()
@@ -243,16 +239,21 @@ fn main() {
     .register_type::<MapState>()
     .register_type::<ZoomState>()
     .insert_resource(ZoomState::new())
-    // SlippyTilesSettings will be updated by setup_slippy_tiles_from_config after config is loaded
-    .insert_resource(SlippyTilesSettings {
+    .insert_resource(TileRenderSettings {
+        reference_latitude: constants::DEFAULT_LATITUDE,
+        reference_longitude: constants::DEFAULT_LONGITUDE,
+        z_layer: 0.0,
+        ..default()
+    })
+    .insert_resource(tiles::LocalOrigin::from_latlon(
+        constants::DEFAULT_LATITUDE,
+        constants::DEFAULT_LONGITUDE,
+    ))
+    .insert_resource(TileDownloadSettings {
         endpoint: config::BasemapStyle::default().endpoint_url().to_string(),
-        tiles_directory: std::path::PathBuf::from("tiles/"), // Symlinked to centralized cache
-        reference_latitude: constants::DEFAULT_LATITUDE, // Wichita, KS (matches MapState default)
-        reference_longitude: constants::DEFAULT_LONGITUDE, // Wichita, KS (matches MapState default)
-        z_layer: 0.0,                // Render tiles at z=0 (behind aircraft at z=10)
-        auto_render: false,          // Disable auto-render, we handle tile display ourselves
-        max_concurrent_downloads: 8, // 3D mode generates many parallel requests across zoom levels
-        rate_limit_requests: 24, // CartoDB/ESRI CDNs handle this easily; OSM is more restrictive
+        tiles_directory: std::path::PathBuf::from("tiles/"),
+        max_concurrent_downloads: 8,
+        rate_limit_requests: 24,
         ..default()
     })
     .add_plugins((
@@ -408,10 +409,13 @@ fn configure_gizmo_layers(mut config_store: ResMut<GizmoConfigStore>) {
 
 pub(crate) fn setup_map(
     mut commands: Commands,
-    mut download_events: MessageWriter<DownloadSlippyTilesMessage>,
-    mut tile_settings: ResMut<SlippyTilesSettings>,
+    mut download_events: MessageWriter<DownloadTilesRequest>,
+    mut tile_render: ResMut<TileRenderSettings>,
+    mut dl_settings: ResMut<TileDownloadSettings>,
+    mut local_origin: ResMut<tiles::LocalOrigin>,
     app_config: Res<config::AppConfig>,
     mut egui_settings: ResMut<EguiGlobalSettings>,
+    mut cached_tile_set: ResMut<tiles::CachedTileSet>,
 ) {
     // Prevent bevy_egui from auto-attaching to Camera2d. We use a dedicated UI
     // camera so egui stays visible when Camera2d switches to perspective in 3D mode.
@@ -427,43 +431,17 @@ pub(crate) fn setup_map(
         ray_cast_visibility: RayCastVisibility::Visible,
     });
 
-    // Set up 2D camera for map tiles and labels.
-    // Layer 0 = default content (tiles, sprites, text).
-    // Layer 2 = gizmos (trails, navaids, runways) — kept off Camera3d to prevent
-    //           double-rendering during 2D↔3D transitions.
+    // Camera3d is the PRIMARY camera (order 0). Renders tiles (as Mesh3d
+    // planes), aircraft, sky dome, ground plane. In 2D mode uses orthographic
+    // projection synced to MapCamera; in 3D mode uses perspective.
     let dark_bg = Color::srgb(20.0 / 255.0, 21.0 / 255.0, 24.0 / 255.0);
-    commands.spawn((
-        Name::new("Map Camera"),
-        Camera2d,
-        Camera {
-            clear_color: ClearColorConfig::Custom(dark_bg),
-            ..default()
-        },
-        MapCamera,
-        render_layers::layers_camera2d_all(),
-    ));
-
-    // Set up 3D camera for aircraft models (renders on top of 2D).
-    // No Atmosphere component — Bevy 0.18's atmosphere triggers multi-camera
-    // HDR tonemapping bugs on Metal (#18901, #18902, #17530) that non-
-    // deterministically produce a black screen. A gradient sky dome mesh
-    // replaces the atmosphere sky visually. See GitHub issue for tech debt.
-    //
-    // Without Atmosphere/HDR, this camera's output supports alpha compositing
-    // over Camera2d, eliminating the need for the separate AircraftCamera2d.
-    // Camera2d (order 0) renders first; this camera (order 1) alpha-blends
-    // on top via CameraOutputMode::Write.
     commands.spawn((
         Name::new("Aircraft Camera"),
         Camera3d::default(),
         AircraftCamera,
         Camera {
-            order: 1,
-            clear_color: ClearColorConfig::Custom(Color::NONE),
-            output_mode: CameraOutputMode::Write {
-                blend_state: Some(bevy::render::render_resource::BlendState::ALPHA_BLENDING),
-                clear_color: ClearColorConfig::None,
-            },
+            order: 0,
+            clear_color: ClearColorConfig::Custom(dark_bg),
             ..default()
         },
         Projection::Orthographic(OrthographicProjection::default_2d()),
@@ -475,10 +453,29 @@ pub(crate) fn setup_map(
             directional_light_color: Color::NONE,
             directional_light_exponent: 30.0,
             falloff: bevy::pbr::FogFalloff::Linear {
-                start: 3500.0,
-                end: 5000.0,
+                start: 999999.0,
+                end: 999999.0,
             },
         },
+    ));
+
+    // Camera2d is the OVERLAY camera (order 1). Renders gizmos, labels,
+    // and overlays with alpha blending on top of Camera3d's output.
+    // Never renders tiles - those are Mesh3d planes on Camera3d.
+    commands.spawn((
+        Name::new("Map Camera"),
+        Camera2d,
+        Camera {
+            order: 1,
+            clear_color: ClearColorConfig::None,
+            output_mode: CameraOutputMode::Write {
+                blend_state: Some(bevy::render::render_resource::BlendState::ALPHA_BLENDING),
+                clear_color: ClearColorConfig::None,
+            },
+            ..default()
+        },
+        MapCamera,
+        render_layers::layers_camera2d_all(),
     ));
 
     // Dedicated UI camera for egui. Renders last (order 100) with no clear so it
@@ -534,12 +531,26 @@ pub(crate) fn setup_map(
     tile_cache::clear_legacy_tiles();
     tile_cache::remove_invalid_tiles();
 
-    // Update SlippyTilesSettings from config
-    tile_settings.endpoint = app_config.map.basemap_style.endpoint_url().to_string();
-    tile_settings.tile_format = app_config.map.basemap_style.tile_format();
-    tile_settings.reverse_axes = app_config.map.basemap_style.reverse_axes();
-    tile_settings.reference_latitude = app_config.map.default_latitude;
-    tile_settings.reference_longitude = app_config.map.default_longitude;
+    // Update download settings from config
+    dl_settings.endpoint = app_config.map.basemap_style.endpoint_url().to_string();
+    dl_settings.tile_format = app_config.map.basemap_style.tile_format();
+    dl_settings.reverse_axes = app_config.map.basemap_style.reverse_axes();
+
+    // Populate in-memory index of cached tiles to avoid per-frame filesystem stats
+    tiles::scan_tile_cache_for_style(
+        &mut cached_tile_set,
+        app_config.map.basemap_style.cache_key(),
+    );
+
+    // Update render settings from config
+    tile_render.reference_latitude = app_config.map.default_latitude;
+    tile_render.reference_longitude = app_config.map.default_longitude;
+
+    // Update local origin for Mercator coordinate system
+    *local_origin = tiles::LocalOrigin::from_latlon(
+        app_config.map.default_latitude,
+        app_config.map.default_longitude,
+    );
 
     // Initialize map state resource from config
     let map_state = MapState {

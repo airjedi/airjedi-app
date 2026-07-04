@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use bevy_slippy_tiles::*;
+use crate::tiles::*;
 
 use super::staleness::{aircraft_age_secs, staleness_opacity};
 use super::trails::{age_opacity, altitude_color, TrailRenderer};
@@ -15,7 +15,7 @@ pub fn draw_trails(
     mut gizmos: Gizmos,
     config: Res<TrailConfig>,
     clock: Res<SessionClock>,
-    tile_settings: Res<SlippyTilesSettings>,
+    local_origin: Res<LocalOrigin>,
     map_state: Res<MapState>,
     view3d_state: Res<View3DState>,
     trail_query: Query<(&TrailHistory, &Aircraft)>,
@@ -37,8 +37,7 @@ pub fn draw_trails(
     // Gizmo trails draw in both 2D and 3D modes. In 3D, they render as
     // an overlay through Camera2d on the GIZMOS layer.
 
-    let zoom = view3d_state.effective_zoom(map_state.zoom_level);
-    let converter = CoordinateConverter::new(&tile_settings, zoom);
+    let converter = CoordinateConverter::new(&local_origin);
 
     for (trail, aircraft) in trail_query.iter() {
         let stale_opacity = staleness_opacity(aircraft_age_secs(aircraft));

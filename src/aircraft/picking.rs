@@ -80,7 +80,7 @@ pub fn follow_aircraft_3d(
     follow_state: Res<CameraFollowState>,
     aircraft_query: Query<&Aircraft>,
     time: Res<Time>,
-    tile_settings: Res<bevy_slippy_tiles::SlippyTilesSettings>,
+    local_origin: Res<crate::tiles::LocalOrigin>,
     map_state: Res<crate::MapState>,
 ) {
     use crate::view3d::{TransitionState, ViewMode};
@@ -123,8 +123,7 @@ pub fn follow_aircraft_3d(
         view3d_state.chase_transition = 0.0;
     }
 
-    let render_zoom = view3d_state.effective_zoom(map_state.zoom_level);
-    let converter = crate::geo::CoordinateConverter::new(&tile_settings, render_zoom);
+    let converter = crate::geo::CoordinateConverter::new(&local_origin);
     let target_pos = converter.latlon_to_world(aircraft.latitude, aircraft.longitude);
 
     // Lerp map center toward aircraft position

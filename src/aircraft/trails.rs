@@ -72,14 +72,19 @@ impl TrailRenderer {
 }
 
 /// Resource for trail configuration
-#[derive(Resource)]
+#[derive(Resource, Reflect)]
+#[reflect(Resource)]
 pub struct TrailConfig {
     pub enabled: bool,
     pub max_age_seconds: u64,
     pub solid_duration_seconds: u64,
     pub fade_duration_seconds: u64,
+    #[reflect(ignore)]
     pub renderer_2d: TrailRenderer,
+    #[reflect(ignore)]
     pub renderer_3d: TrailRenderer,
+    pub trail_width_2d: f32,
+    pub trail_width_3d: f32,
 }
 
 impl Default for TrailConfig {
@@ -91,6 +96,8 @@ impl Default for TrailConfig {
             fade_duration_seconds: 75,
             renderer_2d: TrailRenderer::Gizmo,
             renderer_3d: TrailRenderer::MeshStrip,
+            trail_width_2d: 2.5,
+            trail_width_3d: 6.0,
         }
     }
 }

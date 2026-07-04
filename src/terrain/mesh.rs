@@ -33,7 +33,7 @@ pub(crate) struct NeighborLod {
 /// - `heightmap`: The decoded elevation data (256x256 grid of meters)
 /// - `tile_size`: World-space size of the tile (512.0)
 /// - `resolution`: Grid subdivision (e.g., 32 means 32x32 quads, yielding 33x33 vertices)
-/// - `altitude_scale`: Combined scale factor (PIXEL_SCALE * ALTITUDE_EXAGGERATION = 400.0).
+/// - `altitude_scale`: Altitude exaggeration factor (default 50.0).
 ///   Elevation is converted to world units as: `elevation_m * 0.001 * altitude_scale`.
 /// - `add_skirts`: Whether to add skirt geometry for crack prevention between tiles
 /// - `neighbor_lod`: Resolution of adjacent tiles for edge stitching

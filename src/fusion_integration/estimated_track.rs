@@ -3,13 +3,13 @@ use std::collections::{HashMap, VecDeque};
 use airjedi_fusion::nalgebra::DMatrix;
 use airjedi_fusion::{TrackQuality, TrackerState};
 use bevy::prelude::*;
-use bevy_slippy_tiles::SlippyTilesSettings;
+use crate::tiles::LocalOrigin;
 
 use crate::aircraft::components::FusionTrackLink;
 use crate::aircraft::{Aircraft, AircraftListState, CameraFollowState};
 use crate::geo::CoordinateConverter;
-use crate::map::MapState;
-use crate::view3d::View3DState;
+
+
 
 #[derive(Resource, Reflect)]
 #[reflect(Resource)]
@@ -220,12 +220,6 @@ fn sample_predicted_track(
     samples
 }
 
-fn meters_to_world_units(lat_rad: f64, zoom: i32) -> f64 {
-    let tiles_around_earth = (1u64 << zoom) as f64;
-    let world_units_per_degree = 256.0 * tiles_around_earth / 360.0;
-    let meters_per_degree = 111_320.0 * lat_rad.cos();
-    world_units_per_degree / meters_per_degree
-}
 
 pub fn update_heading_history(
     time: Res<Time>,
@@ -284,9 +278,7 @@ pub fn draw_estimated_track_cones(
     config: Res<EstimatedTrackConfig>,
     list_state: Res<AircraftListState>,
     follow_state: Res<CameraFollowState>,
-    tile_settings: Res<SlippyTilesSettings>,
-    map_state: Res<MapState>,
-    view3d_state: Res<View3DState>,
+    local_origin: Res<LocalOrigin>,
     heading_history: Res<HeadingHistory>,
     fusion_tracks: Query<(&TrackerState, &TrackQuality)>,
     visuals: Query<(&FusionTrackLink, &Aircraft)>,
@@ -325,8 +317,7 @@ pub fn draw_estimated_track_cones(
         .copied()
         .unwrap_or(0.0);
 
-    let zoom = view3d_state.effective_zoom(map_state.zoom_level);
-    let converter = CoordinateConverter::new(&tile_settings, zoom);
+    let converter = CoordinateConverter::new(&local_origin);
 
     let samples = sample_predicted_track(tracker, &config, turn_rate);
     if samples.is_empty() {
@@ -334,9 +325,8 @@ pub fn draw_estimated_track_cones(
     }
 
     let aircraft_pos = converter.latlon_to_world(aircraft.latitude, aircraft.longitude);
-    let lat_rad = aircraft.latitude.to_radians();
-    let zoom_int = i32::from(zoom.to_u8());
-    let wu_per_m = meters_to_world_units(lat_rad, zoom_int);
+    // In Mercator meters, 1 world unit = 1 meter
+    let wu_per_m = 1.0_f64;
 
     let center_color_base = Color::srgba(0.0, 0.9, 1.0, 0.7);
     let boundary_color_base = Color::srgba(1.0, 0.6, 0.1, 0.4);

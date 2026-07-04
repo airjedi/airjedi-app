@@ -184,11 +184,11 @@ impl HeightmapCache {
         &self,
         lat: f64,
         lon: f64,
-        zoom_level: bevy_slippy_tiles::ZoomLevel,
+        zoom_level: crate::tiles::ZoomLevel,
     ) -> Option<f32> {
         let zoom = zoom_level.to_u8();
         let tile_coords =
-            bevy_slippy_tiles::SlippyTileCoordinates::from_latitude_longitude(lat, lon, zoom_level);
+            crate::tiles::SlippyTileCoordinates::from_latitude_longitude(lat, lon, zoom_level);
         let key: TileKey = (zoom, tile_coords.x, tile_coords.y);
         let heightmap = self.cache.get(&key)?;
 
@@ -341,8 +341,8 @@ pub(crate) fn request_heightmaps_for_tiles(
     terrain_state: Res<super::TerrainState>,
     map_state: Res<crate::MapState>,
     mut cache: ResMut<HeightmapCache>,
-    tile_settings: Res<bevy_slippy_tiles::SlippyTilesSettings>,
-    tile_query: Query<(&Transform, &crate::tiles::TileFadeState), With<bevy_slippy_tiles::MapTile>>,
+    tile_settings: Res<crate::tiles::TileRenderSettings>,
+    tile_query: Query<(&Transform, &crate::tiles::TileFadeState), With<crate::tiles::MapTile>>,
 ) {
     // Only fetch heightmaps when 3D mode is active and terrain is enabled
     if !view_state.is_3d_active() || !terrain_state.enabled {

@@ -14,7 +14,10 @@ brp = ["bevy/bevy_remote", "dep:bevy_brp_extras"]
 [dependencies]
 bevy = { version = "0.19", features = ["jpeg"] }
 bevy_obj = "0.19"
-bevy_slippy_tiles = { path = "/Users/ccustine/development/aviation/bevy_slippy_tiles/.worktrees/tile-format" }
+async-lock = "3.0"
+bevy_platform = "0.19"
+ehttp = { version = "0.5", features = ["native-async"] }
+googleprojection = "1.2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 reqwest = { version = "0.12", features = ["blocking", "json"] }

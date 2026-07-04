@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use bevy_egui::EguiContexts;
-use bevy_slippy_tiles::*;
+use crate::tiles::*;
 
 use crate::constants;
 use crate::dock;
@@ -16,7 +16,7 @@ use crate::{clamp_latitude, clamp_longitude};
 /// Resource to track pan/drag state.
 #[derive(Resource, Default)]
 pub(crate) struct DragState {
-    is_dragging: bool,
+    pub(crate) is_dragging: bool,
     last_position: Option<Vec2>,
     last_tile_request_coords: Option<(f64, f64)>,
 }
@@ -81,7 +81,7 @@ pub(crate) fn handle_pan_drag(
     mut map_state: ResMut<MapState>,
     mut drag_state: ResMut<DragState>,
     zoom_state: Res<ZoomState>,
-    mut download_events: MessageWriter<DownloadSlippyTilesMessage>,
+    mut download_events: MessageWriter<DownloadTilesRequest>,
     mut follow_state: ResMut<crate::aircraft::CameraFollowState>,
     window_query: Query<&Window>,
     egui_wants: Res<EguiWantsPointer>,
@@ -110,7 +110,7 @@ pub(crate) fn handle_pan_drag(
                 window.width(),
                 window.height(),
                 zoom_state.camera_zoom,
-                Some(&view3d_state),
+                Some(&view3d_state), map_state.zoom_level.to_u8(),
             );
             request_tiles_at_location(
                 &mut download_events,
@@ -132,42 +132,30 @@ pub(crate) fn handle_pan_drag(
             if let Some(last_pos) = drag_state.last_position {
                 let delta = event.position - last_pos;
 
-                // Break follow mode when user manually pans
                 if delta.length() > 2.0 && follow_state.following_icao.is_some() {
                     follow_state.following_icao = None;
                 }
 
-                // Convert screen delta to world delta (account for ortho projection)
-                // When ortho.scale = 1/camera_zoom, world_delta = screen_delta / camera_zoom
-                let delta_world_x = -(delta.x as f64) / zoom_state.camera_zoom as f64;
-                let delta_world_y = (delta.y as f64) / zoom_state.camera_zoom as f64;
+                // Convert screen delta to world delta in meters.
+                // ortho.scale = meters_per_tile_pixel / camera_zoom
+                // 1 screen pixel = ortho.scale world meters
+                let tile_size_meters = (2.0 * crate::tiles::WEB_MERCATOR_EXTENT)
+                    / (1u64 << map_state.zoom_level.to_u8()) as f64;
+                let meters_per_tile_pixel = tile_size_meters / crate::constants::DEFAULT_TILE_PIXELS as f64;
+                let ortho_scale = meters_per_tile_pixel / zoom_state.camera_zoom as f64;
+                let delta_meters_x = -(delta.x as f64) * ortho_scale;
+                let delta_meters_y = (delta.y as f64) * ortho_scale;
 
-                // Get current center in world pixels
-                let center_ll = LatitudeLongitudeCoordinates {
-                    latitude: map_state.latitude,
-                    longitude: map_state.longitude,
-                };
-                let center_pixel = world_coords_to_world_pixel(
-                    &center_ll,
-                    crate::constants::DEFAULT_TILE_SIZE,
-                    map_state.zoom_level,
+                // Get current center in Mercator meters, apply delta, convert back
+                let center_merc = lonlat_to_mercator(map_state.longitude, map_state.latitude);
+                let new_merc = bevy::math::DVec2::new(
+                    center_merc.x + delta_meters_x,
+                    center_merc.y + delta_meters_y,
                 );
+                let (new_lon, new_lat) = mercator_to_lonlat(new_merc);
 
-                // Calculate new center in world pixels
-                let new_center_x = center_pixel.0 + delta_world_x;
-                let new_center_y = center_pixel.1 + delta_world_y;
-
-                // Convert back to geographic coordinates
-                let new_center_geo = world_pixel_to_world_coords(
-                    new_center_x,
-                    new_center_y,
-                    crate::constants::DEFAULT_TILE_SIZE,
-                    map_state.zoom_level,
-                );
-
-                // Update map coordinates
-                map_state.latitude = clamp_latitude(new_center_geo.latitude);
-                map_state.longitude = clamp_longitude(new_center_geo.longitude);
+                map_state.latitude = clamp_latitude(new_lat);
+                map_state.longitude = clamp_longitude(new_lon);
 
                 // Request tiles periodically during drag to fill visible area
                 let should_request = match drag_state.last_tile_request_coords {
@@ -184,16 +172,14 @@ pub(crate) fn handle_pan_drag(
                         window.width(),
                         window.height(),
                         zoom_state.camera_zoom,
-                        Some(&view3d_state),
+                        Some(&view3d_state), map_state.zoom_level.to_u8(),
                     );
-                    download_events.write(DownloadSlippyTilesMessage {
-                        tile_size: crate::constants::DEFAULT_TILE_SIZE,
-                        zoom_level: map_state.zoom_level,
-                        coordinates: Coordinates::from_latitude_longitude(
-                            map_state.latitude,
-                            map_state.longitude,
-                        ),
+                    download_events.write(DownloadTilesRequest {
+                        latitude: map_state.latitude,
+                        longitude: map_state.longitude,
+                        zoom: map_state.zoom_level.to_u8(),
                         radius: Radius(radius),
+                        priority: DownloadPriority::Near,
                         use_cache: true,
                     });
                     drag_state.last_tile_request_coords =

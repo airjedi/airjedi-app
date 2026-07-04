@@ -4,7 +4,7 @@
 /// with a narrow egui side panel containing icon toggle buttons for all features.
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
-use bevy_slippy_tiles::{DownloadSlippyTilesMessage, MapTile, SlippyTileDownloadStatus};
+use crate::tiles::{DownloadTilesRequest, MapTile};
 
 use egui_phosphor::regular;
 
@@ -20,10 +20,9 @@ pub fn render_toolbar(
     mut contexts: EguiContexts,
     mut panels: ResMut<UiPanelManager>,
     map_state: Res<MapState>,
-    mut download_events: MessageWriter<DownloadSlippyTilesMessage>,
+    mut download_events: MessageWriter<DownloadTilesRequest>,
     mut commands: Commands,
     tile_query: Query<Entity, With<MapTile>>,
-    mut slippy_tile_download_status: ResMut<SlippyTileDownloadStatus>,
     theme: Res<AppTheme>,
 ) {
     let Ok(ctx) = contexts.ctx_mut() else {
@@ -220,9 +219,6 @@ pub fn render_toolbar(
                     .on_hover_text("Clear tile cache");
 
                 if clear_btn.clicked() {
-                    // Clear download status tracking
-                    slippy_tile_download_status.0.clear();
-
                     // Despawn all tile entities
                     for entity in tile_query.iter() {
                         commands.entity(entity).despawn();

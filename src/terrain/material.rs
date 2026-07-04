@@ -15,7 +15,7 @@ const TERRAIN_SHADER: &str = "shaders/terrain.wgsl";
 #[derive(Clone, Copy, Debug, Default, PartialEq, Reflect, ShaderType)]
 pub(crate) struct TerrainParams {
     /// Combined elevation scale: `elevation_m * 0.001 * elevation_scale` → world units.
-    /// Typically `PIXEL_SCALE * altitude_scale` (~400.0).
+    /// Typically 50.0 (altitude exaggeration factor).
     pub elevation_scale: f32,
     /// Size of one heightmap texel in UV space: `1.0 / heightmap_width`.
     /// Used for central-difference normal computation.

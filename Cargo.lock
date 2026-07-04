@@ -168,12 +168,13 @@ version = "0.1.0"
 dependencies = [
  "adsb-client",
  "airjedi-fusion",
+ "async-lock",
  "bevy",
  "bevy-inspector-egui",
  "bevy_brp_extras",
  "bevy_egui",
  "bevy_obj",
- "bevy_slippy_tiles",
+ "bevy_platform",
  "catppuccin",
  "chrono",
  "crossbeam-channel",
@@ -183,6 +184,8 @@ dependencies = [
  "egui-phosphor",
  "egui_kittest",
  "egui_tiles",
+ "ehttp",
+ "googleprojection",
  "image",
  "libc",
  "reqwest",
@@ -1774,17 +1777,6 @@ dependencies = [
  "tracing",
  "wgpu-naga-bridge",
  "wgpu-types",
-]
-
-[[package]]
-name = "bevy_slippy_tiles"
-version = "0.11.0"
-dependencies = [
- "async-lock",
- "bevy",
- "bevy_platform",
- "ehttp",
- "googleprojection",
 ]
 
 [[package]]

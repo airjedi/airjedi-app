@@ -31,21 +31,24 @@ use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy_egui::{egui, EguiContexts};
 
 // Constants for 3D view
-const TRANSITION_DURATION: f32 = 2.0;
-const DEFAULT_PITCH: f32 = 25.0;
+const TRANSITION_DURATION: f32 = 0.8;
+const DEFAULT_PITCH: f32 = 70.0;
 const DEFAULT_CAMERA_ALTITUDE: f32 = 30000.0;
 const MIN_PITCH: f32 = -89.9;
 const MAX_PITCH: f32 = 89.9;
 const MIN_CAMERA_ALTITUDE: f32 = 1000.0;
 const MAX_CAMERA_ALTITUDE: f32 = 120000.0;
-const ALTITUDE_EXAGGERATION: f32 = 20.0;
+/// Vertical exaggeration factor for altitude. In the Mercator meter coordinate
+/// system, real altitude maps 1:1 to world units (1 foot = 0.3048 meters).
+/// At 30,000 ft that's only 9.1km - too small relative to tile extents at
+/// typical zoom levels. 10x gives aircraft visible vertical separation
+/// without towering above the map (FL400 = ~122km world height, about 15%
+/// of the visible map extent at zoom 12).
+const ALTITUDE_EXAGGERATION: f32 = 10.0;
 pub(crate) const CHASE_OFFSET_BEHIND_FT: f32 = 8000.0;
 pub(crate) const CHASE_OFFSET_ABOVE_FT: f32 = 2000.0;
 pub(crate) const CHASE_PITCH: f32 = 5.0;
 pub(crate) const CHASE_TRANSITION_DURATION: f32 = 2.0;
-
-/// Scale factor to convert altitude/distance values to pixel-space.
-pub(crate) const PIXEL_SCALE: f32 = 20.0;
 
 /// View mode for the application
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Reflect)]
@@ -98,10 +101,6 @@ pub struct View3DState {
     pub follow_altitude_ft: Option<i32>,
     /// Saved 2D zoom level when entering 3D mode, restored on return
     pub saved_2d_zoom_level: Option<u8>,
-    /// Fixed zoom level for rendering coordinates in 3D mode. Stays constant
-    /// while the tile system's zoom_level changes for LOD - prevents position
-    /// jumps when crossing discrete zoom boundaries.
-    pub rendering_zoom: Option<u8>,
     /// Whether the camera is in chase mode (tracking aircraft heading)
     pub chase_active: bool,
     /// Progress of the initial transition into chase position (0.0 to 1.0)
@@ -136,7 +135,6 @@ impl Default for View3DState {
             drag_active: false,
             follow_altitude_ft: None,
             saved_2d_zoom_level: None,
-            rendering_zoom: None,
             chase_active: false,
             chase_transition: 0.0,
             pre_chase_pitch: DEFAULT_PITCH,
@@ -157,29 +155,14 @@ impl View3DState {
         !matches!(self.transition, TransitionState::Idle)
     }
 
-    /// Get the zoom level to use for coordinate conversion. In 3D mode,
-    /// returns the fixed rendering zoom to prevent position jumps. In 2D,
-    /// returns None (callers should use map_state.zoom_level).
-    pub fn effective_zoom(
-        &self,
-        map_zoom: bevy_slippy_tiles::ZoomLevel,
-    ) -> bevy_slippy_tiles::ZoomLevel {
-        self.rendering_zoom
-            .and_then(|z| bevy_slippy_tiles::ZoomLevel::try_from(z).ok())
-            .unwrap_or(map_zoom)
-    }
-
-    /// Convert altitude in feet to pixel-space Z offset
+    /// Convert altitude in feet to world-space Z offset (meters with exaggeration).
     pub fn altitude_to_z(&self, altitude_feet: i32) -> f32 {
-        // Convert feet to km, then scale to pixel space
-        let alt_km = altitude_feet as f32 * 0.3048 / 1000.0;
-        alt_km * PIXEL_SCALE * self.altitude_scale
+        altitude_feet as f32 * 0.3048 * self.altitude_scale
     }
 
-    /// Convert camera altitude in feet to pixel-space vertical height
+    /// Convert camera altitude in feet to world-space vertical height (meters with exaggeration).
     pub fn altitude_to_distance(&self) -> f32 {
-        let alt_km = self.camera_altitude * 0.3048 / 1000.0;
-        alt_km * PIXEL_SCALE * self.altitude_scale
+        self.camera_altitude * 0.3048 * self.altitude_scale
     }
 
     /// Calculate the 3D camera transform in Y-up space.
@@ -220,10 +203,8 @@ impl View3DState {
     fn calculate_chase_transform_yup(&self, center: Vec3) -> Transform {
         let yaw_rad = self.camera_yaw.to_radians();
 
-        let behind_dist =
-            CHASE_OFFSET_BEHIND_FT * 0.3048 / 1000.0 * PIXEL_SCALE * self.altitude_scale;
-        let above_dist =
-            CHASE_OFFSET_ABOVE_FT * 0.3048 / 1000.0 * PIXEL_SCALE * self.altitude_scale;
+        let behind_dist = CHASE_OFFSET_BEHIND_FT * 0.3048 * self.altitude_scale;
+        let above_dist = CHASE_OFFSET_ABOVE_FT * 0.3048 * self.altitude_scale;
 
         // Camera position: behind along yaw direction, above center
         // At yaw=0, camera is south (+Z in Y-up), looking north (-Z)
@@ -278,17 +259,7 @@ pub fn toggle_3d_view(
                         Vec2::new(cam_transform.translation.x, cam_transform.translation.y);
                 }
 
-                // Save the 2D zoom level so we can restore it when returning
                 state.saved_2d_zoom_level = Some(map_state.zoom_level.to_u8());
-                // Set rendering_zoom to match the altitude-appropriate zoom,
-                // not the 2D zoom. At FL300 the adaptive zoom is ~12, but
-                // the 2D zoom might be 7-10 - using the 2D zoom would make
-                // everything appear compressed.
-                let adaptive = crate::tiles::altitude_to_zoom_level(
-                    state.camera_altitude,
-                    map_state.zoom_level.to_u8(),
-                );
-                state.rendering_zoom = Some(adaptive);
 
                 // Auto-detect ground elevation from nearest airport
                 detect_ground_elevation(&mut state, &map_state, &aviation_data);
@@ -486,7 +457,7 @@ pub fn update_3d_camera(
     window_query: Query<&Window>,
     zoom_state: Res<crate::ZoomState>,
     map_state: Res<crate::MapState>,
-    tile_settings: Res<bevy_slippy_tiles::SlippyTilesSettings>,
+    local_origin: Res<crate::tiles::LocalOrigin>,
 ) {
     if matches!(state.mode, ViewMode::Map2D) && !state.is_transitioning() {
         return;
@@ -508,8 +479,7 @@ pub fn update_3d_camera(
         TransitionState::TransitioningTo2D { progress } => smooth_step(1.0 - progress),
     };
 
-    let render_zoom = state.effective_zoom(map_state.zoom_level);
-    let converter = crate::geo::CoordinateConverter::new(&tile_settings, render_zoom);
+    let converter = crate::geo::CoordinateConverter::new(&local_origin);
     let center_2d = converter.latlon_to_world(map_state.latitude, map_state.longitude);
 
     // When following an aircraft, orbit around its altitude instead of ground.
@@ -531,91 +501,102 @@ pub fn update_3d_camera(
         state.calculate_camera_transform_yup(center_yup)
     };
 
-    // Matching height: perspective altitude that shows the same area as orthographic
+    // Perspective altitude that shows the same ground area as the current ortho view.
+    // ortho.scale = meters_per_tile_pixel / camera_zoom, so visible half-height
+    // in world meters = window.height() * ortho_scale / 2. For perspective at
+    // height h with FOV 60 deg: half-height = h * tan(30). Set equal and solve for h.
     let base_fov = 60.0_f32.to_radians();
+    let tile_size_meters = (2.0 * crate::tiles::WEB_MERCATOR_EXTENT)
+        / (1u64 << map_state.zoom_level.to_u8()) as f64;
+    let mpp = (tile_size_meters / crate::constants::DEFAULT_TILE_PIXELS as f64) as f32;
+    let ortho_scale = mpp / zoom_state.camera_zoom;
     let matching_height = if let Ok(window) = window_query.single() {
-        window.height() / (2.0 * zoom_state.camera_zoom * (base_fov / 2.0).tan())
+        window.height() * ortho_scale / (2.0 * (base_fov / 2.0).tan())
     } else {
         orbit_yup.translation.y * 0.5
     };
 
+    // The visible half-height in world meters that the ortho view shows.
+    // This is the anchor for the dolly-zoom: as FOV widens, height adjusts
+    // to keep this same ground extent visible.
+    let visible_half_h = if let Ok(window) = window_query.single() {
+        window.height() * ortho_scale / 2.0
+    } else {
+        matching_height * (base_fov / 2.0).tan()
+    };
+
     if t < 0.001 {
-        // Pure 2D — restore orthographic, flat position, identity rotation
+        // Pure 2D - restore orthographic, flat position, identity rotation
         let pos_2d = Vec3::new(center_2d.x, center_2d.y, 0.0);
         *proj_2d = Projection::Orthographic(OrthographicProjection::default_2d());
         tf_2d.translation = pos_2d;
         tf_2d.rotation = Quat::IDENTITY;
 
-        // Camera3d mirrors Camera2d in 2D mode
         *tf_3d = *tf_2d;
         *proj_3d = proj_2d.clone();
 
         if matches!(state.transition, TransitionState::TransitioningTo2D { .. }) {
             state.mode = ViewMode::Map2D;
             state.transition = TransitionState::Idle;
-            state.rendering_zoom = None;
             info!("Transition to 2D complete");
         }
         return;
     }
 
-    let perspective = PerspectiveProjection {
-        fov: base_fov,
-        far: 100_000.0,
-        ..default()
-    };
+    let cam_distance = state.altitude_to_distance();
+    let far_plane = (cam_distance * 3.0).max(500_000.0);
 
     if t > 0.999 {
-        // Pure 3D — Camera3d at Y-up orbit, Camera2d derived via rotation
+        // Pure 3D
+        let perspective = PerspectiveProjection {
+            fov: base_fov,
+            far: far_plane,
+            ..default()
+        };
         *tf_3d = orbit_yup;
         *proj_3d = Projection::Perspective(perspective.clone());
 
-        // Derive Camera2d: rotate Y-up transform to Z-up for tile rendering
-        let rotation = zup_to_yup_rotation().inverse(); // Y-up -> Z-up
+        let rotation = zup_to_yup_rotation().inverse();
         tf_2d.translation = yup_to_zup(tf_3d.translation);
         tf_2d.rotation = rotation * tf_3d.rotation;
         *proj_2d = Projection::Perspective(perspective);
     } else {
-        // Transition: arc the camera from overhead to orbit, always looking at center.
-        //
-        // Interpolate XZ position linearly but arc the altitude so the camera
-        // stays high and sweeps down in a gentle curve. This prevents the
-        // camera from showing the entire map or dipping below ground.
+        // Dolly-zoom transition: start with a narrow FOV (nearly orthographic)
+        // and widen to the target 60 deg. Camera height adjusts each frame to
+        // keep the same ground area visible, producing a seamless projection
+        // change with no scale discontinuity.
+        let start_fov = 1.0_f32.to_radians(); // ~1 deg, nearly orthographic
+        let fov = start_fov + (base_fov - start_fov) * t;
+
+        // Height that shows visible_half_h at the current FOV
+        let dolly_height = visible_half_h / (fov / 2.0).tan();
+
         let orbit_pos = orbit_yup.translation;
-        let start_height = matching_height.max(orbit_pos.y - center_yup.y);
         let end_height = orbit_pos.y - center_yup.y;
 
-        // Enforce minimum 5,000 ft AGL during transition
-        let min_height = state.altitude_to_z(5_000);
+        // Blend from dolly height to orbit height
+        let height = dolly_height + (end_height - dolly_height) * t;
+        let height = height.max(state.altitude_to_z(5_000));
 
-        // Arc: blend heights with a sine curve so the camera stays high
-        // through mid-transition, then descends to the orbit altitude.
-        // At t=0: start_height, at t=0.5: biased toward start, at t=1: end_height
-        let arc_blend = (t * std::f32::consts::FRAC_PI_2).sin(); // 0→1, slow start fast end
-        let height = start_height + (end_height - start_height) * arc_blend;
-        let height = height.max(min_height);
-
-        // XZ: lerp horizontally from directly above to the orbit offset
         let start_xz = Vec3::new(center_yup.x, 0.0, center_yup.z);
         let end_xz = Vec3::new(orbit_pos.x, 0.0, orbit_pos.z);
         let xz = start_xz.lerp(end_xz, t);
 
         tf_3d.translation = Vec3::new(xz.x, center_yup.y + height, xz.z);
 
-        // Always look at the orbit center for a stable transition
-        let up = if height > (orbit_pos - center_yup).length() * 0.95 {
-            // Near-overhead: use north as up to avoid gimbal flip
-            Vec3::NEG_Z
-        } else {
-            Vec3::Y
-        };
+        // Smoothly blend the up vector instead of snapping at t=0.3
+        let up = Vec3::NEG_Z.lerp(Vec3::Y, t.clamp(0.0, 1.0)).normalize();
         tf_3d.rotation = Transform::from_translation(tf_3d.translation)
             .looking_at(center_yup, up)
             .rotation;
 
+        let perspective = PerspectiveProjection {
+            fov,
+            far: far_plane.max(dolly_height * 3.0),
+            ..default()
+        };
         *proj_3d = Projection::Perspective(perspective.clone());
 
-        // Derive Camera2d from Camera3d
         let rotation = zup_to_yup_rotation().inverse();
         tf_2d.translation = yup_to_zup(tf_3d.translation);
         tf_2d.rotation = rotation * tf_3d.rotation;
@@ -624,7 +605,7 @@ pub fn update_3d_camera(
 }
 
 /// Smooth step function for easing transitions
-fn smooth_step(t: f32) -> f32 {
+pub(crate) fn smooth_step(t: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
@@ -649,7 +630,7 @@ pub fn handle_3d_camera_controls(
     mut state: ResMut<View3DState>,
     mut map_state: ResMut<crate::MapState>,
     mut follow_state: ResMut<crate::aircraft::CameraFollowState>,
-    tile_settings: Res<bevy_slippy_tiles::SlippyTilesSettings>,
+    local_origin: Res<crate::tiles::LocalOrigin>,
     mut contexts: EguiContexts,
     dock_state: Res<crate::dock::DockTreeState>,
 ) {
@@ -742,7 +723,7 @@ pub fn handle_3d_camera_controls(
                 state.saved_2d_center.x += dx * cam_right_x + dy * cam_fwd_x;
                 state.saved_2d_center.y += dx * cam_right_y + dy * cam_fwd_y;
 
-                sync_center_to_map_state(&state, &tile_settings, &mut map_state);
+                sync_center_to_map_state(&state, &local_origin, &mut map_state);
             }
         }
     } else {
@@ -797,55 +778,44 @@ pub fn handle_3d_camera_controls(
     }
 }
 
-/// Convert saved_2d_center (pixel-space offset from tile reference point) back to
+/// Convert saved_2d_center (local Mercator meter offset) back to
 /// geographic coordinates and update the shared map state so tiles are loaded.
 fn sync_center_to_map_state(
     state: &View3DState,
-    tile_settings: &bevy_slippy_tiles::SlippyTilesSettings,
+    local_origin: &crate::tiles::LocalOrigin,
     map_state: &mut crate::MapState,
 ) {
-    use bevy_slippy_tiles::*;
-
-    let reference_ll = LatitudeLongitudeCoordinates {
-        latitude: tile_settings.reference_latitude,
-        longitude: tile_settings.reference_longitude,
-    };
-    let reference_pixel = world_coords_to_world_pixel(
-        &reference_ll,
-        crate::constants::DEFAULT_TILE_SIZE,
-        map_state.zoom_level,
+    let origin = local_origin.mercator_origin().truncate();
+    let center_merc = bevy::math::DVec2::new(
+        state.saved_2d_center.x as f64 + origin.x,
+        state.saved_2d_center.y as f64 + origin.y,
     );
-
-    let center_geo = world_pixel_to_world_coords(
-        state.saved_2d_center.x as f64 + reference_pixel.0,
-        state.saved_2d_center.y as f64 + reference_pixel.1,
-        crate::constants::DEFAULT_TILE_SIZE,
-        map_state.zoom_level,
-    );
-
-    map_state.latitude = crate::clamp_latitude(center_geo.latitude);
-    map_state.longitude = crate::clamp_longitude(center_geo.longitude);
+    let (lon, lat) = crate::tiles::mercator_to_lonlat(center_merc);
+    map_state.latitude = crate::clamp_latitude(lat);
+    map_state.longitude = crate::clamp_longitude(lon);
 }
 
-/// System to raise map tiles to ground elevation in 3D mode.
-/// In 2D mode, tiles sit at TILE_Z_LAYER + 0.1; in 3D mode, they are raised
-/// to match the ground elevation so the map surface appears at terrain height.
-/// Lower-zoom multi-resolution tiles sit slightly below so higher-zoom tiles
-/// win depth tests and render on top.
+/// Set tile elevation for the current view mode.
+/// In 2D (Z-up): tiles use .z for layer depth.
+/// In 3D (Y-up): higher zoom tiles sit closer to ground_y (on top),
+/// lower zoom tiles sit below. Uses absolute zoom for depth ordering
+/// so the highest-detail tile always wins the depth test regardless
+/// of which zoom level is "current".
 pub fn update_tile_elevation(
     state: Res<View3DState>,
-    map_state: Res<crate::MapState>,
+    _map_state: Res<crate::MapState>,
     mut tile_query: Query<
         (&mut Transform, &crate::tiles::TileFadeState),
-        With<bevy_slippy_tiles::MapTile>,
+        With<crate::tiles::MapTile>,
     >,
 ) {
     if state.is_3d_active() {
-        let ground_z = state.altitude_to_z(state.ground_elevation_ft);
-        let current_zoom = map_state.zoom_level.to_u8();
+        let ground_y = state.altitude_to_z(state.ground_elevation_ft);
         for (mut transform, fade_state) in tile_query.iter_mut() {
-            let zoom_diff = current_zoom.saturating_sub(fade_state.tile_zoom);
-            transform.translation.z = ground_z - zoom_diff as f32 * 0.05;
+            // Higher zoom = more detail = closer to ground_y (renders on top).
+            // Zoom 19 at ground_y, zoom 0 at ground_y - 1.9
+            let depth = (19u8.saturating_sub(fade_state.tile_zoom)) as f32 * 0.1;
+            transform.translation.y = ground_y - depth;
         }
     } else if !state.is_transitioning() {
         for (mut transform, _) in tile_query.iter_mut() {
@@ -965,20 +935,40 @@ pub fn fade_distant_sprites(
     }
 }
 
-/// Update DistanceFog falloff when visibility_range changes.
+/// Scale DistanceFog and visibility_range with camera altitude so tiles
+/// and aircraft fade at appropriate distances.
 fn update_distance_fog(
-    state: Res<View3DState>,
+    mut state: ResMut<View3DState>,
     mut fog_query: Query<&mut DistanceFog, With<Camera3d>>,
 ) {
-    if !state.is_changed() || !state.is_3d_active() {
-        return;
-    }
+    let fog_blend = match state.transition {
+        TransitionState::TransitioningTo3D { progress } => smooth_step(progress),
+        TransitionState::TransitioningTo2D { progress } => smooth_step(1.0 - progress),
+        TransitionState::Idle if state.mode == ViewMode::Perspective3D => 1.0,
+        _ => 0.0,
+    };
+
     let Ok(mut fog) = fog_query.single_mut() else {
         return;
     };
+
+    if fog_blend < 0.001 {
+        fog.falloff = FogFalloff::Linear {
+            start: 999999.0,
+            end: 999999.0,
+        };
+        return;
+    }
+
+    let cam_distance = state.altitude_to_distance();
+    let fog_range = cam_distance * 4.0;
+    state.visibility_range = fog_range;
+
+    // Push fog outward at transition start so it fades in gradually
+    let effective_range = fog_range / fog_blend.max(0.05);
     fog.falloff = FogFalloff::Linear {
-        start: state.visibility_range * 0.4,
-        end: state.visibility_range,
+        start: effective_range * 0.6,
+        end: effective_range,
     };
 }
 

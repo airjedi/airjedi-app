@@ -1596,7 +1596,7 @@ pub fn toggle_aircraft_list(
 pub fn highlight_selected_aircraft(
     mut gizmos: Gizmos,
     list_state: Res<AircraftListState>,
-    tile_settings: Res<bevy_slippy_tiles::SlippyTilesSettings>,
+    local_origin: Res<crate::tiles::LocalOrigin>,
     map_state: Res<MapState>,
     view3d_state: Res<crate::view3d::View3DState>,
     aircraft_query: Query<&crate::Aircraft>,
@@ -1610,8 +1610,7 @@ pub fn highlight_selected_aircraft(
         return;
     };
 
-    let zoom = view3d_state.effective_zoom(map_state.zoom_level);
-    let converter = CoordinateConverter::new(&tile_settings, zoom);
+    let converter = CoordinateConverter::new(&local_origin);
     let pos = converter.latlon_to_world(aircraft.latitude, aircraft.longitude);
 
     // Draw selection ring (yellow)

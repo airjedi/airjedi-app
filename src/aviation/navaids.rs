@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use bevy_slippy_tiles::*;
+use crate::tiles::*;
 
 use super::{AviationData, LoadingState, NavaidType};
 use crate::constants;
@@ -31,7 +31,7 @@ pub fn draw_navaids(
     mut gizmos: Gizmos,
     aviation_data: Res<AviationData>,
     render_state: Res<NavaidRenderState>,
-    tile_settings: Res<SlippyTilesSettings>,
+    local_origin: Res<LocalOrigin>,
     map_state: Res<MapState>,
     view3d_state: Res<crate::view3d::View3DState>,
 ) {
@@ -48,8 +48,7 @@ pub fn draw_navaids(
         return;
     }
 
-    let render_zoom = view3d_state.effective_zoom(map_state.zoom_level);
-    let converter = CoordinateConverter::new(&tile_settings, render_zoom);
+    let converter = CoordinateConverter::new(&local_origin);
     let is_3d = view3d_state.is_3d_active();
     let ground_z = view3d_state.altitude_to_z(view3d_state.ground_elevation_ft);
 

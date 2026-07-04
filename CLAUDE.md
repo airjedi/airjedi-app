@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-AirJedi is an aircraft map tracker built with Bevy 0.18 game engine and bevy_slippy_tiles for map rendering. The application displays aircraft positions on an interactive slippy map (OpenStreetMap-based) with pan, zoom, and real-time position tracking capabilities.
+AirJedi is an aircraft map tracker built with the Bevy 0.19 game engine and an integrated tile rendering system. The application displays aircraft positions on an interactive slippy map (OpenStreetMap-based) with pan, zoom, 2D/3D view modes, and real-time position tracking capabilities.
 
 ## Build and Run Commands
 
@@ -57,10 +57,10 @@ The application uses Bevy's ECS architecture with a plugin-based modular design.
 | Module | Purpose |
 |--------|---------|
 | `src/main.rs` | App setup, plugin registration, constants, `setup_map` |
-| `src/camera.rs` | Triple-camera system (MapCamera 2D + AircraftCamera 3D HDR + AircraftCamera2d 3D non-HDR), aircraft position/label updates |
+| `src/camera.rs` | Dual-camera system (AircraftCamera 3D order 0 + MapCamera 2D overlay order 1), aircraft position/label updates |
 | `src/zoom.rs` | Two-tier zoom: continuous camera zoom + discrete tile zoom levels |
 | `src/input.rs` | Pan/drag handling with Mercator projection conversion |
-| `src/tiles.rs` | Tile lifecycle, multi-resolution bands, fade-in/out, 3D mesh quads |
+| `src/tiles/` | Integrated tile system: download, render, pool, prefetch, coords, elevation |
 | `src/tile_cache.rs` | Centralized tile cache in `~/Library/Caches/airjedi/tiles/`, symlinked into assets |
 | `src/geo.rs` | `CoordinateConverter`, haversine distance, lat/lon-to-world helpers |
 | `src/config.rs` | `AppConfig` persistence (TOML), basemap style, settings UI state |
@@ -98,14 +98,13 @@ The application uses Bevy's ECS architecture with a plugin-based modular design.
 
 ### Camera Architecture
 
-The app uses four cameras. The HDR pipeline on AircraftCamera outputs alpha=1 for all pixels (due to the atmosphere sky pass), making it impossible to alpha-composite over Camera2d's tiles. AircraftCamera2d solves this by rendering aircraft in 2D mode without HDR.
+The app uses three cameras:
 
-1. **MapCamera** (`Camera2d`): Map tiles, sprites, text. Layers 1 (tiles), 2 (gizmos), 4 (overlays), 5 (labels).
-2. **AircraftCamera** (`Camera3d`, HDR): 3D aircraft models with Atmosphere/HDR pipeline. Active in 3D mode (order 0, renders sky + aircraft + tile meshes). In 2D mode, stays active but uses `CameraOutputMode::Skip` (atmosphere systems panic if camera is deactivated). Layer 0 + 6-9.
-3. **AircraftCamera2d** (`Camera3d`, non-HDR): Lightweight camera for rendering aircraft in 2D mode. Alpha-blends over MapCamera with `ClearColorConfig::None` (must NOT use `Default` or it erases tiles). Active only in 2D mode (order 1). Layer 0 only.
-4. **UI Camera** (`Camera2d`, order 100): Dedicated egui camera, layer 11 only.
+1. **AircraftCamera** (`Camera3d`, order 0): Primary renderer for tiles (as Mesh3d planes), aircraft, sky dome, ground plane. Uses orthographic in 2D mode, perspective in 3D mode. Clears with dark background. Layers: DEFAULT(0), TILES(1), GROUND(7), SKY(8), AIRSPACE(9).
+2. **MapCamera** (`Camera2d`, order 1): Overlay for gizmos, labels, overlays. Alpha-blends on top of AircraftCamera output. Never renders tiles. Layers: GIZMOS(2), OVERLAYS_2D(4), LABELS(5).
+3. **UI Camera** (`Camera2d`, order 100): Dedicated egui camera, layer 11 only.
 
-In 3D mode, AircraftCamera (order 0) renders first, then MapCamera (order 1) alpha-blends gizmos/labels on top. In 2D mode, MapCamera (order 0) renders tiles first, then AircraftCamera2d (order 1) alpha-blends aircraft on top. `manage_atmosphere_camera` in `src/view3d/sky.rs` toggles between these configurations on mode transitions.
+In 3D mode, AircraftCamera uses perspective projection. In 2D mode, both cameras use orthographic. `manage_camera_mode` in `src/view3d/sky.rs` handles fog and ground plane toggling on mode transitions.
 
 ### Key Resources
 
@@ -117,11 +116,15 @@ In 3D mode, AircraftCamera (order 0) renders first, then MapCamera (order 1) alp
 
 ### Coordinate System
 
-- Bevy world coordinates: origin at reference point, +X right, +Y up (2D) / +Y up (3D via rotation)
-- Map tiles use Web Mercator projection (EPSG:3857)
-- Latitude clamped to ±85.0511° (Mercator limit), longitude to ±180°
+- All world positions use zoom-independent Web Mercator meters (EPSG:3857)
+- `LocalOrigin` (floating origin) keeps f32 values near zero; recenters when camera moves >25km
+- `CoordinateConverter` in `src/geo.rs` converts lat/lon to local meters via `LocalOrigin`
+- 2D mode: X=east, Y=north, Z=layer depth (Z-up)
+- 3D mode: X=east, Y=altitude, Z=-north (Y-up, via `zup_to_yup` in view3d)
+- `WEB_MERCATOR_EXTENT = 20037508.342789244` meters (half Earth circumference)
+- Latitude clamped to +/-85.0511 (Mercator limit), longitude to +/-180
 - Default center: Wichita, KS (37.6872, -97.3301)
-- `CoordinateConverter` in `src/geo.rs` handles all lat/lon-to-world conversions
+- Altitude uses 50x exaggeration: `altitude_to_z(feet) = feet * 0.3048 * altitude_scale`
 
 ### System Ordering
 
@@ -131,15 +134,10 @@ Systems that modify `MapState::zoom_level` in 3D mode run in `ZoomSet::Change`. 
 
 Key dependencies (see `Cargo.toml` for full list):
 
-- `bevy = "0.18"` with `jpeg` feature: Game engine
-- `bevy_slippy_tiles`: Slippy map tile downloading/caching (local path, fork for 0.18)
-- `bevy_egui = "0.39"` + `bevy-inspector-egui = "0.36"`: egui UI integration and entity inspector
-- `egui_tiles = "0.14"`: Dock/tab layout system
-- `egui-phosphor = "0.11"`: Icon font for UI
-- `catppuccin = "2.6"` + `egui-aesthetix`: Theming
-- `bevy_obj = "0.18"`: OBJ model loading
-- `bevy_hanabi = "0.18"` (optional `hanabi` feature, default on): GPU particle effects for aircraft trails
-- `bevy_brp_extras = "0.18"` (optional `brp` feature, default on): BRP extras for remote inspection, screenshots, input simulation
+- `bevy = "0.19"` with `jpeg` feature: Game engine
+- `bevy_egui = "0.40"` + `bevy-inspector-egui = "0.37"`: egui UI integration and entity inspector
+- `bevy_obj = "0.19"`: OBJ model loading
+- `bevy_brp_extras = "0.20"` (optional `brp` feature, default on): BRP extras for remote inspection, screenshots, input simulation
 - `adsb-client`: Local crate for ADS-B SBS1 protocol parsing
 - `tokio`: Async runtime for ADS-B network connections
 - `reqwest`: HTTP client (blocking + json) for METAR and data downloads
@@ -356,52 +354,41 @@ world_mutate_resources(resource: "airjedi_bevy::map::MapState", path: ".longitud
 - `airjedi_bevy::map::MapState` — latitude, longitude
 - `airjedi_bevy::map::ZoomState` — camera_zoom, min_zoom, max_zoom
 
-## 3D Tile Rendering — Known Pitfalls
+## 3D Tile Rendering -- Known Pitfalls
 
-The 3D tile system in `src/tiles.rs` has several interacting subsystems that can cause visual flashing if modified incorrectly. Read this before changing tile display, zoom transitions, or culling logic.
+The integrated tile system in `src/tiles/` has several interacting subsystems. Read this before changing tile display, zoom transitions, or culling logic.
 
 ### Architecture
 
-- **Multi-resolution bands**: 3D mode requests tiles at 5 zoom levels (current, -1, -2, -3, -4) for perspective coverage, but only the current zoom level gets 3D mesh quads. Lower-zoom tiles exist as entities for tracking/transitions but are invisible in 3D.
-- **Tile lifecycle**: Download → spawn entity (alpha 0) → fade in → mesh quad created → visible. Each step uses deferred commands, so there are 1-2 frame delays between steps.
-- **The 300ms refresh timer** (`Tile3DRefreshTimer`) continuously re-requests tiles to fill the 3D view as the camera moves.
+- **Integrated tile system**: Replaced `bevy_slippy_tiles` with `src/tiles/` module containing coords, download, render, pool, prefetch, and elevation submodules.
+- **Zoom-independent positioning**: Tiles use Web Mercator meters via `tile_to_mercator_aabb()`. Position is fixed regardless of zoom level - zoom only affects which tiles exist and their mesh size.
+- **SSE-driven LOD**: In 3D mode, `zoom_for_distance()` computes the ideal zoom level for each tile based on its screen-space error (distance from camera vs tile size in pixels). Near tiles get high zoom, distant tiles get low zoom.
+- **Entity pooling**: `TilePool` reuses entity slots via `activate_tile`/`release_tile` instead of spawning/despawning. `CachedTileSet` provides an in-memory index of disk-cached tiles to avoid filesystem stat calls.
+- **Adaptive zoom**: `update_3d_adaptive_zoom` adjusts `map_state.zoom_level` based on camera altitude every 300ms with hysteresis (0.7 upgrade / 0.6 downgrade).
+- **Dedup via TileGrid**: `tile_grid.occupied` (HashMap keyed by `(tx, ty, zoom)`) prevents spawning duplicate entities.
+
+### Critical: Mesh Types
+
+- **3D tiles**: `Plane3d` (natively in XZ plane, faces +Y). No rotation needed. Do NOT use `Rectangle` + rotation - produces degenerate AABB in Bevy 0.19.
+- **2D tiles**: `Rectangle` (natively in XY plane, faces -Z). No rotation needed.
+- Per-zoom mesh handles are pre-built at startup with 0.1% overlap to prevent seams.
+- All tile entities have `NoFrustumCulling` (Plane3d has zero Y extent in its AABB).
+
+### Tile Elevation (Y-up space)
+
+`update_tile_elevation` sets tile Y position using absolute zoom for depth ordering: higher zoom tiles sit closer to ground_y (render on top), lower zoom tiles sit below. The offset is `(19 - tile_zoom) * 0.1` units. This prevents Z-fighting regardless of which zoom level is current.
+
+### 2D-to-3D Transition
+
+The transition uses a dolly-zoom technique: starts at 1 deg FOV (nearly orthographic) and widens to 60 deg over 0.8 seconds, adjusting camera height to maintain the same visible ground area. Fog fades in with transition progress. Aircraft scale blends between 2D and 3D formulas.
 
 ### Common Causes of Tile Flashing
 
-1. **Z-fighting between zoom levels**: Never render mesh quads from multiple zoom levels simultaneously. `AlphaMode::Opaque` mesh quads at similar depths Z-fight unpredictably, especially at grazing angles near the horizon. Geometric depth separation and `StandardMaterial::depth_bias` both fail at grazing angles on Metal. The only reliable fix is single-zoom mesh quads.
-
-2. **Spawn-cull-respawn cycle**: If the entity budget (`max_tile_entities`) is lower than the number of tiles the request system generates, budget culling removes visible tiles, their positions are cleared from `SpawnedTiles`, and the refresh timer re-requests them — creating perpetual flashing. Always ensure the budget exceeds the steady-state tile count (~1000-1200 in 3D).
-
-3. **Zoom oscillation**: The altitude-adaptive zoom (`altitude_to_zoom_level`) uses hysteresis to prevent rapid switching. If hysteresis is too narrow, the zoom bounces between levels every 300ms, destroying and recreating mesh quads each time. Current values: 0.7 to upgrade, 0.6 to downgrade.
-
-4. **Fade-in delay**: Tiles spawn at alpha 0 and fade in. In 3D mode, the fade speed is 30.0 (vs 3.0 in 2D) to minimize the gap when mesh quads are created. If set too slow, there's a visible gap during zoom transitions. If set to instant (alpha 1.0 on spawn), Bevy's default magenta checkerboard texture shows before the tile image loads.
-
-5. **Stale tile accumulation**: If `animate_tile_fades` doesn't mark out-of-band tiles as dominated, tiles from old zoom levels accumulate indefinitely. The dominated check must mark tiles outside [current_zoom-4, current_zoom] for cleanup.
+1. **Spawn-cull-respawn cycle**: Entity budget (`max_tile_entities = 5000` in 3D) must exceed steady-state tile count.
+2. **Zoom oscillation**: Asymmetric hysteresis (0.7 upgrade, 0.6 downgrade) with 1-second cooldown prevents rapid switching.
+3. **Z-fighting between zoom levels**: Fixed by absolute zoom depth ordering in `update_tile_elevation`.
+4. **Mode switch**: `orient_tiles_for_view_mode` releases all tiles on 2D/3D switch (coordinate systems differ).
 
 ### Debugging Tile Issues
 
-Add a periodic tile census to `animate_tile_fades` to see tile counts per zoom level:
-```rust
-// Temporary diagnostic — add inside animate_tile_fades when is_3d
-use std::sync::atomic::{AtomicU32, Ordering};
-static FRAME: AtomicU32 = AtomicU32::new(0);
-if FRAME.fetch_add(1, Ordering::Relaxed) % 60 == 0 {
-    let mut counts: HashMap<u8, (u32, u32)> = HashMap::new();
-    for (_, fs, _, _) in tile_query.iter() {
-        let e = counts.entry(fs.tile_zoom).or_default();
-        e.0 += 1;
-        if fs.alpha >= 1.0 { e.1 += 1; }
-    }
-    info!("TILE CENSUS zoom={} {:?} total={}", current_zoom, counts, tile_query.iter().count());
-}
-```
-
-Run with `RUST_LOG=airjedi_bevy=info cargo run --release 2>tmp/tile_debug.log` and look for:
-- **Total exceeding budget** → spawn-cull cycle
-- **Tiles at alpha 0 that never become opaque** → texture loading or fade issue
-- **Zoom changing every 300ms** → hysteresis too narrow
-- **Tiles outside the band accumulating** → dominated check not working
-
-### Bevy StandardMaterial::depth_bias Warning
-
-`depth_bias` is cast to `i32` internally (`material.depth_bias as i32`). Fractional values like 0.001 or 0.01 are silently truncated to 0 and have no effect. Always use integer values if you need depth bias. Even with correct integer values, depth bias does not reliably prevent Z-fighting between horizontal coplanar mesh quads at grazing angles on Metal.
+Run with `RUST_LOG=airjedi_bevy::tiles=info cargo run --release 2>tmp/tile_debug.log`

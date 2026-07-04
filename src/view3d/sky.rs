@@ -734,15 +734,12 @@ pub fn manage_camera_mode(
         return;
     };
 
-    if state.is_3d_active() {
-        fog.falloff = FogFalloff::Linear {
-            start: state.visibility_range * 0.4,
-            end: state.visibility_range,
-        };
+    // Camera3d is always order 0 (primary), Camera2d is always order 1 (overlay).
+    cam3d.order = 0;
+    cam2d.order = 1;
 
-        // Camera ordering: Camera2d base (order 0), Camera3d overlay (order 1)
-        cam2d.order = 0;
-        cam3d.order = 1;
+    if state.is_3d_active() {
+        // Fog falloff is managed per-frame by update_distance_fog (scales with altitude)
 
         if *last_3d != Some(true) {
             *last_3d = Some(true);
@@ -751,19 +748,13 @@ pub fn manage_camera_mode(
             }
         }
     } else {
-        // 2D mode: disable fog, Camera2d is primary
         fog.falloff = FogFalloff::Linear {
             start: 999999.0,
             end: 999999.0,
         };
 
-        cam2d.order = 0;
-        cam3d.order = 1;
-
         if *last_3d != Some(false) {
             *last_3d = Some(false);
-            cam2d.clear_color = ClearColorConfig::Default;
-            cam2d.output_mode = CameraOutputMode::default();
             if let Ok((_, mut gp_vis)) = ground_query.single_mut() {
                 *gp_vis = Visibility::Hidden;
             }
@@ -778,16 +769,27 @@ pub fn update_fog_color_for_time(
     state: Res<View3DState>,
     mut fog_query: Query<&mut DistanceFog, With<Camera3d>>,
 ) {
-    if !state.is_3d_active() {
+    let fog_blend = match state.transition {
+        super::TransitionState::TransitioningTo3D { progress } => {
+            super::smooth_step(progress)
+        }
+        super::TransitionState::TransitioningTo2D { progress } => {
+            super::smooth_step(1.0 - progress)
+        }
+        _ if state.is_3d_active() => 1.0,
+        _ => 0.0,
+    };
+
+    if fog_blend < 0.001 {
         return;
     }
+
     let Ok(mut fog) = fog_query.single_mut() else {
         return;
     };
 
     let elev = sun_state.elevation;
 
-    // Blend factor: 1.0 at full day (sun > 10°), 0.0 at night (sun < -6°)
     let t = if elev > 10.0 {
         1.0
     } else if elev > -6.0 {
@@ -796,12 +798,11 @@ pub fn update_fog_color_for_time(
         0.0
     };
 
-    // Day: hazy blue matching sky horizon. Night: dark matching tiles.
-    // Fog should blend tiles into the sky dome seamlessly at distance.
-    let r = 0.08 + 0.55 * t;
-    let g = 0.08 + 0.65 * t;
-    let b = 0.10 + 0.80 * t;
-    let a = 0.85 - 0.55 * t; // Night: 0.85, Day: 0.3
+    let r = 0.06 + 0.40 * t;
+    let g = 0.06 + 0.48 * t;
+    let b = 0.08 + 0.58 * t;
+    let base_a = 0.60 - 0.45 * t;
+    let a = base_a * fog_blend;
     fog.color = Color::srgba(r, g, b, a);
 }
 

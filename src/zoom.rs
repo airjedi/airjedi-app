@@ -3,13 +3,13 @@ use bevy::input::gestures::PinchGesture;
 use bevy::input::mouse::MouseWheel;
 use bevy::prelude::*;
 use bevy_egui::EguiContexts;
-use bevy_slippy_tiles::*;
+use crate::tiles::*;
 
 use crate::camera::MapCamera;
 use crate::constants::{self, ZOOM_DOWNGRADE_THRESHOLD, ZOOM_UPGRADE_THRESHOLD};
 use crate::dock;
 use crate::map::{MapState, ZoomState};
-use crate::tiles::{compute_tile_radius, request_tiles_at_location, SpawnedTiles, TileFadeState};
+use crate::tiles::{compute_tile_radius, request_tiles_at_location, TileFadeState};
 use crate::view3d;
 use crate::{clamp_latitude, clamp_longitude, ZoomDebugLogger};
 
@@ -39,72 +39,40 @@ fn calculate_zoom_delta(event: &MouseWheel) -> f32 {
 
 /// Calculate new map center to keep the point under cursor stationary during zoom.
 ///
-/// Returns the new (latitude, longitude) for the map center.
+/// Uses Mercator meter coordinates which are zoom-independent, so changing
+/// the discrete tile zoom level doesn't affect the calculation.
 fn calculate_zoom_to_cursor_center(
     cursor_viewport_pos: Vec2,
     window_size: (f32, f32),
     current_center: (f64, f64),
     camera_zoom_before: f32,
     camera_zoom_after: f32,
-    old_tile_zoom: ZoomLevel,
-    new_tile_zoom: ZoomLevel,
+    _old_tile_zoom: ZoomLevel,
+    _new_tile_zoom: ZoomLevel,
 ) -> (f64, f64) {
-    // Calculate cursor offset from screen center
     let screen_center = (window_size.0 / 2.0, window_size.1 / 2.0);
     let cursor_offset = (
         (cursor_viewport_pos.x - screen_center.0) as f64,
-        -(cursor_viewport_pos.y - screen_center.1) as f64, // Y inverted
+        -(cursor_viewport_pos.y - screen_center.1) as f64,
     );
 
-    // Convert to world pixels before zoom (using old camera zoom)
-    let world_offset_before = (
-        cursor_offset.0 / camera_zoom_before as f64,
-        cursor_offset.1 / camera_zoom_before as f64,
-    );
+    // Convert cursor offset to Mercator meters before and after zoom.
+    // ortho.scale = 1/camera_zoom, so 1 screen pixel = (1/camera_zoom) meters.
+    let ortho_before = 1.0 / camera_zoom_before as f64;
+    let ortho_after = 1.0 / camera_zoom_after as f64;
 
-    // Get current center in world pixels at old zoom level
-    let center_pixel = world_coords_to_world_pixel(
-        &LatitudeLongitudeCoordinates {
-            latitude: current_center.0,
-            longitude: current_center.1,
-        },
-        crate::constants::DEFAULT_TILE_SIZE,
-        old_tile_zoom,
-    );
+    let center_merc = lonlat_to_mercator(current_center.1, current_center.0);
 
-    // Calculate cursor geographic position at old zoom level
-    let cursor_geo = world_pixel_to_world_coords(
-        center_pixel.0 + world_offset_before.0,
-        center_pixel.1 + world_offset_before.1,
-        crate::constants::DEFAULT_TILE_SIZE,
-        old_tile_zoom,
-    );
+    // Cursor position in Mercator meters (same point, same meters, zoom-independent)
+    let cursor_merc_x = center_merc.x + cursor_offset.0 * ortho_before;
+    let cursor_merc_y = center_merc.y + cursor_offset.1 * ortho_before;
 
-    // Calculate world offset after zoom (using new camera zoom)
-    let world_offset_after = (
-        cursor_offset.0 / camera_zoom_after as f64,
-        cursor_offset.1 / camera_zoom_after as f64,
-    );
+    // New center: keep cursor at same Mercator position but at new screen offset
+    let new_center_x = cursor_merc_x - cursor_offset.0 * ortho_after;
+    let new_center_y = cursor_merc_y - cursor_offset.1 * ortho_after;
 
-    // Convert cursor geo back to pixels at new zoom level
-    let cursor_pixel_after = world_coords_to_world_pixel(
-        &LatitudeLongitudeCoordinates {
-            latitude: cursor_geo.latitude,
-            longitude: cursor_geo.longitude,
-        },
-        crate::constants::DEFAULT_TILE_SIZE,
-        new_tile_zoom,
-    );
-
-    // New center = cursor position minus the offset
-    let new_center = world_pixel_to_world_coords(
-        cursor_pixel_after.0 - world_offset_after.0,
-        cursor_pixel_after.1 - world_offset_after.1,
-        crate::constants::DEFAULT_TILE_SIZE,
-        new_tile_zoom,
-    );
-
-    (new_center.latitude, new_center.longitude)
+    let (new_lon, new_lat) = mercator_to_lonlat(bevy::math::DVec2::new(new_center_x, new_center_y));
+    (new_lat, new_lon)
 }
 
 // =============================================================================
@@ -119,48 +87,51 @@ fn check_zoom_level_transition(
     map_state: &mut MapState,
 ) -> (bool, ZoomLevel) {
     let old_tile_zoom = map_state.zoom_level;
-    let current_tile_zoom = old_tile_zoom.to_u8();
+    let mut changed = false;
 
-    if zoom_state.camera_zoom >= ZOOM_UPGRADE_THRESHOLD && current_tile_zoom < 19 {
-        zoom_state.camera_zoom /= 2.0;
-        if let Ok(new_zoom) = ZoomLevel::try_from(current_tile_zoom + 1) {
-            map_state.zoom_level = new_zoom;
-            return (true, old_tile_zoom);
+    const MIN_TILE_ZOOM: u8 = 3;
+
+    // Loop to handle multiple zoom level crossings from a single large scroll
+    loop {
+        let current_tile_zoom = map_state.zoom_level.to_u8();
+        if zoom_state.camera_zoom >= ZOOM_UPGRADE_THRESHOLD && current_tile_zoom < 19 {
+            zoom_state.camera_zoom /= 2.0;
+            if let Ok(new_zoom) = ZoomLevel::try_from(current_tile_zoom + 1) {
+                map_state.zoom_level = new_zoom;
+                changed = true;
+                continue;
+            }
+        } else if zoom_state.camera_zoom <= ZOOM_DOWNGRADE_THRESHOLD && current_tile_zoom > MIN_TILE_ZOOM {
+            zoom_state.camera_zoom *= 2.0;
+            if let Ok(new_zoom) = ZoomLevel::try_from(current_tile_zoom - 1) {
+                map_state.zoom_level = new_zoom;
+                changed = true;
+                continue;
+            }
         }
-    } else if zoom_state.camera_zoom <= ZOOM_DOWNGRADE_THRESHOLD && current_tile_zoom > 0 {
-        zoom_state.camera_zoom *= 2.0;
-        if let Ok(new_zoom) = ZoomLevel::try_from(current_tile_zoom - 1) {
-            map_state.zoom_level = new_zoom;
-            return (true, old_tile_zoom);
-        }
+        break;
     }
 
-    (false, old_tile_zoom)
+    // Clamp camera_zoom so the map always fills the screen at the minimum zoom
+    if map_state.zoom_level.to_u8() == MIN_TILE_ZOOM {
+        zoom_state.camera_zoom = zoom_state.camera_zoom.max(ZOOM_DOWNGRADE_THRESHOLD + 0.01);
+    }
+
+    (changed, old_tile_zoom)
 }
 
-/// After a zoom level transition, scale existing tiles to match the new
-/// coordinate system and request fresh tiles at the new zoom level.
+/// After a zoom level transition, request fresh tiles at the new zoom level.
+/// In the Mercator meter coordinate system, tile positions are zoom-independent
+/// so no rescaling is needed. Old-zoom tiles are kept visible until new-zoom
+/// tiles load (handled by animate_tile_fades).
 fn apply_zoom_level_transition(
-    old_tile_zoom: ZoomLevel,
+    _old_tile_zoom: ZoomLevel,
     map_state: &MapState,
-    tile_query: &mut Query<(&mut TileFadeState, &mut Transform), With<MapTile>>,
-    spawned_tiles: &mut SpawnedTiles,
-    download_events: &mut MessageWriter<DownloadSlippyTilesMessage>,
-    download_status: &mut SlippyTileDownloadStatus,
+    _tile_query: &mut Query<(&mut TileFadeState, &mut Transform), With<MapTile>>,
+    download_events: &mut MessageWriter<DownloadTilesRequest>,
+    _tile_grid: &mut crate::tiles::pool::TileGrid,
     radius: u8,
 ) {
-    spawned_tiles.positions.clear();
-    download_status.0.clear();
-    let scale_factor = if map_state.zoom_level.to_u8() > old_tile_zoom.to_u8() {
-        2.0_f32
-    } else {
-        0.5_f32
-    };
-    for (_fade_state, mut transform) in tile_query.iter_mut() {
-        transform.translation.x *= scale_factor;
-        transform.translation.y *= scale_factor;
-        transform.scale *= scale_factor;
-    }
     request_tiles_at_location(
         download_events,
         map_state.latitude,
@@ -179,19 +150,25 @@ pub(crate) fn handle_zoom(
     mut scroll_events: MessageReader<MouseWheel>,
     mut map_state: ResMut<MapState>,
     mut zoom_state: ResMut<ZoomState>,
-    mut download_events: MessageWriter<DownloadSlippyTilesMessage>,
+    mut download_events: MessageWriter<DownloadTilesRequest>,
     window_query: Query<&Window>,
     mut tile_query: Query<(&mut TileFadeState, &mut Transform), With<MapTile>>,
     logger: Option<Res<ZoomDebugLogger>>,
     mut contexts: EguiContexts,
     dock_state: Res<dock::DockTreeState>,
-    mut spawned_tiles: ResMut<SpawnedTiles>,
     view3d_state: Res<view3d::View3DState>,
-    mut download_status: ResMut<SlippyTileDownloadStatus>,
+    mut tile_grid: ResMut<crate::tiles::pool::TileGrid>,
+    drag_state: Res<crate::input::DragState>,
     mut last_requested_radius: Local<u8>,
 ) {
     // In 3D mode, scroll is handled by handle_3d_camera_controls
     if view3d_state.is_3d_active() || view3d_state.is_transitioning() {
+        return;
+    }
+
+    // Don't zoom while panning - macOS trackpad two-finger drag generates
+    // both cursor movement and scroll events simultaneously.
+    if drag_state.is_dragging {
         return;
     }
 
@@ -331,16 +308,15 @@ pub(crate) fn handle_zoom(
             window.width(),
             window.height(),
             zoom_state.camera_zoom,
-            Some(&view3d_state),
+            Some(&view3d_state), map_state.zoom_level.to_u8(),
         );
         if zoom_level_changed {
             apply_zoom_level_transition(
                 old_tile_zoom,
                 &map_state,
                 &mut tile_query,
-                &mut spawned_tiles,
                 &mut download_events,
-                &mut download_status,
+                &mut tile_grid,
                 radius,
             );
             *last_requested_radius = radius;
@@ -349,14 +325,12 @@ pub(crate) fn handle_zoom(
                 map_state.zoom_level.to_u8()
             );
         } else if radius > *last_requested_radius {
-            download_events.write(DownloadSlippyTilesMessage {
-                tile_size: constants::DEFAULT_TILE_SIZE,
-                zoom_level: map_state.zoom_level,
-                coordinates: Coordinates::from_latitude_longitude(
-                    map_state.latitude,
-                    map_state.longitude,
-                ),
+            download_events.write(DownloadTilesRequest {
+                latitude: map_state.latitude,
+                longitude: map_state.longitude,
+                zoom: map_state.zoom_level.to_u8(),
                 radius: Radius(radius),
+                priority: DownloadPriority::Near,
                 use_cache: true,
             });
             *last_requested_radius = radius;
@@ -375,18 +349,22 @@ pub(crate) fn handle_pinch_zoom(
     mut pinch_events: MessageReader<PinchGesture>,
     mut map_state: ResMut<MapState>,
     mut zoom_state: ResMut<ZoomState>,
-    mut download_events: MessageWriter<DownloadSlippyTilesMessage>,
+    mut download_events: MessageWriter<DownloadTilesRequest>,
     window_query: Query<&Window>,
     mut tile_query: Query<(&mut TileFadeState, &mut Transform), With<MapTile>>,
     mut contexts: EguiContexts,
     dock_state: Res<dock::DockTreeState>,
-    mut spawned_tiles: ResMut<SpawnedTiles>,
     view3d_state: Res<view3d::View3DState>,
-    mut download_status: ResMut<SlippyTileDownloadStatus>,
+    mut tile_grid: ResMut<crate::tiles::pool::TileGrid>,
+    drag_state: Res<crate::input::DragState>,
     mut last_requested_radius: Local<u8>,
 ) {
     // In 3D mode, zoom is handled by handle_3d_camera_controls
     if view3d_state.is_3d_active() || view3d_state.is_transitioning() {
+        return;
+    }
+
+    if drag_state.is_dragging {
         return;
     }
 
@@ -438,28 +416,25 @@ pub(crate) fn handle_pinch_zoom(
                 window.width(),
                 window.height(),
                 zoom_state.camera_zoom,
-                Some(&view3d_state),
+                Some(&view3d_state), map_state.zoom_level.to_u8(),
             );
             if zoom_level_changed {
                 apply_zoom_level_transition(
                     old_tile_zoom,
                     &map_state,
                     &mut tile_query,
-                    &mut spawned_tiles,
                     &mut download_events,
-                    &mut download_status,
+                    &mut tile_grid,
                     radius,
                 );
                 *last_requested_radius = radius;
             } else if radius > *last_requested_radius {
-                download_events.write(DownloadSlippyTilesMessage {
-                    tile_size: constants::DEFAULT_TILE_SIZE,
-                    zoom_level: map_state.zoom_level,
-                    coordinates: Coordinates::from_latitude_longitude(
-                        map_state.latitude,
-                        map_state.longitude,
-                    ),
+                download_events.write(DownloadTilesRequest {
+                    latitude: map_state.latitude,
+                    longitude: map_state.longitude,
+                    zoom: map_state.zoom_level.to_u8(),
                     radius: Radius(radius),
+                    priority: DownloadPriority::Near,
                     use_cache: true,
                 });
                 *last_requested_radius = radius;
@@ -469,16 +444,31 @@ pub(crate) fn handle_pinch_zoom(
 }
 
 /// Apply the camera zoom to the actual camera projection.
+/// In the Mercator meter coordinate system, ortho.scale must account for
+/// the tile zoom level since tiles at different zooms have different meter sizes.
 pub(crate) fn apply_camera_zoom(
-    zoom_state: Res<ZoomState>,
+    mut zoom_state: ResMut<ZoomState>,
+    map_state: Res<crate::map::MapState>,
     mut camera_query: Query<&mut Projection, With<MapCamera>>,
+    window_query: Query<&Window>,
 ) {
     if let Ok(mut projection) = camera_query.single_mut() {
-        // Access the OrthographicProjection within Projection
         if let Projection::Orthographic(ref mut ortho) = projection.as_mut() {
-            // Use camera_zoom directly - tiles are already at correct world-space scale
-            // Smaller scale = more zoomed in, larger scale = more zoomed out
-            ortho.scale = 1.0 / zoom_state.camera_zoom;
+            let tile_size_meters = (2.0 * super::tiles::WEB_MERCATOR_EXTENT)
+                / (1u64 << map_state.zoom_level.to_u8()) as f64;
+            let meters_per_tile_pixel = tile_size_meters / crate::constants::DEFAULT_TILE_PIXELS as f64;
+
+            // Clamp camera_zoom so the map always fills the viewport width.
+            // min_camera_zoom = window_width * meters_per_tile_pixel / map_width
+            let map_width = 2.0 * super::tiles::WEB_MERCATOR_EXTENT;
+            if let Ok(window) = window_query.single() {
+                let min_zoom = (window.width() as f64 * meters_per_tile_pixel / map_width) as f32;
+                if zoom_state.camera_zoom < min_zoom {
+                    zoom_state.camera_zoom = min_zoom;
+                }
+            }
+
+            ortho.scale = (meters_per_tile_pixel / zoom_state.camera_zoom as f64) as f32;
         }
     }
 }

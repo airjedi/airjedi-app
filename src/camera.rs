@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use bevy_slippy_tiles::*;
+use crate::tiles::*;
 
 use crate::constants;
 use crate::geo;
@@ -119,61 +119,19 @@ fn follow_aircraft(
 
 fn update_camera_position(
     map_state: Res<MapState>,
-    tile_settings: Res<SlippyTilesSettings>,
+    local_origin: Res<LocalOrigin>,
     mut camera_query: Query<&mut Transform, With<MapCamera>>,
-    logger: Option<Res<ZoomDebugLogger>>,
     view3d_state: Res<view3d::View3DState>,
 ) {
-    // Don't fight with update_3d_camera during 3D mode or transitions
     if view3d_state.is_3d_active() || view3d_state.is_transitioning() {
         return;
     }
 
-    let zoom_level = map_state.zoom_level;
-
     if let Ok(mut camera_transform) = camera_query.single_mut() {
-        let reference_ll = LatitudeLongitudeCoordinates {
-            latitude: tile_settings.reference_latitude,
-            longitude: tile_settings.reference_longitude,
-        };
-        let reference_pixel = world_coords_to_world_pixel(
-            &reference_ll,
-            crate::constants::DEFAULT_TILE_SIZE,
-            zoom_level,
-        );
-
-        let center_ll = LatitudeLongitudeCoordinates {
-            latitude: map_state.latitude,
-            longitude: map_state.longitude,
-        };
-        let center_pixel = world_coords_to_world_pixel(
-            &center_ll,
-            crate::constants::DEFAULT_TILE_SIZE,
-            zoom_level,
-        );
-
-        let offset_x = center_pixel.0 - reference_pixel.0;
-        let offset_y = center_pixel.1 - reference_pixel.1;
-
-        if let Some(ref log) = logger {
-            if map_state.is_changed() {
-                log.log(&format!(
-                    "=== CAMERA POS UPDATE (zoom: {}) ===",
-                    zoom_level.to_u8()
-                ));
-                log.log(&format!(
-                    "  center: ({:.6}, {:.6}) -> pixel ({:.2}, {:.2})",
-                    map_state.latitude, map_state.longitude, center_pixel.0, center_pixel.1
-                ));
-                log.log(&format!(
-                    "  camera offset: ({:.2}, {:.2})",
-                    offset_x, offset_y
-                ));
-            }
-        }
-
-        camera_transform.translation.x = offset_x as f32;
-        camera_transform.translation.y = offset_y as f32;
+        let converter = geo::CoordinateConverter::new(&local_origin);
+        let pos = converter.latlon_to_world(map_state.latitude, map_state.longitude);
+        camera_transform.translation.x = pos.x;
+        camera_transform.translation.y = pos.y;
     }
 }
 
@@ -235,34 +193,40 @@ fn sync_aircraft_camera(
 /// projection handle apparent size (closer = bigger, farther = smaller).
 fn scale_aircraft_and_labels(
     zoom_state: Res<ZoomState>,
+    map_state: Res<MapState>,
     view3d_state: Res<crate::view3d::View3DState>,
     mut aircraft_query: Query<&mut Transform, (With<Aircraft>, Without<AircraftLabel>)>,
     mut label_query: Query<(&mut Transform, &mut TextFont), With<AircraftLabel>>,
     new_aircraft: Query<(), Added<Aircraft>>,
 ) {
-    // Update scales when zoom changes, mode changes, or new aircraft are spawned
     if !zoom_state.is_changed() && !view3d_state.is_changed() && new_aircraft.is_empty() {
         return;
     }
 
-    if view3d_state.is_3d_active() {
-        // 3D perspective: fixed world-space scale. Perspective projection
-        // naturally makes distant aircraft smaller and nearby aircraft larger.
-        // Scale up significantly so aircraft are visible at altitude distances.
-        let scale = constants::AIRCRAFT_MODEL_SCALE * 10.0;
-        for mut transform in aircraft_query.iter_mut() {
-            transform.scale = Vec3::splat(scale);
+    let tile_size_meters = (2.0 * crate::tiles::WEB_MERCATOR_EXTENT)
+        / (1u64 << map_state.zoom_level.to_u8()) as f64;
+    let meters_per_tile_pixel = (tile_size_meters / constants::DEFAULT_TILE_PIXELS as f64) as f32;
+
+    // Blend between 2D and 3D scales during transitions to avoid a size flash
+    let t_3d = match view3d_state.transition {
+        view3d::TransitionState::TransitioningTo3D { progress } => {
+            view3d::smooth_step(progress)
         }
-    } else {
-        // 2D orthographic: scale inversely with zoom for constant screen size
-        let scale = constants::AIRCRAFT_MODEL_SCALE / zoom_state.camera_zoom;
-        for mut transform in aircraft_query.iter_mut() {
-            transform.scale = Vec3::splat(scale);
+        view3d::TransitionState::TransitioningTo2D { progress } => {
+            view3d::smooth_step(1.0 - progress)
         }
+        _ if view3d_state.is_3d_active() => 1.0,
+        _ => 0.0,
+    };
+
+    let scale_2d = constants::AIRCRAFT_MODEL_SCALE * meters_per_tile_pixel / zoom_state.camera_zoom;
+    let scale_3d = constants::AIRCRAFT_MODEL_SCALE * meters_per_tile_pixel * 10.0;
+    let scale = scale_2d + (scale_3d - scale_2d) * t_3d;
+    for mut transform in aircraft_query.iter_mut() {
+        transform.scale = Vec3::splat(scale);
     }
 
-    // Labels are always 2D (hidden in 3D mode by update_aircraft_3d_transform)
-    let label_scale = 1.0 / zoom_state.camera_zoom;
+    let label_scale = meters_per_tile_pixel / zoom_state.camera_zoom;
     for (mut transform, mut text_font) in label_query.iter_mut() {
         transform.scale = Vec3::splat(label_scale);
         text_font.font_size = FontSize::Px(constants::BASE_FONT_SIZE);
@@ -271,7 +235,7 @@ fn scale_aircraft_and_labels(
 
 pub(crate) fn update_aircraft_positions(
     map_state: Res<MapState>,
-    tile_settings: Res<SlippyTilesSettings>,
+    local_origin: Res<LocalOrigin>,
     config: Res<crate::config::AppConfig>,
     view3d_state: Res<view3d::View3DState>,
     mut aircraft_query: Query<(
@@ -280,8 +244,7 @@ pub(crate) fn update_aircraft_positions(
         &mut Transform,
     )>,
 ) {
-    let zoom = view3d_state.effective_zoom(map_state.zoom_level);
-    let converter = geo::CoordinateConverter::new(&tile_settings, zoom);
+    let converter = geo::CoordinateConverter::new(&local_origin);
 
     for (aircraft, interp_opt, mut transform) in aircraft_query.iter_mut() {
         // Use interpolated display position if available and enabled, otherwise raw ADS-B

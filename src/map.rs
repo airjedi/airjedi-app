@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use bevy_slippy_tiles::ZoomLevel;
+use crate::tiles::ZoomLevel;
 
 use crate::constants;
 
