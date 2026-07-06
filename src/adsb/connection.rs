@@ -1,25 +1,25 @@
 use bevy::prelude::*;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use adsb_client::{
-    Client as AdsbClient, ClientConfig, ConnectionConfig, ConnectionState, TrackerConfig,
+    Client as AdsbClient, ClientConfig, ConnectionConfig, ConnectionState, ProtocolType,
+    TrackerConfig,
 };
 
+use crate::config::{self, FeedProtocol, FeedSourceConfig};
 use crate::debug_panel::DebugPanelState;
-use crate::{config, constants, MapState};
+use crate::{constants, MapState};
 
-/// Shared state for aircraft data from the ADS-B client.
-/// Updated by the background tokio thread and read by Bevy systems.
-#[derive(Resource, Clone)]
+/// Shared state for aircraft data from a single ADS-B client.
+/// Updated by a background tokio thread and read by Bevy systems.
+#[derive(Clone)]
 pub struct AdsbAircraftData {
-    /// Aircraft data keyed by ICAO address
     pub aircraft: Arc<Mutex<Vec<adsb_client::Aircraft>>>,
-    /// Current connection state
     pub connection_state: Arc<Mutex<ConnectionState>>,
-    /// Signal to stop the background thread
+    pub message_count: Arc<AtomicU64>,
     shutdown: Arc<AtomicBool>,
-    /// The endpoint URL this client is connected to
     pub endpoint_url: String,
 }
 
@@ -28,6 +28,7 @@ impl AdsbAircraftData {
         Self {
             aircraft: Arc::new(Mutex::new(Vec::new())),
             connection_state: Arc::new(Mutex::new(ConnectionState::Disconnected)),
+            message_count: Arc::new(AtomicU64::new(0)),
             shutdown: Arc::new(AtomicBool::new(false)),
             endpoint_url: endpoint_url.to_string(),
         }
@@ -37,14 +38,10 @@ impl AdsbAircraftData {
         self.shutdown.store(true, Ordering::Release);
     }
 
-    /// Try to get a snapshot of all tracked aircraft without blocking.
-    /// Returns `None` if the background thread currently holds the lock.
     pub fn try_get_aircraft(&self) -> Option<Vec<adsb_client::Aircraft>> {
         self.aircraft.try_lock().ok().map(|a| a.clone())
     }
 
-    /// Try to get the aircraft count without cloning the full Vec.
-    /// Returns `None` if the lock is held.
     pub fn try_aircraft_count(&self) -> Option<usize> {
         self.aircraft.try_lock().ok().map(|a| a.len())
     }
@@ -57,31 +54,101 @@ impl AdsbAircraftData {
     }
 }
 
-/// Component to mark the connection status UI text
+/// A single live feed connection.
+pub struct FeedConnection {
+    pub config: FeedSourceConfig,
+    pub data: AdsbAircraftData,
+}
+
+/// Resource managing multiple simultaneous ADS-B feed connections.
+#[derive(Resource, Default)]
+pub struct FeedConnectionManager {
+    pub connections: HashMap<String, FeedConnection>,
+    prev_feed_snapshot: Vec<FeedSourceConfig>,
+}
+
+impl FeedConnectionManager {
+    pub fn total_aircraft_count(&self) -> usize {
+        self.connections
+            .values()
+            .filter_map(|c| c.data.try_aircraft_count())
+            .sum()
+    }
+
+    pub fn total_message_count(&self) -> u64 {
+        self.connections
+            .values()
+            .map(|c| c.data.message_count.load(Ordering::Relaxed))
+            .sum()
+    }
+
+    pub fn connected_count(&self) -> usize {
+        self.connections
+            .values()
+            .filter(|c| c.data.get_connection_state() == ConnectionState::Connected)
+            .count()
+    }
+
+    pub fn all_aircraft(&self) -> Vec<(String, adsb_client::Aircraft)> {
+        let mut result = Vec::new();
+        for (name, conn) in &self.connections {
+            if let Some(aircraft) = conn.data.try_get_aircraft() {
+                for ac in aircraft {
+                    result.push((name.clone(), ac));
+                }
+            }
+        }
+        result
+    }
+}
+
+/// Component to mark the connection status UI text.
 #[derive(Component)]
 pub struct ConnectionStatusText;
 
-/// Setup the ADS-B client in a background thread with its own tokio runtime.
-pub fn setup_adsb_client(
+/// Startup system: spawn connections for all enabled feeds.
+pub fn setup_feed_connections(
     mut commands: Commands,
     map_state: Res<MapState>,
     app_config: Res<config::AppConfig>,
 ) {
-    let endpoint_url = app_config.feed.endpoint_url.clone();
-    let center_lat = map_state.latitude;
-    let center_lon = map_state.longitude;
+    let mut manager = FeedConnectionManager::default();
 
-    let adsb_data = spawn_adsb_client(&endpoint_url, center_lat, center_lon);
-    commands.insert_resource(adsb_data);
-    info!("ADS-B client background thread started");
+    for feed in &app_config.feeds {
+        if feed.enabled {
+            let data = spawn_feed_client(feed, map_state.latitude, map_state.longitude);
+            manager.connections.insert(
+                feed.name.clone(),
+                FeedConnection {
+                    config: feed.clone(),
+                    data,
+                },
+            );
+        }
+    }
+
+    manager.prev_feed_snapshot = app_config.feeds.clone();
+    commands.insert_resource(manager);
+    info!("Feed connections started ({} feeds)", app_config.feeds.iter().filter(|f| f.enabled).count());
 }
 
-fn spawn_adsb_client(endpoint_url: &str, center_lat: f64, center_lon: f64) -> AdsbAircraftData {
-    let adsb_data = AdsbAircraftData::new(endpoint_url);
+fn spawn_feed_client(
+    feed: &FeedSourceConfig,
+    center_lat: f64,
+    center_lon: f64,
+) -> AdsbAircraftData {
+    let adsb_data = AdsbAircraftData::new(&feed.endpoint);
     let aircraft_data = Arc::clone(&adsb_data.aircraft);
     let connection_state = Arc::clone(&adsb_data.connection_state);
     let shutdown = Arc::clone(&adsb_data.shutdown);
-    let endpoint_url = endpoint_url.to_string();
+    let message_count = Arc::clone(&adsb_data.message_count);
+    let endpoint = feed.endpoint.clone();
+    let feed_name = feed.name.clone();
+
+    let protocol = match feed.protocol {
+        FeedProtocol::Sbs1 => ProtocolType::BaseStation,
+        FeedProtocol::Beast => ProtocolType::Beast,
+    };
 
     std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread()
@@ -90,11 +157,11 @@ fn spawn_adsb_client(endpoint_url: &str, center_lat: f64, center_lon: f64) -> Ad
             .expect("Failed to create tokio runtime for ADS-B client");
 
         rt.block_on(async move {
-            info!("Starting ADS-B client, connecting to {}", endpoint_url);
+            info!("[{}] Starting ADS-B client, connecting to {} ({:?})", feed_name, endpoint, protocol);
 
             let mut client = AdsbClient::spawn(ClientConfig {
                 connection: ConnectionConfig {
-                    address: endpoint_url.clone(),
+                    address: endpoint.clone(),
                     ..Default::default()
                 },
                 tracker: TrackerConfig {
@@ -103,12 +170,13 @@ fn spawn_adsb_client(endpoint_url: &str, center_lat: f64, center_lon: f64) -> Ad
                     aircraft_timeout_secs: constants::ADSB_AIRCRAFT_TIMEOUT_SECS,
                     ..Default::default()
                 },
+                protocol,
                 ..Default::default()
             });
 
             loop {
                 if shutdown.load(Ordering::Acquire) {
-                    info!("ADS-B client shutting down (endpoint changed)");
+                    info!("[{}] ADS-B client shutting down", feed_name);
                     return;
                 }
 
@@ -116,10 +184,12 @@ fn spawn_adsb_client(endpoint_url: &str, center_lat: f64, center_lon: f64) -> Ad
                     if shutdown.load(Ordering::Acquire) {
                         return;
                     }
-                    warn!("ADS-B client connection closed, restarting...");
+                    warn!("[{}] Connection closed, restarting...", feed_name);
                     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                     continue;
                 }
+
+                message_count.fetch_add(1, Ordering::Relaxed);
 
                 if let Ok(mut state) = connection_state.lock() {
                     *state = client.connection_state();
@@ -135,76 +205,118 @@ fn spawn_adsb_client(endpoint_url: &str, center_lat: f64, center_lon: f64) -> Ad
     adsb_data
 }
 
-pub fn reconnect_on_config_change(
-    mut commands: Commands,
+/// Detect feed config changes and spawn/shutdown connections as needed.
+pub fn reconnect_on_feed_changes(
     app_config: Res<config::AppConfig>,
-    existing: Option<Res<AdsbAircraftData>>,
+    mut manager: ResMut<FeedConnectionManager>,
     map_state: Res<MapState>,
 ) {
     if !app_config.is_changed() {
         return;
     }
 
-    let Some(existing) = existing else {
-        return;
-    };
-
-    if existing.endpoint_url == app_config.feed.endpoint_url {
+    if app_config.feeds == manager.prev_feed_snapshot {
         return;
     }
 
-    info!(
-        "Feed endpoint changed from {} to {}, reconnecting",
-        existing.endpoint_url, app_config.feed.endpoint_url
-    );
+    let old_names: HashMap<String, &FeedSourceConfig> = manager
+        .prev_feed_snapshot
+        .iter()
+        .map(|f| (f.name.clone(), f))
+        .collect();
 
-    existing.request_shutdown();
+    let new_names: HashMap<String, &FeedSourceConfig> = app_config
+        .feeds
+        .iter()
+        .map(|f| (f.name.clone(), f))
+        .collect();
 
-    let new_data = spawn_adsb_client(
-        &app_config.feed.endpoint_url,
-        map_state.latitude,
-        map_state.longitude,
-    );
-    commands.insert_resource(new_data);
+    // Shutdown removed or changed feeds
+    let mut to_remove = Vec::new();
+    for (name, conn) in &manager.connections {
+        match new_names.get(name) {
+            None => {
+                info!("[{}] Feed removed, shutting down", name);
+                conn.data.request_shutdown();
+                to_remove.push(name.clone());
+            }
+            Some(new_config) => {
+                if !new_config.enabled {
+                    info!("[{}] Feed disabled, shutting down", name);
+                    conn.data.request_shutdown();
+                    to_remove.push(name.clone());
+                } else if new_config.endpoint != conn.config.endpoint
+                    || new_config.protocol != conn.config.protocol
+                {
+                    info!("[{}] Feed config changed, reconnecting", name);
+                    conn.data.request_shutdown();
+                    to_remove.push(name.clone());
+                }
+            }
+        }
+    }
+
+    for name in &to_remove {
+        manager.connections.remove(name);
+    }
+
+    // Spawn new or changed feeds
+    for feed in &app_config.feeds {
+        if feed.enabled && !manager.connections.contains_key(&feed.name) {
+            info!("[{}] Spawning new feed connection to {}", feed.name, feed.endpoint);
+            let data = spawn_feed_client(feed, map_state.latitude, map_state.longitude);
+            manager.connections.insert(
+                feed.name.clone(),
+                FeedConnection {
+                    config: feed.clone(),
+                    data,
+                },
+            );
+        }
+    }
+
+    manager.prev_feed_snapshot = app_config.feeds.clone();
 }
 
-/// Update the connection status UI indicator
+/// Update the connection status UI indicator (aggregate across all feeds).
 pub fn update_connection_status(
-    adsb_data: Option<Res<AdsbAircraftData>>,
+    manager: Option<Res<FeedConnectionManager>>,
     mut status_query: Query<(&mut Text, &mut TextColor), With<ConnectionStatusText>>,
     mut debug: Option<ResMut<DebugPanelState>>,
     mut prev_state: Local<String>,
     theme: Res<crate::theme::AppTheme>,
 ) {
-    let Some(adsb_data) = adsb_data else {
+    let Some(manager) = manager else {
         return;
     };
 
-    let connection_state = adsb_data.get_connection_state();
-    let aircraft_count = adsb_data.try_aircraft_count().unwrap_or(0);
+    let total_feeds = manager.connections.len();
+    let connected = manager.connected_count();
+    let aircraft_count = manager.total_aircraft_count();
 
-    // Log connection state transitions
-    let state_label = format!("{:?}", connection_state);
+    let state_label = format!("{}/{} connected", connected, total_feeds);
     if *prev_state != state_label {
         if let Some(ref mut dbg) = debug {
-            dbg.push_log(format!("Connection: {}", state_label));
+            dbg.push_log(format!("Feeds: {}", state_label));
         }
         *prev_state = state_label;
     }
 
     for (mut text, mut color) in status_query.iter_mut() {
-        let (status_text, status_color) = match connection_state {
-            ConnectionState::Connected => (
+        let (status_text, status_color) = if total_feeds == 0 {
+            ("ADS-B: No feeds".to_string(), theme.text_error())
+        } else if connected == total_feeds {
+            (
                 format!("ADS-B: {} aircraft", aircraft_count),
                 theme.text_success(),
-            ),
-            ConnectionState::Connecting => ("ADS-B: Connecting...".to_string(), theme.text_warn()),
-            ConnectionState::Disconnected => {
-                ("ADS-B: Disconnected".to_string(), theme.text_error())
-            }
-            ConnectionState::Error(ref msg) => {
-                (format!("ADS-B: Error - {}", msg), theme.text_error())
-            }
+            )
+        } else if connected > 0 {
+            (
+                format!("ADS-B: {}/{} feeds, {} ac", connected, total_feeds, aircraft_count),
+                theme.text_warn(),
+            )
+        } else {
+            ("ADS-B: Disconnected".to_string(), theme.text_error())
         };
 
         **text = status_text;
