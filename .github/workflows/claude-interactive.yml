@@ -17,18 +17,10 @@ jobs:
       contents: write
       pull-requests: write
       issues: write
-      id-token: write
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Authenticate to Google Cloud
-        id: auth
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -37,12 +29,9 @@ jobs:
 
       - uses: anthropics/claude-code-action@v1
         with:
-          use_vertex: "true"
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           trigger_phrase: "@claude"
           track_progress: true
           claude_args: |
             --model claude-sonnet-4-6
             --max-turns 30
-        env:
-          ANTHROPIC_VERTEX_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-          CLOUD_ML_REGION: us-east5

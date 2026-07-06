@@ -11,20 +11,12 @@ jobs:
     permissions:
       contents: read
       issues: write
-      id-token: write
     steps:
       - uses: actions/checkout@v4
 
-      - name: Authenticate to Google Cloud
-        id: auth
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-
       - uses: anthropics/claude-code-action@v1
         with:
-          use_vertex: "true"
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |
             REPO: ${{ github.repository }}
             ISSUE NUMBER: ${{ github.event.issue.number }}
@@ -43,6 +35,3 @@ jobs:
             --model claude-sonnet-4-6
             --max-turns 15
             --allowedTools "Read,Bash(gh issue:*),Bash(gh search:*),Bash(grep:*),Bash(find:*),Bash(git log:*),Bash(cat:*)"
-        env:
-          ANTHROPIC_VERTEX_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-          CLOUD_ML_REGION: us-east5
