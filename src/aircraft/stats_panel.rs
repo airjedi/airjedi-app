@@ -2,6 +2,8 @@ use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 use std::time::Instant;
 
+use crate::adsb::FeedConnectionManager;
+use crate::debug_panel::DebugPanelState;
 use crate::theme::{to_egui_color32, to_egui_color32_alpha, AppTheme};
 use crate::Aircraft;
 
@@ -78,6 +80,31 @@ fn format_duration(secs: u64) -> String {
 /// Component to mark the stats panel toggle button
 #[derive(Component)]
 pub struct StatsPanelButton;
+
+/// Compute aggregate message rate from all feed connections.
+pub fn update_message_rate(
+    feed_mgr: Option<Res<FeedConnectionManager>>,
+    mut stats: ResMut<StatsPanelState>,
+    mut debug: Option<ResMut<DebugPanelState>>,
+) {
+    let total = feed_mgr
+        .as_ref()
+        .map(|m| m.total_message_count())
+        .unwrap_or(0);
+
+    if let Some(ref mut dbg) = debug {
+        dbg.messages_processed = total;
+    }
+
+    let now = Instant::now();
+    let elapsed = now.duration_since(stats.last_rate_check).as_secs_f32();
+    if elapsed >= 1.0 {
+        let delta = total.saturating_sub(stats.last_message_count);
+        stats.message_rate = delta as f32 / elapsed;
+        stats.last_message_count = total;
+        stats.last_rate_check = now;
+    }
+}
 
 /// System to render the statistics panel
 pub fn render_stats_panel(
