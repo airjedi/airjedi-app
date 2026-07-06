@@ -1,0 +1,42 @@
+[package]
+name = "adsb-client"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+authors = ["Chris Custine <124975+ccustine@users.noreply.github.com>"]
+description = "Modular, reusable library for connecting to and parsing ADS-B data feeds"
+repository = "https://github.com/ccustine/airjedi-app"
+
+[lints.rust]
+missing_debug_implementations = "warn"
+unsafe_op_in_unsafe_fn = "warn"
+unused_lifetimes = "warn"
+redundant_lifetimes = "warn"
+trivial_numeric_casts = "warn"
+
+[lints.clippy]
+cargo = { level = "warn", priority = -1 }
+complexity = { level = "warn", priority = -1 }
+correctness = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+perf = { level = "warn", priority = -1 }
+style = { level = "warn", priority = -1 }
+suspicious = { level = "warn", priority = -1 }
+
+# Restriction lints for better code quality
+allow_attributes_without_reason = "warn"
+undocumented_unsafe_blocks = "warn"
+map_err_ignore = "warn"
+string_to_string = "warn"
+
+# Opt-out of pedantic lints that don't fit this codebase
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"
+
+[dependencies]
+tokio = { version = "1", features = ["net", "io-util", "sync", "time", "rt", "macros"] }
+tokio-util = "0.7"
+chrono = { version = "0.4", features = ["serde"] }
+log = "0.4"
+thiserror = "1"

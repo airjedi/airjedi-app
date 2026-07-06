@@ -1,5 +1,5 @@
 [workspace]
-members = ["airjedi-fusion"]
+members = ["airjedi-fusion", "crates/adsb-client"]
 resolver = "2"
 
 [package]
@@ -21,7 +21,7 @@ googleprojection = "1.2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 reqwest = { version = "0.12", features = ["blocking", "json"] }
-adsb-client = { path = "/Users/ccustine/development/aviation/airjedi-desktop/crates/adsb-client" }
+adsb-client = { path = "crates/adsb-client" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
 chrono = { version = "0.4", features = ["serde"] }
 bevy_egui = "0.40"
