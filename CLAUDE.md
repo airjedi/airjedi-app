@@ -2,6 +2,24 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Agent Workflow
+
+This repo uses `claude-code-action` for automated issue triage and
+implementation. Agent skills live in `.claude/skills/`.
+
+**Labels:**
+- `agent:build` - human-only gate that authorizes agent implementation
+- `agent:skip` - tells agents to ignore an issue
+- `type:*` and `priority:*` - set by triage agent
+- `state:*` - tracks agent workflow progress
+
+**Branch convention:** Agent branches use `claude/<issue>-description`.
+
+**PR convention:** Agent PRs include `Closes #<issue-number>` in the body.
+
+**Commit style:** Plain imperative (e.g., "Fix altimeter QNH transition").
+No conventional commit prefixes, no emojis.
+
 ## Project Overview
 
 AirJedi is an aircraft map tracker built with the Bevy 0.19 game engine and an integrated tile rendering system. The application displays aircraft positions on an interactive slippy map (OpenStreetMap-based) with pan, zoom, 2D/3D view modes, and real-time position tracking capabilities.
