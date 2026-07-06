@@ -3,8 +3,8 @@ name: review-pr
 description: >
   Review a pull request for code quality, correctness, test coverage,
   and adherence to project conventions. Posts a structured review
-  summary and inline comments on specific issues. Use when a PR needs
-  code review.
+  summary and inline comments on specific issues. Invoke with a PR
+  number: /review-pr 5
 ---
 
 # Review PR
@@ -12,19 +12,21 @@ description: >
 You are reviewing a pull request. Your job is to assess code quality,
 correctness, test coverage, and project convention adherence.
 
-## Inputs
+## Getting Started
 
-You will receive these as context:
-- `REPO` - the repository
-- `PR NUMBER` - the pull request number
+Determine the repo and PR number. The user will provide a PR number.
+
+```bash
+REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+```
 
 ## Steps
 
 ### 1. Read the PR
 
 ```bash
-gh pr view "$PR_NUMBER" --repo "$REPO"
-gh pr diff "$PR_NUMBER" --repo "$REPO"
+gh pr view "$PR_NUMBER"
+gh pr diff "$PR_NUMBER"
 ```
 
 Understand:
@@ -74,7 +76,7 @@ For each changed file, understand:
 Check for existing review comment:
 
 ```bash
-gh pr view "$PR_NUMBER" --repo "$REPO" --comments --json comments \
+gh pr view "$PR_NUMBER" --comments --json comments \
   | jq '.comments[] | select(.body | contains("> **review-agent**"))'
 ```
 
@@ -113,14 +115,14 @@ gh pr view "$PR_NUMBER" --repo "$REPO" --comments --json comments \
 - [x/] No unrelated changes
 ```
 
-For specific code issues, use inline PR comments:
+For specific code issues, post inline PR comments:
 
 ```bash
 gh api repos/$REPO/pulls/$PR_NUMBER/comments \
   -f body="[comment]" \
   -f path="[file]" \
   -f line=[line_number] \
-  -f commit_id="$(gh pr view $PR_NUMBER --repo $REPO --json headRefOid -q .headRefOid)"
+  -f commit_id="$(gh pr view $PR_NUMBER --json headRefOid -q .headRefOid)"
 ```
 
 ## Guidelines

@@ -4,8 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Agent Workflow
 
-This repo uses `claude-code-action` for automated issue triage and
-implementation. Agent skills live in `.claude/skills/`.
+Agent skills in `.claude/skills/` handle issue triage, implementation,
+and PR review. Run them manually from Claude Code in this repo.
+
+**Usage:**
+- Triage an issue: invoke triage-issue skill with an issue number
+- Build from issue: apply `agent:build` label, then invoke build-from-issue
+- Review a PR: invoke review-pr skill with a PR number
 
 **Labels:**
 - `agent:build` - human-only gate that authorizes agent implementation
