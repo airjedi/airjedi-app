@@ -7,6 +7,7 @@ use crate::tiles::*;
 use crate::geo::{haversine_distance_nm, CoordinateConverter};
 use crate::constants;
 use crate::MapState;
+use crate::view3d::View3DState;
 use super::{AirportFilter, AviationData, LoadingState};
 
 /// Component marking a runway entity
@@ -235,16 +236,123 @@ pub fn spawn_runway_entities(
     info!("Spawned {} runway body entities", count);
 }
 
+pub fn update_runway_positions(
+    local_origin: Res<LocalOrigin>,
+    mut body_query: Query<(&RunwayBody, &mut Transform)>,
+    mut label_query: Query<(&RunwayLabel, &mut Transform), Without<RunwayBody>>,
+) {
+    if !local_origin.is_changed() {
+        return;
+    }
+
+    let converter = CoordinateConverter::new(&local_origin);
+
+    for (body, mut transform) in body_query.iter_mut() {
+        let le = converter.latlon_to_world(body.le_lat, body.le_lon);
+        let he = converter.latlon_to_world(body.he_lat, body.he_lon);
+        let center = (le + he) / 2.0;
+        let angle = heading_to_rotation(body.heading_deg);
+        transform.translation.x = center.x;
+        transform.translation.y = center.y;
+        transform.rotation = Quat::from_rotation_z(angle);
+    }
+
+    for (label, mut transform) in label_query.iter_mut() {
+        let le = converter.latlon_to_world(label.le_lat, label.le_lon);
+        let he = converter.latlon_to_world(label.he_lat, label.he_lon);
+        let angle = heading_to_rotation(label.heading_deg);
+        let pos = if label.is_he_end {
+            he_label_pos(le, he)
+        } else {
+            le_label_pos(le, he)
+        };
+        let rotation = if label.is_he_end {
+            Quat::from_rotation_z(angle + std::f32::consts::PI)
+        } else {
+            Quat::from_rotation_z(angle)
+        };
+        transform.translation.x = pos.x;
+        transform.translation.y = pos.y;
+        transform.rotation = rotation;
+    }
+}
+
+pub fn update_runway_visibility(
+    map_state: Res<MapState>,
+    render_state: Res<RunwayRenderState>,
+    view3d_state: Res<View3DState>,
+    mut body_query: Query<(&RunwayBody, &mut Visibility)>,
+    mut label_query: Query<(&RunwayLabel, &mut Visibility), Without<RunwayBody>>,
+) {
+    let zoom: u8 = map_state.zoom_level.to_u8();
+    let show_bodies = render_state.show_runways
+        && zoom >= 8
+        && !view3d_state.is_3d_active();
+    let show_labels = show_bodies && zoom >= 11;
+
+    let center_lat = map_state.latitude;
+    let center_lon = map_state.longitude;
+
+    if !show_bodies {
+        for (_, mut vis) in body_query.iter_mut() {
+            *vis = Visibility::Hidden;
+        }
+        for (_, mut vis) in label_query.iter_mut() {
+            *vis = Visibility::Hidden;
+        }
+        return;
+    }
+
+    for (body, mut vis) in body_query.iter_mut() {
+        let in_range = (body.midpoint_lat - center_lat).abs()
+            <= constants::AVIATION_FEATURE_BBOX_DEG
+            && (body.midpoint_lon - center_lon).abs()
+                <= constants::AVIATION_FEATURE_BBOX_DEG
+            && haversine_distance_nm(
+                center_lat,
+                center_lon,
+                body.midpoint_lat,
+                body.midpoint_lon,
+            ) <= constants::AVIATION_FEATURE_RADIUS_NM;
+        *vis = if in_range {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+    }
+
+    for (label, mut vis) in label_query.iter_mut() {
+        if !show_labels {
+            *vis = Visibility::Hidden;
+            continue;
+        }
+        let in_range = (label.midpoint_lat - center_lat).abs()
+            <= constants::AVIATION_FEATURE_BBOX_DEG
+            && (label.midpoint_lon - center_lon).abs()
+                <= constants::AVIATION_FEATURE_BBOX_DEG
+            && haversine_distance_nm(
+                center_lat,
+                center_lon,
+                label.midpoint_lat,
+                label.midpoint_lon,
+            ) <= constants::AVIATION_FEATURE_RADIUS_NM;
+        *vis = if in_range {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+    }
+}
+
 const RUNWAY_COLOR: Color = Color::srgba(1.0, 1.0, 1.0, 0.7);
 
-/// System to render runways using Gizmos
 pub fn draw_runways(
     mut gizmos: Gizmos,
     aviation_data: Res<AviationData>,
     render_state: Res<RunwayRenderState>,
     local_origin: Res<LocalOrigin>,
     map_state: Res<MapState>,
-    view3d_state: Res<crate::view3d::View3DState>,
+    view3d_state: Res<View3DState>,
 ) {
     if aviation_data.loading_state != LoadingState::Ready {
         return;

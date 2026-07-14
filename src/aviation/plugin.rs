@@ -3,8 +3,8 @@ use bevy::prelude::*;
 use super::{
     draw_navaids, draw_runways, poll_aviation_data_loading, spawn_airports,
     spawn_runway_entities, start_aviation_data_loading, update_airport_positions,
-    update_airport_visibility, AirportRenderState, AviationData, NavaidRenderState,
-    RunwayRenderState,
+    update_airport_visibility, update_runway_positions, update_runway_visibility,
+    AirportRenderState, AviationData, NavaidRenderState, RunwayRenderState,
 };
 use crate::ZoomSet;
 
@@ -25,6 +25,8 @@ impl Plugin for AviationPlugin {
                     spawn_runway_entities,
                     update_airport_positions.after(ZoomSet::Change),
                     update_airport_visibility,
+                    update_runway_positions.after(ZoomSet::Change),
+                    update_runway_visibility.after(ZoomSet::Change),
                     draw_runways.after(ZoomSet::Change),
                     draw_navaids.after(ZoomSet::Change),
                 ),
