@@ -16,15 +16,26 @@
 //!
 //! Provides a connection handle that manages TCP connections to ADS-B feeds
 //! with automatic reconnection, address hot-reload, and graceful shutdown.
+//! Supports both line-based (SBS-1) and raw binary (BEAST) reading modes.
 
 use std::time::Duration;
 
 use log::{error, info, warn};
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, watch};
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
+
+/// Framing mode for TCP data reading.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum FrameMode {
+    /// Read newline-delimited text (for SBS-1/BaseStation, AVR).
+    #[default]
+    Line,
+    /// Read raw binary chunks (for BEAST binary protocol).
+    Raw,
+}
 
 /// Configuration for TCP connections.
 #[derive(Debug, Clone)]
@@ -37,6 +48,8 @@ pub struct ConnectionConfig {
     pub read_timeout: Option<Duration>,
     /// Channel buffer size for received data.
     pub buffer_size: usize,
+    /// Data framing mode.
+    pub frame_mode: FrameMode,
 }
 
 impl Default for ConnectionConfig {
@@ -46,6 +59,7 @@ impl Default for ConnectionConfig {
             reconnect_delay: Duration::from_secs(5),
             read_timeout: None,
             buffer_size: 1024,
+            frame_mode: FrameMode::Line,
         }
     }
 }
@@ -68,7 +82,7 @@ pub enum ConnectionState {
 pub enum ConnectionEvent {
     /// Connection state changed.
     StateChanged(ConnectionState),
-    /// Data received (one line).
+    /// Data received (one line in Line mode, raw chunk in Raw mode).
     DataReceived(Vec<u8>),
 }
 
@@ -93,9 +107,6 @@ impl std::fmt::Debug for Connection {
 
 impl Connection {
     /// Spawn a new connection task with the given configuration.
-    ///
-    /// Returns a handle that can be used to receive events, change the
-    /// server address, and shut down the connection.
     #[must_use]
     pub fn spawn(config: ConnectionConfig) -> Self {
         let (event_tx, event_rx) = mpsc::channel(config.buffer_size);
@@ -104,9 +115,10 @@ impl Connection {
 
         let task_cancel = cancel_token.clone();
         let reconnect_delay = config.reconnect_delay;
+        let frame_mode = config.frame_mode;
 
         tokio::spawn(async move {
-            connection_loop(event_tx, address_rx, task_cancel, reconnect_delay).await;
+            connection_loop(event_tx, address_rx, task_cancel, reconnect_delay, frame_mode).await;
         });
 
         Self {
@@ -117,15 +129,11 @@ impl Connection {
     }
 
     /// Receive the next event from the connection.
-    ///
-    /// Returns `None` if the connection has been shut down.
     pub async fn recv(&mut self) -> Option<ConnectionEvent> {
         self.event_rx.recv().await
     }
 
     /// Change the server address.
-    ///
-    /// The connection will disconnect and reconnect to the new address.
     pub fn set_address(&self, address: String) {
         let _ = self.address_tx.send(address);
     }
@@ -153,6 +161,7 @@ async fn connection_loop(
     mut address_rx: watch::Receiver<String>,
     cancel_token: CancellationToken,
     reconnect_delay: Duration,
+    frame_mode: FrameMode,
 ) {
     loop {
         if cancel_token.is_cancelled() {
@@ -162,25 +171,36 @@ async fn connection_loop(
 
         let current_address = address_rx.borrow_and_update().clone();
 
-        // Send connecting state
         if event_tx
             .send(ConnectionEvent::StateChanged(ConnectionState::Connecting))
             .await
             .is_err()
         {
-            return; // Receiver dropped
+            return;
         }
 
         info!("Connecting to {}...", current_address);
 
-        match connect_and_process(
-            &current_address,
-            &event_tx,
-            &mut address_rx,
-            &cancel_token,
-        )
-        .await
-        {
+        let result = match frame_mode {
+            FrameMode::Line => {
+                connect_and_process_lines(
+                    &current_address,
+                    &event_tx,
+                    &mut address_rx,
+                    &cancel_token,
+                ).await
+            }
+            FrameMode::Raw => {
+                connect_and_process_raw(
+                    &current_address,
+                    &event_tx,
+                    &mut address_rx,
+                    &cancel_token,
+                ).await
+            }
+        };
+
+        match result {
             Ok(reason) => match reason {
                 ReconnectReason::AddressChanged => {
                     info!("Server address changed, reconnecting immediately...");
@@ -225,7 +245,8 @@ enum ReconnectReason {
     Cancelled,
 }
 
-async fn connect_and_process(
+/// Line-based reading for text protocols (SBS-1, AVR).
+async fn connect_and_process_lines(
     address: &str,
     event_tx: &mpsc::Sender<ConnectionEvent>,
     address_rx: &mut watch::Receiver<String>,
@@ -261,6 +282,64 @@ async fn connect_and_process(
                     Ok(None) => {
                         info!("Connection closed by server");
                         return Ok(ReconnectReason::ConnectionClosed);
+                    }
+                    Err(e) => {
+                        return Err(Box::new(e));
+                    }
+                }
+            }
+
+            _ = address_rx.changed() => {
+                let new_address = address_rx.borrow_and_update().clone();
+                if new_address != address {
+                    info!("Server address changed from {} to {}", address, new_address);
+                    return Ok(ReconnectReason::AddressChanged);
+                }
+            }
+
+            () = cancel_token.cancelled() => {
+                return Ok(ReconnectReason::Cancelled);
+            }
+        }
+    }
+}
+
+/// Raw binary reading for binary protocols (BEAST).
+async fn connect_and_process_raw(
+    address: &str,
+    event_tx: &mpsc::Sender<ConnectionEvent>,
+    address_rx: &mut watch::Receiver<String>,
+    cancel_token: &CancellationToken,
+) -> Result<ReconnectReason, Box<dyn std::error::Error + Send + Sync>> {
+    let mut stream = TcpStream::connect(address).await?;
+    info!("Connected to {} (raw binary mode)", address);
+
+    if event_tx
+        .send(ConnectionEvent::StateChanged(ConnectionState::Connected))
+        .await
+        .is_err()
+    {
+        return Ok(ReconnectReason::Cancelled);
+    }
+
+    let mut buf = vec![0u8; 4096];
+
+    loop {
+        tokio::select! {
+            read_result = stream.read(&mut buf) => {
+                match read_result {
+                    Ok(0) => {
+                        info!("Connection closed by server");
+                        return Ok(ReconnectReason::ConnectionClosed);
+                    }
+                    Ok(n) => {
+                        if event_tx
+                            .send(ConnectionEvent::DataReceived(buf[..n].to_vec()))
+                            .await
+                            .is_err()
+                        {
+                            return Ok(ReconnectReason::Cancelled);
+                        }
                     }
                     Err(e) => {
                         return Err(Box::new(e));

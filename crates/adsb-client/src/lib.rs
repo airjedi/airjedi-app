@@ -18,8 +18,7 @@
 //! processing ADS-B aircraft tracking data. It supports multiple layers that
 //! can be used independently or composed together:
 //!
-//! - **Protocol layer**: Message parsing (BaseStation/SBS-1, with future support
-//!   for BEAST, AVR, and others)
+//! - **Protocol layer**: Message parsing (BaseStation/SBS-1 and BEAST binary)
 //! - **Tracker layer**: Aircraft state management, position history, and validation
 //! - **Connection layer**: Async TCP with automatic reconnection and address hot-reload
 //!
@@ -33,7 +32,7 @@
 //!
 //! #[tokio::main]
 //! async fn main() {
-//!     let client = Client::spawn(ClientConfig {
+//!     let mut client = Client::spawn(ClientConfig {
 //!         connection: ConnectionConfig {
 //!             address: "localhost:30003".to_string(),
 //!             ..Default::default()
@@ -57,66 +56,49 @@
 //! }
 //! ```
 //!
-//! # Using Individual Layers
+//! # BEAST Binary Protocol
 //!
-//! Each layer can be used independently for custom integrations:
+//! For connecting to a BEAST feed (port 30005):
 //!
-//! ## Protocol Layer Only
+//! ```no_run
+//! use adsb_client::{Client, ClientConfig, ConnectionConfig, ProtocolType};
 //!
-//! ```
-//! use adsb_client::protocol::{BaseStationParser, Protocol};
-//!
-//! let mut parser = BaseStationParser::new();
-//! let line = b"MSG,1,1,1,A1B2C3,1,2024/01/01,12:00:00,2024/01/01,12:00:00,UAL123";
-//! if let Ok(Some(msg)) = parser.parse(line) {
-//!     println!("Got message for ICAO: {}", msg.icao());
-//! }
-//! ```
-//!
-//! ## Tracker Layer Only
-//!
-//! ```
-//! use adsb_client::tracker::{AircraftTracker, TrackerConfig};
-//! use adsb_client::protocol::AircraftMessage;
-//!
-//! let mut tracker = AircraftTracker::new(TrackerConfig {
-//!     center: Some((33.9425, -118.4081)),
+//! # #[tokio::main]
+//! # async fn main() {
+//! let mut client = Client::spawn(ClientConfig {
+//!     connection: ConnectionConfig {
+//!         address: "localhost:30005".to_string(),
+//!         ..Default::default()
+//!     },
+//!     protocol: ProtocolType::Beast,
 //!     ..Default::default()
 //! });
-//!
-//! tracker.process_message(AircraftMessage::Position {
-//!     icao: "A1B2C3".to_string(),
-//!     latitude: 34.0,
-//!     longitude: -118.5,
-//!     altitude: Some(35000),
-//!     ground_speed: None,
-//!     track: None,
-//!     is_on_ground: None,
-//! });
-//!
-//! println!("Tracking {} aircraft", tracker.len());
+//! # }
 //! ```
 
 pub mod protocol;
 pub mod tcp;
 pub mod tracker;
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use log::warn;
 use tokio::sync::broadcast;
 
-pub use protocol::{AircraftMessage, BaseStationParser, ParseError, Protocol};
-pub use tcp::{Connection, ConnectionConfig, ConnectionEvent, ConnectionState};
+pub use protocol::{AircraftMessage, BaseStationParser, BeastParser, MessagePayload, ParseError, Protocol};
+pub use tcp::{Connection, ConnectionConfig, ConnectionEvent, ConnectionState, FrameMode};
 pub use tracker::{Aircraft, AircraftTracker, PositionPoint, TrackerConfig, TrackerEvent};
 
 /// Protocol type for the client.
 #[derive(Debug, Clone, Copy, Default)]
 pub enum ProtocolType {
-    /// BaseStation/SBS-1 CSV protocol (default).
+    /// BaseStation/SBS-1 CSV protocol (port 30003, default).
     #[default]
     BaseStation,
+    /// BEAST binary protocol (port 30005).
+    Beast,
 }
 
 /// Configuration for the full-stack client.
@@ -143,6 +125,12 @@ impl Default for ClientConfig {
     }
 }
 
+/// Parser state that handles both protocols behind a common interface.
+enum ParserState {
+    BaseStation(BaseStationParser),
+    Beast(BeastParser),
+}
+
 /// Full-stack ADS-B client that wires all layers together.
 ///
 /// The client manages a TCP connection, parses incoming messages using the
@@ -151,6 +139,8 @@ pub struct Client {
     tracker: Arc<RwLock<AircraftTracker>>,
     connection: Connection,
     connection_state: Arc<RwLock<ConnectionState>>,
+    parser: ParserState,
+    messages_processed: Arc<AtomicU64>,
 }
 
 impl std::fmt::Debug for Client {
@@ -168,23 +158,31 @@ impl Client {
     /// and periodic cleanup.
     #[must_use]
     pub fn spawn(config: ClientConfig) -> Self {
-        let tracker = Arc::new(RwLock::new(AircraftTracker::new(config.tracker)));
-        let connection = Connection::spawn(config.connection);
+        let tracker = Arc::new(RwLock::new(AircraftTracker::new(config.tracker.clone())));
+
+        // Set frame mode based on protocol
+        let mut conn_config = config.connection;
+        let parser = match config.protocol {
+            ProtocolType::BaseStation => {
+                conn_config.frame_mode = FrameMode::Line;
+                ParserState::BaseStation(BaseStationParser::new())
+            }
+            ProtocolType::Beast => {
+                conn_config.frame_mode = FrameMode::Raw;
+                let mut beast = BeastParser::new();
+                if let Some((lat, lon)) = config.tracker.center {
+                    beast.set_reference_position(lat, lon);
+                }
+                ParserState::Beast(beast)
+            }
+        };
+
+        let connection = Connection::spawn(conn_config);
         let connection_state = Arc::new(RwLock::new(ConnectionState::Disconnected));
 
-        // Spawn message processing task
         let tracker_clone = Arc::clone(&tracker);
-        let state_clone = Arc::clone(&connection_state);
         let cleanup_interval = config.cleanup_interval;
 
-        // We need to create a new connection receiver for the processing task
-        // Since Connection owns the receiver, we need a different approach
-        // We'll spawn the processing in a way that shares the connection
-
-        // Actually, the design needs adjustment - Connection owns the receiver
-        // Let's create a simpler design where Client processes in a loop
-
-        // For now, we'll spawn a task that periodically cleans up
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(cleanup_interval);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -200,21 +198,21 @@ impl Client {
         Self {
             tracker,
             connection,
-            connection_state: state_clone,
+            connection_state,
+            parser,
+            messages_processed: Arc::new(AtomicU64::new(0)),
         }
+    }
+
+    /// Total number of messages processed by this client across all protocols.
+    #[must_use]
+    pub fn messages_processed(&self) -> u64 {
+        self.messages_processed.load(Ordering::Relaxed)
     }
 
     /// Process events from the connection.
     ///
-    /// This should be called in a loop to process incoming data:
-    ///
-    /// ```no_run
-    /// # use adsb_client::{Client, ClientConfig};
-    /// # async fn example() {
-    /// let mut client = Client::spawn(ClientConfig::default());
-    /// while client.process_next().await {}
-    /// # }
-    /// ```
+    /// This should be called in a loop to process incoming data.
     pub async fn process_next(&mut self) -> bool {
         let event = match self.connection.recv().await {
             Some(event) => event,
@@ -228,9 +226,19 @@ impl Client {
                 }
             }
             ConnectionEvent::DataReceived(data) => {
-                let mut parser = BaseStationParser::new();
-                match parser.parse(&data) {
+                self.process_data(&data);
+            }
+        }
+
+        true
+    }
+
+    fn process_data(&mut self, data: &[u8]) {
+        match &mut self.parser {
+            ParserState::BaseStation(parser) => {
+                match parser.parse(data) {
                     Ok(Some(msg)) => {
+                        self.messages_processed.fetch_add(1, Ordering::Relaxed);
                         if let Ok(mut tracker) = self.tracker.write() {
                             tracker.process_message(msg);
                         }
@@ -241,9 +249,37 @@ impl Client {
                     }
                 }
             }
-        }
+            ParserState::Beast(parser) => {
+                match parser.parse(data) {
+                    Ok(Some(msg)) => {
+                        self.messages_processed.fetch_add(1, Ordering::Relaxed);
+                        if let Ok(mut tracker) = self.tracker.write() {
+                            tracker.process_message(msg);
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        warn!("BEAST parse error: {}", e);
+                    }
+                }
 
-        true
+                loop {
+                    match parser.parse(&[]) {
+                        Ok(Some(msg)) => {
+                            self.messages_processed.fetch_add(1, Ordering::Relaxed);
+                            if let Ok(mut tracker) = self.tracker.write() {
+                                tracker.process_message(msg);
+                            }
+                        }
+                        Ok(None) => break,
+                        Err(e) => {
+                            warn!("BEAST parse error: {}", e);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Get all tracked aircraft.
@@ -293,8 +329,6 @@ impl Client {
     }
 
     /// Change the server address.
-    ///
-    /// The connection will disconnect and reconnect to the new address.
     pub fn set_address(&self, address: String) {
         self.connection.set_address(address);
     }

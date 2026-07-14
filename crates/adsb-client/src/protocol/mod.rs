@@ -15,12 +15,13 @@
 //! Protocol layer for ADS-B message parsing.
 //!
 //! This module provides a trait-based abstraction for extensible protocol support.
-//! Currently implements BaseStation/SBS-1 protocol, with future support planned
-//! for BEAST, AVR, and other formats.
+//! Implements BaseStation/SBS-1 and BEAST binary protocols.
 
 mod basestation;
+pub mod beast;
 
 pub use basestation::BaseStationParser;
+pub use beast::BeastParser;
 
 use thiserror::Error;
 
@@ -35,59 +36,94 @@ pub enum ParseError {
 
     #[error("invalid value for field '{field}': {value}")]
     InvalidValue { field: &'static str, value: String },
+
+    #[error("CRC check failed")]
+    CrcFailed,
+
+    #[error("unknown downlink format: {0}")]
+    UnknownDownlinkFormat(u8),
+
+    #[error("incomplete frame: need {expected} bytes, got {got}")]
+    IncompleteFrame { expected: usize, got: usize },
 }
 
 /// Unified message type for all ADS-B protocols.
 ///
-/// Represents the core aircraft data that can be extracted from any ADS-B feed,
-/// regardless of the underlying protocol format.
+/// Wraps a `MessagePayload` variant with common per-message metadata.
+/// The `icao` field is shared across all payload types, and `signal_level`
+/// is populated by protocols that provide RSSI (e.g., BEAST).
 #[derive(Debug, Clone, PartialEq)]
-pub enum AircraftMessage {
-    /// Aircraft identification message (callsign).
+pub struct AircraftMessage {
+    /// ICAO 24-bit address (hex string, e.g., "A1B2C3").
+    pub icao: String,
+    /// Signal level / RSSI (0.0 - 1.0), if provided by the protocol.
+    pub signal_level: Option<f32>,
+    /// The message payload.
+    pub payload: MessagePayload,
+}
+
+impl AircraftMessage {
+    /// Get the ICAO address.
+    #[must_use]
+    pub fn icao(&self) -> &str {
+        &self.icao
+    }
+
+    /// Get the signal level, if available.
+    #[must_use]
+    pub fn signal_level(&self) -> Option<f32> {
+        self.signal_level
+    }
+}
+
+/// Payload variants for aircraft messages.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MessagePayload {
+    /// Aircraft identification (callsign).
     Identification {
-        /// ICAO 24-bit address (hex string, e.g., "A1B2C3").
-        icao: String,
         /// Aircraft callsign (e.g., "UAL123").
         callsign: String,
+        /// Aircraft emitter category (from ADS-B TC 1-4). None for SBS-1.
+        category: Option<u8>,
     },
 
-    /// Aircraft position message.
+    /// Aircraft position.
     Position {
-        /// ICAO 24-bit address.
-        icao: String,
         /// Latitude in degrees.
         latitude: f64,
         /// Longitude in degrees.
         longitude: f64,
-        /// Altitude in feet (optional, may not be present in all messages).
+        /// Barometric altitude in feet.
         altitude: Option<i32>,
-        /// Ground speed in knots (from MSG type 2 surface position).
+        /// Ground speed in knots.
         ground_speed: Option<f64>,
-        /// Track angle in degrees (from MSG type 2 surface position).
+        /// Track angle in degrees.
         track: Option<f64>,
         /// Whether the aircraft is on the ground.
         is_on_ground: Option<bool>,
+        /// GNSS altitude in feet (from ADS-B TC 20-22). None for barometric.
+        altitude_gnss: Option<i32>,
     },
 
-    /// Aircraft velocity message.
+    /// Aircraft velocity.
     Velocity {
-        /// ICAO 24-bit address.
-        icao: String,
         /// Ground speed in knots.
         speed: f64,
         /// Track angle in degrees (0-360, north = 0).
         track: f64,
-        /// Vertical rate in feet per minute (positive = climb, negative = descend).
+        /// Vertical rate in feet per minute (positive = climb).
         vertical_rate: Option<i32>,
         /// Whether the aircraft is on the ground.
         is_on_ground: Option<bool>,
+        /// Magnetic heading in degrees (from BEAST TC19 subtype 3/4). None for SBS-1.
+        heading: Option<f64>,
+        /// Indicated or true airspeed in knots (from BEAST TC19 subtype 3/4). None for SBS-1.
+        airspeed: Option<f64>,
     },
 
     /// Surveillance update (altitude, squawk, and status flags).
     Altitude {
-        /// ICAO 24-bit address.
-        icao: String,
-        /// Altitude in feet (absent in some MSG types like MSG,8).
+        /// Altitude in feet.
         altitude: Option<i32>,
         /// Squawk code (transponder code).
         squawk: Option<String>,
@@ -102,22 +138,10 @@ pub enum AircraftMessage {
     },
 }
 
-impl AircraftMessage {
-    /// Get the ICAO address from any message variant.
-    #[must_use]
-    pub fn icao(&self) -> &str {
-        match self {
-            Self::Identification { icao, .. }
-            | Self::Position { icao, .. }
-            | Self::Velocity { icao, .. }
-            | Self::Altitude { icao, .. } => icao,
-        }
-    }
-}
-
 /// Trait for protocol parsers.
 ///
 /// Implement this trait to add support for new ADS-B protocol formats.
+/// Parsers may maintain internal state (buffers, CPR decode state) via `&mut self`.
 pub trait Protocol {
     /// The message type produced by this parser.
     type Message;
@@ -127,7 +151,11 @@ pub trait Protocol {
     /// Parse input bytes into a message.
     ///
     /// Returns `Ok(Some(message))` if parsing succeeded,
-    /// `Ok(None)` if the input is valid but doesn't produce a message,
+    /// `Ok(None)` if the input is valid but doesn't produce a message
+    /// (or no complete frame is available yet for binary protocols),
     /// or `Err(error)` if parsing failed.
+    ///
+    /// For binary protocols (BEAST), call with empty input `&[]` to drain
+    /// remaining buffered frames after feeding data.
     fn parse(&mut self, input: &[u8]) -> Result<Option<Self::Message>, Self::Error>;
 }

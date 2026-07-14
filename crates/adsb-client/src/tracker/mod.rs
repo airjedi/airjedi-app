@@ -23,7 +23,7 @@ use chrono::{DateTime, Utc};
 use log::{info, warn};
 use tokio::sync::broadcast;
 
-use crate::protocol::AircraftMessage;
+use crate::protocol::{AircraftMessage, MessagePayload};
 
 // Constants for position validation and tracking
 const NAUTICAL_MILE_CONVERSION: f64 = 1.15078; // 1 nautical mile = 1.15078 statute miles
@@ -93,6 +93,14 @@ pub struct Aircraft {
     pub emergency: Option<bool>,
     /// SPI (Special Position Identification) flag.
     pub spi: Option<bool>,
+    /// Aircraft emitter category (from ADS-B).
+    pub category: Option<u8>,
+    /// Magnetic heading in degrees (from ADS-B velocity subtype 3/4).
+    pub heading: Option<f64>,
+    /// Indicated or true airspeed in knots (from ADS-B velocity subtype 3/4).
+    pub airspeed: Option<f64>,
+    /// Last received signal level (0.0-1.0, from BEAST protocol).
+    pub signal_level: Option<f32>,
     /// Timestamp of last received message.
     pub last_seen: DateTime<Utc>,
     /// Timestamp of last accepted position update (for jump detection).
@@ -119,6 +127,10 @@ impl Aircraft {
             alert: None,
             emergency: None,
             spi: None,
+            category: None,
+            heading: None,
+            airspeed: None,
+            signal_level: None,
             last_seen: Utc::now(),
             last_position_time: None,
             position_history: Vec::new(),
@@ -313,15 +325,27 @@ impl AircraftTracker {
 
         aircraft.last_seen = Utc::now();
 
+        if let Some(sl) = msg.signal_level {
+            aircraft.signal_level = Some(sl);
+        }
+
         if is_new {
             let _ = self.event_tx.send(TrackerEvent::AircraftAdded(icao.clone()));
         }
 
-        match msg {
-            AircraftMessage::Identification { callsign, .. } => {
-                aircraft.callsign = Some(callsign);
+        match msg.payload {
+            MessagePayload::Identification { callsign, category } => {
+                let is_adsb_source = category.is_some();
+                if is_adsb_source {
+                    // ADS-B identification (DF=17 TC 1-4) is authoritative
+                    aircraft.callsign = Some(callsign);
+                    aircraft.category = category;
+                } else if aircraft.callsign.is_none() {
+                    // BDS 2,0 callsign only used when no ADS-B callsign exists
+                    aircraft.callsign = Some(callsign);
+                }
             }
-            AircraftMessage::Position {
+            MessagePayload::Position {
                 latitude,
                 longitude,
                 altitude,
@@ -353,12 +377,13 @@ impl AircraftTracker {
                     let _ = self.event_tx.send(TrackerEvent::PositionUpdated(icao));
                 }
             }
-            AircraftMessage::Velocity {
+            MessagePayload::Velocity {
                 speed,
                 track,
                 vertical_rate,
                 is_on_ground,
-                ..
+                heading,
+                airspeed,
             } => {
                 aircraft.velocity = Some(speed);
                 aircraft.track = Some(track);
@@ -366,15 +391,20 @@ impl AircraftTracker {
                 if let Some(on_ground) = is_on_ground {
                     aircraft.is_on_ground = Some(on_ground);
                 }
+                if let Some(hdg) = heading {
+                    aircraft.heading = Some(hdg);
+                }
+                if let Some(aspd) = airspeed {
+                    aircraft.airspeed = Some(aspd);
+                }
             }
-            AircraftMessage::Altitude {
+            MessagePayload::Altitude {
                 altitude,
                 squawk,
                 alert,
                 emergency,
                 spi,
                 is_on_ground,
-                ..
             } => {
                 if let Some(alt) = altitude {
                     aircraft.altitude = Some(alt);
@@ -467,9 +497,13 @@ mod tests {
     fn test_tracker_new_aircraft() {
         let mut tracker = AircraftTracker::new(TrackerConfig::default());
 
-        tracker.process_message(AircraftMessage::Identification {
+        tracker.process_message(AircraftMessage {
             icao: "A1B2C3".to_string(),
-            callsign: "UAL123".to_string(),
+            signal_level: None,
+            payload: MessagePayload::Identification {
+                callsign: "UAL123".to_string(),
+                category: None,
+            },
         });
 
         assert_eq!(tracker.len(), 1);
@@ -484,14 +518,18 @@ mod tests {
             ..Default::default()
         });
 
-        tracker.process_message(AircraftMessage::Position {
+        tracker.process_message(AircraftMessage {
             icao: "A1B2C3".to_string(),
-            latitude: 34.0,
-            longitude: -118.5,
-            altitude: Some(35000),
-            ground_speed: None,
-            track: None,
-            is_on_ground: None,
+            signal_level: None,
+            payload: MessagePayload::Position {
+                latitude: 34.0,
+                longitude: -118.5,
+                altitude: Some(35000),
+                ground_speed: None,
+                track: None,
+                is_on_ground: None,
+                altitude_gnss: None,
+            },
         });
 
         let aircraft = tracker.get_by_icao("A1B2C3").unwrap();
@@ -509,14 +547,18 @@ mod tests {
         });
 
         // Position far from center should be rejected (LAX to NYC)
-        tracker.process_message(AircraftMessage::Position {
+        tracker.process_message(AircraftMessage {
             icao: "A1B2C3".to_string(),
-            latitude: 40.6413,
-            longitude: -73.7781,
-            altitude: Some(35000),
-            ground_speed: None,
-            track: None,
-            is_on_ground: None,
+            signal_level: None,
+            payload: MessagePayload::Position {
+                latitude: 40.6413,
+                longitude: -73.7781,
+                altitude: Some(35000),
+                ground_speed: None,
+                track: None,
+                is_on_ground: None,
+                altitude_gnss: None,
+            },
         });
 
         let aircraft = tracker.get_by_icao("A1B2C3").unwrap();

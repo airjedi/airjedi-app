@@ -22,7 +22,7 @@
 //! MSG,<type>,<session>,<aircraft>,<icao>,<flight>,<date>,<time>,<date>,<time>,<fields...>
 //! ```
 
-use super::{AircraftMessage, ParseError, Protocol};
+use super::{AircraftMessage, MessagePayload, ParseError, Protocol};
 
 /// Parser for BaseStation/SBS-1 protocol messages.
 #[derive(Debug, Default)]
@@ -54,6 +54,14 @@ fn parse_bool_flag(field: &str) -> Option<bool> {
         "1" | "-1" => Some(true),
         "0" => Some(false),
         _ => None,
+    }
+}
+
+fn msg(icao: &str, payload: MessagePayload) -> AircraftMessage {
+    AircraftMessage {
+        icao: icao.to_string(),
+        signal_level: None,
+        payload,
     }
 }
 
@@ -93,10 +101,10 @@ fn parse_basestation_line(line: &str) -> Result<Option<AircraftMessage>, ParseEr
         "1" => {
             // Aircraft identification (callsign)
             if parts.len() > 10 && !parts[10].is_empty() {
-                return Ok(Some(AircraftMessage::Identification {
-                    icao: icao.to_string(),
+                return Ok(Some(msg(icao, MessagePayload::Identification {
                     callsign: parts[10].trim().to_string(),
-                }));
+                    category: None,
+                })));
             }
             Ok(None)
         }
@@ -134,15 +142,15 @@ fn parse_basestation_line(line: &str) -> Result<Option<AircraftMessage>, ParseEr
                         value: parts[15].to_string(),
                     })?;
 
-                    return Ok(Some(AircraftMessage::Position {
-                        icao: icao.to_string(),
+                    return Ok(Some(msg(icao, MessagePayload::Position {
                         latitude: lat,
                         longitude: lon,
                         altitude,
                         ground_speed,
                         track,
                         is_on_ground,
-                    }));
+                        altitude_gnss: None,
+                    })));
                 }
             }
             Ok(None)
@@ -171,15 +179,15 @@ fn parse_basestation_line(line: &str) -> Result<Option<AircraftMessage>, ParseEr
                         value: parts[15].to_string(),
                     })?;
 
-                    return Ok(Some(AircraftMessage::Position {
-                        icao: icao.to_string(),
+                    return Ok(Some(msg(icao, MessagePayload::Position {
                         latitude: lat,
                         longitude: lon,
                         altitude,
                         ground_speed: None,
                         track: None,
                         is_on_ground,
-                    }));
+                        altitude_gnss: None,
+                    })));
                 }
             }
             Ok(None)
@@ -209,13 +217,14 @@ fn parse_basestation_line(line: &str) -> Result<Option<AircraftMessage>, ParseEr
                 };
 
                 if let (Some(speed), Some(track)) = (speed, track) {
-                    return Ok(Some(AircraftMessage::Velocity {
-                        icao: icao.to_string(),
+                    return Ok(Some(msg(icao, MessagePayload::Velocity {
                         speed,
                         track,
                         vertical_rate,
                         is_on_ground,
-                    }));
+                        heading: None,
+                        airspeed: None,
+                    })));
                 }
             }
             Ok(None)
@@ -260,15 +269,15 @@ fn parse_basestation_line(line: &str) -> Result<Option<AircraftMessage>, ParseEr
                     if let (Ok(lat), Ok(lon)) =
                         (parts[14].parse::<f64>(), parts[15].parse::<f64>())
                     {
-                        return Ok(Some(AircraftMessage::Position {
-                            icao: icao.to_string(),
+                        return Ok(Some(msg(icao, MessagePayload::Position {
                             latitude: lat,
                             longitude: lon,
                             altitude,
                             ground_speed: None,
                             track: None,
                             is_on_ground,
-                        }));
+                            altitude_gnss: None,
+                        })));
                     }
                 }
             }
@@ -277,15 +286,14 @@ fn parse_basestation_line(line: &str) -> Result<Option<AircraftMessage>, ParseEr
             if altitude.is_some() || squawk.is_some() || alert.is_some()
                 || emergency.is_some() || spi.is_some() || is_on_ground.is_some()
             {
-                return Ok(Some(AircraftMessage::Altitude {
-                    icao: icao.to_string(),
+                return Ok(Some(msg(icao, MessagePayload::Altitude {
                     altitude,
                     squawk,
                     alert,
                     emergency,
                     spi,
                     is_on_ground,
-                }));
+                })));
             }
             Ok(None)
         }
@@ -301,11 +309,13 @@ mod tests {
     fn test_parse_identification() {
         let mut parser = BaseStationParser::new();
         let line = b"MSG,1,1,1,A1B2C3,1,2024/01/01,12:00:00.000,2024/01/01,12:00:00.000,UAL123";
-        let result = parser.parse(line).unwrap();
+        let result = parser.parse(line).unwrap().unwrap();
+        assert_eq!(result.icao, "A1B2C3");
+        assert!(result.signal_level.is_none());
         assert!(matches!(
-            result,
-            Some(AircraftMessage::Identification { icao, callsign })
-            if icao == "A1B2C3" && callsign == "UAL123"
+            result.payload,
+            MessagePayload::Identification { ref callsign, category }
+            if callsign == "UAL123" && category.is_none()
         ));
     }
 
@@ -313,14 +323,15 @@ mod tests {
     fn test_parse_position() {
         let mut parser = BaseStationParser::new();
         let line = b"MSG,3,1,1,A1B2C3,1,2024/01/01,12:00:00.000,2024/01/01,12:00:00.000,,35000,,,33.9425,-118.4081,";
-        let result = parser.parse(line).unwrap();
+        let result = parser.parse(line).unwrap().unwrap();
+        assert_eq!(result.icao, "A1B2C3");
         assert!(matches!(
-            result,
-            Some(AircraftMessage::Position { icao, latitude, longitude, altitude, .. })
-            if icao == "A1B2C3"
-                && (latitude - 33.9425).abs() < 0.0001
+            result.payload,
+            MessagePayload::Position { latitude, longitude, altitude, altitude_gnss, .. }
+            if (latitude - 33.9425).abs() < 0.0001
                 && (longitude - (-118.4081)).abs() < 0.0001
                 && altitude == Some(35000)
+                && altitude_gnss.is_none()
         ));
     }
 
@@ -328,14 +339,16 @@ mod tests {
     fn test_parse_velocity() {
         let mut parser = BaseStationParser::new();
         let line = b"MSG,4,1,1,A1B2C3,1,2024/01/01,12:00:00.000,2024/01/01,12:00:00.000,,,450,270,,,1500";
-        let result = parser.parse(line).unwrap();
+        let result = parser.parse(line).unwrap().unwrap();
+        assert_eq!(result.icao, "A1B2C3");
         assert!(matches!(
-            result,
-            Some(AircraftMessage::Velocity { icao, speed, track, vertical_rate, .. })
-            if icao == "A1B2C3"
-                && (speed - 450.0).abs() < 0.01
+            result.payload,
+            MessagePayload::Velocity { speed, track, vertical_rate, heading, airspeed, .. }
+            if (speed - 450.0).abs() < 0.01
                 && (track - 270.0).abs() < 0.01
                 && vertical_rate == Some(1500)
+                && heading.is_none()
+                && airspeed.is_none()
         ));
     }
 
@@ -343,25 +356,25 @@ mod tests {
     fn test_parse_altitude() {
         let mut parser = BaseStationParser::new();
         let line = b"MSG,5,1,1,A1B2C3,1,2024/01/01,12:00:00.000,2024/01/01,12:00:00.000,,30000";
-        let result = parser.parse(line).unwrap();
+        let result = parser.parse(line).unwrap().unwrap();
+        assert_eq!(result.icao, "A1B2C3");
         assert!(matches!(
-            result,
-            Some(AircraftMessage::Altitude { icao, altitude, .. })
-            if icao == "A1B2C3" && altitude == Some(30000)
+            result.payload,
+            MessagePayload::Altitude { altitude, .. }
+            if altitude == Some(30000)
         ));
     }
 
     #[test]
     fn test_parse_surface_position() {
         let mut parser = BaseStationParser::new();
-        // MSG type 2: surface position with ground_speed, track, lat, lon, is_on_ground
         let line = b"MSG,2,1,1,A1B2C3,1,2024/01/01,12:00:00.000,2024/01/01,12:00:00.000,,0,25,180,33.9425,-118.4081,,,,,,-1";
-        let result = parser.parse(line).unwrap();
+        let result = parser.parse(line).unwrap().unwrap();
+        assert_eq!(result.icao, "A1B2C3");
         assert!(matches!(
-            result,
-            Some(AircraftMessage::Position { icao, latitude, longitude, altitude, ground_speed, track, is_on_ground })
-            if icao == "A1B2C3"
-                && (latitude - 33.9425).abs() < 0.0001
+            result.payload,
+            MessagePayload::Position { latitude, longitude, altitude, ground_speed, track, is_on_ground, .. }
+            if (latitude - 33.9425).abs() < 0.0001
                 && (longitude - (-118.4081)).abs() < 0.0001
                 && altitude == Some(0)
                 && (ground_speed.unwrap() - 25.0).abs() < 0.01
@@ -374,10 +387,10 @@ mod tests {
     fn test_parse_position_with_is_on_ground() {
         let mut parser = BaseStationParser::new();
         let line = b"MSG,3,1,1,A1B2C3,1,2024/01/01,12:00:00.000,2024/01/01,12:00:00.000,,35000,,,33.9425,-118.4081,,,,,0,0";
-        let result = parser.parse(line).unwrap();
+        let result = parser.parse(line).unwrap().unwrap();
         assert!(matches!(
-            result,
-            Some(AircraftMessage::Position { is_on_ground, .. })
+            result.payload,
+            MessagePayload::Position { is_on_ground, .. }
             if is_on_ground == Some(false)
         ));
     }
@@ -386,12 +399,12 @@ mod tests {
     fn test_parse_altitude_with_squawk() {
         let mut parser = BaseStationParser::new();
         let line = b"MSG,5,1,1,A1B2C3,1,2024/01/01,12:00:00.000,2024/01/01,12:00:00.000,,30000,,,,,,1200,0,0,0,0";
-        let result = parser.parse(line).unwrap();
+        let result = parser.parse(line).unwrap().unwrap();
+        assert_eq!(result.icao, "A1B2C3");
         assert!(matches!(
-            result,
-            Some(AircraftMessage::Altitude { icao, altitude, squawk, alert, emergency, spi, is_on_ground })
-            if icao == "A1B2C3"
-                && altitude == Some(30000)
+            result.payload,
+            MessagePayload::Altitude { altitude, ref squawk, alert, emergency, spi, is_on_ground }
+            if altitude == Some(30000)
                 && squawk.as_deref() == Some("1200")
                 && alert == Some(false)
                 && emergency == Some(false)
@@ -404,10 +417,10 @@ mod tests {
     fn test_parse_altitude_emergency() {
         let mut parser = BaseStationParser::new();
         let line = b"MSG,5,1,1,A1B2C3,1,2024/01/01,12:00:00.000,2024/01/01,12:00:00.000,,30000,,,,,,7700,1,1,0,0";
-        let result = parser.parse(line).unwrap();
+        let result = parser.parse(line).unwrap().unwrap();
         assert!(matches!(
-            result,
-            Some(AircraftMessage::Altitude { squawk, alert, emergency, .. })
+            result.payload,
+            MessagePayload::Altitude { ref squawk, alert, emergency, .. }
             if squawk.as_deref() == Some("7700")
                 && alert == Some(true)
                 && emergency == Some(true)
