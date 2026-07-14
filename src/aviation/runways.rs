@@ -1,10 +1,13 @@
+use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
-use crate::tiles::*;
+use std::collections::HashSet;
 
-use super::{AviationData, LoadingState};
-use crate::constants;
+use crate::render_layers::RenderCategory;
+use crate::tiles::*;
 use crate::geo::{haversine_distance_nm, CoordinateConverter};
+use crate::constants;
 use crate::MapState;
+use super::{AirportFilter, AviationData, LoadingState};
 
 /// Component marking a runway entity
 #[derive(Component)]
@@ -65,6 +68,171 @@ pub fn le_label_pos(le: Vec2, he: Vec2) -> Vec2 {
 
 pub fn he_label_pos(le: Vec2, he: Vec2) -> Vec2 {
     he + (le - he) * 0.12
+}
+
+pub fn spawn_runway_entities(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    aviation_data: Res<AviationData>,
+    render_state: Res<RunwayRenderState>,
+    local_origin: Res<LocalOrigin>,
+    existing: Query<(), With<RunwayBody>>,
+) {
+    if aviation_data.loading_state != LoadingState::Ready {
+        return;
+    }
+    if !existing.is_empty() {
+        return;
+    }
+    if !render_state.show_runways {
+        return;
+    }
+
+    let scheduled_airports: HashSet<i64> = aviation_data
+        .airports
+        .iter()
+        .filter(|a| a.passes_filter(AirportFilter::FrequentlyUsed))
+        .map(|a| a.id)
+        .collect();
+
+    let open_mat = materials.add(ColorMaterial::from_color(
+        Color::srgba(0.55, 0.55, 0.55, 1.0),
+    ));
+    let closed_mat = materials.add(ColorMaterial::from_color(
+        Color::srgba(0.35, 0.35, 0.35, 0.7),
+    ));
+
+    let converter = CoordinateConverter::new(&local_origin);
+    let mut count = 0;
+
+    for runway in &aviation_data.runways {
+        if !runway.has_valid_coords() {
+            continue;
+        }
+        if !scheduled_airports.contains(&runway.airport_ref) {
+            continue;
+        }
+        let Some(width_ft) = runway.width_ft else {
+            continue;
+        };
+        let Some(heading) = runway.le_heading_deg_t else {
+            continue;
+        };
+
+        let le_lat = runway.le_latitude_deg.unwrap();
+        let le_lon = runway.le_longitude_deg.unwrap();
+        let he_lat = runway.he_latitude_deg.unwrap();
+        let he_lon = runway.he_longitude_deg.unwrap();
+        let mid_lat = (le_lat + he_lat) / 2.0;
+        let mid_lon = (le_lon + he_lon) / 2.0;
+
+        let le_world = converter.latlon_to_world(le_lat, le_lon);
+        let he_world = converter.latlon_to_world(he_lat, he_lon);
+        let center = (le_world + he_world) / 2.0;
+        let length_m = le_world.distance(he_world);
+
+        if length_m < 1.0 {
+            continue;
+        }
+
+        let width_m = (width_ft as f32) * FEET_TO_METERS_F32;
+        let angle = heading_to_rotation(heading);
+        let rotation = Quat::from_rotation_z(angle);
+        let material = if runway.is_closed() {
+            closed_mat.clone()
+        } else {
+            open_mat.clone()
+        };
+        let mesh = meshes.add(Rectangle::new(width_m, length_m));
+
+        commands.spawn((
+            RunwayBody {
+                runway_id: runway.id,
+                le_lat,
+                le_lon,
+                he_lat,
+                he_lon,
+                heading_deg: heading,
+                width_m,
+                midpoint_lat: mid_lat,
+                midpoint_lon: mid_lon,
+            },
+            Mesh2d(mesh),
+            MeshMaterial2d(material),
+            Transform {
+                translation: Vec3::new(center.x, center.y, RUNWAY_BODY_Z),
+                rotation,
+                ..default()
+            },
+            Visibility::Hidden,
+        ));
+
+        if let Some(le_ident) = &runway.le_ident {
+            let lp = le_label_pos(le_world, he_world);
+            commands.spawn((
+                RunwayLabel {
+                    runway_id: runway.id,
+                    le_lat,
+                    le_lon,
+                    he_lat,
+                    he_lon,
+                    heading_deg: heading,
+                    is_he_end: false,
+                    midpoint_lat: mid_lat,
+                    midpoint_lon: mid_lon,
+                },
+                Text2d::new(le_ident.clone()),
+                TextFont {
+                    font_size: FontSize::Px(10.0),
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                Transform {
+                    translation: Vec3::new(lp.x, lp.y, RUNWAY_LABEL_Z),
+                    rotation,
+                    ..default()
+                },
+                Visibility::Hidden,
+                RenderLayers::layer(RenderCategory::LABELS),
+            ));
+        }
+
+        if let Some(he_ident) = &runway.he_ident {
+            let hp = he_label_pos(le_world, he_world);
+            let he_rotation = Quat::from_rotation_z(angle + std::f32::consts::PI);
+            commands.spawn((
+                RunwayLabel {
+                    runway_id: runway.id,
+                    le_lat,
+                    le_lon,
+                    he_lat,
+                    he_lon,
+                    heading_deg: heading,
+                    is_he_end: true,
+                    midpoint_lat: mid_lat,
+                    midpoint_lon: mid_lon,
+                },
+                Text2d::new(he_ident.clone()),
+                TextFont {
+                    font_size: FontSize::Px(10.0),
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                Transform {
+                    translation: Vec3::new(hp.x, hp.y, RUNWAY_LABEL_Z),
+                    rotation: he_rotation,
+                    ..default()
+                },
+                Visibility::Hidden,
+                RenderLayers::layer(RenderCategory::LABELS),
+            ));
+        }
+
+        count += 1;
+    }
+
+    info!("Spawned {} runway body entities", count);
 }
 
 const RUNWAY_COLOR: Color = Color::srgba(1.0, 1.0, 1.0, 0.7);
