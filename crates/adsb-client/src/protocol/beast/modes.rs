@@ -105,12 +105,11 @@ pub fn decode_altitude_13bit(data: &[u8]) -> Option<i32> {
     let q_bit = (ac13 >> 4) & 1;
 
     if m_bit != 0 {
-        // Metric altitude (rarely used)
         let n = ((ac13 >> 7) << 6) | (ac13 & 0x3F);
         Some(i32::from(n) * 25 - 1000)
     } else if q_bit != 0 {
-        // 25-foot resolution
-        let n = ((ac13 >> 7) << 4) | ((ac13 >> 5) & 0x03) << 2 | (ac13 & 0x0F);
+        // Remove the Q bit (bit 4) and reassemble the remaining 11 bits
+        let n = ((ac13 & 0x1F80) >> 2) | ((ac13 & 0x0020) >> 1) | (ac13 & 0x000F);
         if n > 0 { Some(i32::from(n) * 25 - 1000) } else { None }
     } else {
         // Gillham gray code (100-foot resolution)

@@ -86,6 +86,10 @@ impl FrameDecoder {
         self.buffer.extend_from_slice(data);
     }
 
+    pub fn clear(&mut self) {
+        self.buffer.clear();
+    }
+
     pub fn buffer_len(&self) -> usize {
         self.buffer.len()
     }

@@ -158,4 +158,9 @@ pub trait Protocol {
     /// For binary protocols (BEAST), call with empty input `&[]` to drain
     /// remaining buffered frames after feeding data.
     fn parse(&mut self, input: &[u8]) -> Result<Option<Self::Message>, Self::Error>;
+
+    /// Reset parser state after a reconnection.
+    /// Clears accumulated buffers and decode state to prevent corruption
+    /// from stale data when a new connection is established.
+    fn reset(&mut self) {}
 }

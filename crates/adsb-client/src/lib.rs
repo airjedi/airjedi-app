@@ -221,6 +221,12 @@ impl Client {
 
         match event {
             ConnectionEvent::StateChanged(state) => {
+                if state == ConnectionState::Connected {
+                    match &mut self.parser {
+                        ParserState::BaseStation(p) => p.reset(),
+                        ParserState::Beast(p) => p.reset(),
+                    }
+                }
                 if let Ok(mut s) = self.connection_state.write() {
                     *s = state;
                 }

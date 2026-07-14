@@ -69,6 +69,11 @@ impl BeastParser {
         }
     }
 
+    pub fn reset(&mut self) {
+        self.frame_decoder.clear();
+        self.cpr_state.clear();
+    }
+
     pub fn set_reference_position(&mut self, lat: f64, lon: f64) {
         self.reference_position = Some((lat, lon));
     }
@@ -267,6 +272,25 @@ impl BeastParser {
                     },
                 }))
             }
+            19 => {
+                if !modes::crc_check(data) {
+                    return Ok(None);
+                }
+                let icao = modes::icao_from_bytes(data);
+                self.known_icao.insert(icao.clone());
+                Ok(Some(AircraftMessage {
+                    icao,
+                    signal_level,
+                    payload: MessagePayload::Altitude {
+                        altitude: None,
+                        squawk: None,
+                        alert: None,
+                        emergency: None,
+                        spi: None,
+                        is_on_ground: None,
+                    },
+                }))
+            }
             _ => Ok(None),
         }
     }
@@ -299,5 +323,9 @@ impl Protocol for BeastParser {
         }
 
         Ok(None)
+    }
+
+    fn reset(&mut self) {
+        self.reset();
     }
 }
