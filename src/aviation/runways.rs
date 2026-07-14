@@ -155,6 +155,7 @@ pub fn spawn_runway_entities(
                 ..default()
             },
             Visibility::Hidden,
+            RenderLayers::layer(RenderCategory::OVERLAYS_2D),
         ));
 
         if let Some(le_ident) = &runway.le_ident {
@@ -172,7 +173,7 @@ pub fn spawn_runway_entities(
                 },
                 Text2d::new(le_ident.clone()),
                 TextFont {
-                    font_size: FontSize::Px(10.0),
+                    font_size: FontSize::Px(14.0),
                     ..default()
                 },
                 TextColor(Color::WHITE),
@@ -202,7 +203,7 @@ pub fn spawn_runway_entities(
                 },
                 Text2d::new(he_ident.clone()),
                 TextFont {
-                    font_size: FontSize::Px(10.0),
+                    font_size: FontSize::Px(14.0),
                     ..default()
                 },
                 TextColor(Color::WHITE),
