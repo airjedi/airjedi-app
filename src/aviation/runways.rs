@@ -54,11 +54,11 @@ pub fn heading_to_rotation(heading_deg: f64) -> f32 {
 }
 
 pub fn le_label_pos(le: Vec2, he: Vec2) -> Vec2 {
-    le + (he - le) * 0.12
+    le + (he - le) * 0.03
 }
 
 pub fn he_label_pos(le: Vec2, he: Vec2) -> Vec2 {
-    he + (le - he) * 0.12
+    he + (le - he) * 0.03
 }
 
 pub fn spawn_runway_entities(
@@ -403,7 +403,7 @@ pub fn draw_runways(
         let le = converter.latlon_to_world(le_lat, le_lon);
         let he = converter.latlon_to_world(he_lat, he_lon);
         let inset = (he - le) * 0.05;
-        draw_dashed_2d(le + inset, he - inset, centerline_color, 15.0, 10.0, &mut gizmos);
+        draw_dashed_2d(le + inset, he - inset, centerline_color, 25.0, 18.0, &mut gizmos);
     }
 }
 
@@ -429,20 +429,20 @@ mod tests {
     }
 
     #[test]
-    fn le_label_pos_is_12_percent_inset() {
+    fn le_label_pos_is_near_le_end() {
         let le = Vec2::new(0.0, 0.0);
         let he = Vec2::new(0.0, 1000.0);
         let pos = le_label_pos(le, he);
         assert!((pos.x).abs() < 1e-4);
-        assert!((pos.y - 120.0).abs() < 1e-3);
+        assert!((pos.y - 30.0).abs() < 1e-3);
     }
 
     #[test]
-    fn he_label_pos_is_12_percent_inset_from_he() {
+    fn he_label_pos_is_near_he_end() {
         let le = Vec2::new(0.0, 0.0);
         let he = Vec2::new(0.0, 1000.0);
         let pos = he_label_pos(le, he);
         assert!((pos.x).abs() < 1e-4);
-        assert!((pos.y - 880.0).abs() < 1e-3);
+        assert!((pos.y - 970.0).abs() < 1e-3);
     }
 }
