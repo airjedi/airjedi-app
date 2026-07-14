@@ -47,7 +47,13 @@ pub fn adsb_to_fusion_system(
                 if prev.last_seen == ac.last_seen {
                     continue;
                 }
-                if (prev.lat - lat).abs() < f64::EPSILON && (prev.lon - lon).abs() < f64::EPSILON {
+                let age_since_last_push = (ac.last_seen - prev.last_seen).num_seconds();
+                let position_unchanged = (prev.lat - lat).abs() < f64::EPSILON
+                    && (prev.lon - lon).abs() < f64::EPSILON;
+                // Skip only if position unchanged AND the gap is short (< 5s).
+                // Longer gaps mean the aircraft was refreshed after signal loss
+                // and we need to push to keep the fusion track alive.
+                if position_unchanged && age_since_last_push < 5 {
                     continue;
                 }
             }

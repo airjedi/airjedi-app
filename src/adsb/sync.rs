@@ -154,7 +154,7 @@ pub fn make_aircraft_unlit(
 }
 
 /// Update aircraft labels with current data.
-/// Display priority: callsign > tail number (registration) > ICAO hex.
+/// Update aircraft labels. Display priority: callsign > registration > ICAO hex.
 pub fn update_aircraft_label_text(
     aircraft_query: Query<&Aircraft>,
     mut label_query: Query<(&AircraftLabel, &mut Text2d)>,
@@ -162,10 +162,10 @@ pub fn update_aircraft_label_text(
 ) {
     for (label, mut text) in label_query.iter_mut() {
         if let Ok(aircraft) = aircraft_query.get(label.aircraft_entity) {
-            let registration = type_db
-                .as_ref()
-                .and_then(|db| db.lookup(&aircraft.icao))
-                .and_then(|info| info.registration);
+            let type_info = type_db.as_ref().and_then(|db| db.lookup(&aircraft.icao));
+
+            let registration = type_info.as_ref().and_then(|i| i.registration.clone());
+            let is_military = type_info.as_ref().map(|i| i.is_military).unwrap_or(false);
 
             let display_name = aircraft
                 .callsign
@@ -174,19 +174,13 @@ pub fn update_aircraft_label_text(
                 .or(registration.as_deref())
                 .unwrap_or(&aircraft.icao);
 
-            let is_military = type_db
-                .as_ref()
-                .and_then(|db| db.lookup(&aircraft.icao))
-                .map(|info| info.is_military)
-                .unwrap_or(false);
-
-            let mil_prefix = if is_military { "\u{2605} " } else { "" };
-
             let alt_display = aircraft
                 .altitude
                 .map(|a| format!("{} ft", a))
                 .unwrap_or_default();
-            **text = format!("{}{}\n{}", mil_prefix, display_name, alt_display);
+
+            let prefix = if is_military { "MIL " } else { "" };
+            **text = format!("{}{}\n{}", prefix, display_name, alt_display);
         }
     }
 }

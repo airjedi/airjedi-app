@@ -46,6 +46,8 @@ pub struct AircraftFilters {
     pub include_ground_traffic: bool,
     /// Whether to only show aircraft with valid position data
     pub require_position: bool,
+    /// Whether to only show military aircraft
+    pub military_only: bool,
 }
 
 impl Default for AircraftFilters {
@@ -59,6 +61,7 @@ impl Default for AircraftFilters {
             callsign_prefix: String::new(),
             include_ground_traffic: true,
             require_position: true,
+            military_only: false,
         }
     }
 }
@@ -175,6 +178,12 @@ pub fn update_aircraft_display_list(
                 if !matches_prefix {
                     return None;
                 }
+            }
+
+            let is_military = type_info.map(|ti| ti.is_military).unwrap_or(false);
+
+            if list_state.filters.military_only && !is_military {
+                return None;
             }
 
             // Apply search filter
@@ -451,6 +460,13 @@ pub fn render_aircraft_list_panel(
                                 .size(10.0),
                         );
 
+                        ui.checkbox(
+                            &mut list_state.filters.military_only,
+                            egui::RichText::new("Military only")
+                                .color(header_color)
+                                .size(10.0),
+                        );
+
                         ui.add_space(4.0);
 
                         if ui.button("Close").clicked() {
@@ -501,7 +517,7 @@ pub fn render_aircraft_list_panel(
                             // Row 1: Chevron + Status + ICAO + Callsign + Altitude + Follow button
                             ui.horizontal(|ui| {
                                 // Collapse/expand chevron
-                                let chevron = if is_selected { "\u{25BE}" } else { "\u{25B8}" };
+                                let chevron = if is_selected { "v" } else { ">" };
                                 ui.label(
                                     egui::RichText::new(chevron)
                                         .color(egui::Color32::from_rgb(120, 120, 120))
@@ -517,9 +533,10 @@ pub fn render_aircraft_list_panel(
 
                                 if aircraft.is_military {
                                     ui.label(
-                                        egui::RichText::new("\u{2605}")
-                                            .color(egui::Color32::from_rgb(180, 160, 80))
-                                            .size(11.0),
+                                        egui::RichText::new("MIL")
+                                            .color(egui::Color32::from_rgb(220, 180, 60))
+                                            .size(10.0)
+                                            .strong(),
                                     );
                                 }
 
@@ -868,6 +885,13 @@ pub fn render_aircraft_list_pane_content(
                         .size(10.0),
                 );
 
+                ui.checkbox(
+                    &mut list_state.filters.military_only,
+                    egui::RichText::new("Military only")
+                        .color(header_color)
+                        .size(10.0),
+                );
+
                 ui.add_space(4.0);
 
                 if ui.button("Close").clicked() {
@@ -917,12 +941,21 @@ pub fn render_aircraft_list_pane_content(
                     // Row 1: Chevron + Status + ICAO + Callsign + Altitude + Follow button
                     ui.horizontal(|ui| {
                         // Collapse/expand chevron
-                        let chevron = if is_selected { "\u{25BE}" } else { "\u{25B8}" };
+                        let chevron = if is_selected { "v" } else { ">" };
                         ui.label(
                             egui::RichText::new(chevron)
                                 .color(egui::Color32::from_rgb(120, 120, 120))
                                 .size(11.0),
                         );
+
+                        if aircraft.is_military {
+                            ui.label(
+                                egui::RichText::new("MIL")
+                                    .color(egui::Color32::from_rgb(220, 180, 60))
+                                    .size(10.0)
+                                    .strong(),
+                            );
+                        }
 
                         ui.label(
                             egui::RichText::new(&aircraft.icao)
