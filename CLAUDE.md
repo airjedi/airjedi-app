@@ -167,7 +167,7 @@ Key dependencies (see `Cargo.toml` for full list):
 - `bevy_egui = "0.40"` + `bevy-inspector-egui = "0.37"`: egui UI integration and entity inspector
 - `bevy_obj = "0.19"`: OBJ model loading
 - `bevy_brp_extras = "0.20"` (optional `brp` feature, default on): BRP extras for remote inspection, screenshots, input simulation
-- `adsb-client`: Local crate for ADS-B SBS1 protocol parsing
+- `adsb-client`: Local crate for ADS-B protocol parsing (SBS-1 and BEAST binary)
 - `tokio`: Async runtime for ADS-B network connections
 - `reqwest`: HTTP client (blocking + json) for METAR and data downloads
 - `serde` + `serde_json` + `toml`: Serialization for config and data
@@ -178,7 +178,26 @@ Key dependencies (see `Cargo.toml` for full list):
 
 ## Live Data
 
-Aircraft data comes from a live ADS-B feed via the `adsb-client` crate connecting to an SBS1 server (default: `98.186.33.60:30003`). Aircraft are synced in real-time with a 180-second staleness timeout and 250-mile max distance filter. Connection settings are in `src/main.rs::constants`.
+Aircraft data comes from live ADS-B feeds via the `adsb-client` crate. Multiple simultaneous connections are supported, configured through the Data Sources tab (Tools > Data Sources). Each feed specifies a protocol (SBS-1 or BEAST) and endpoint (host:port). Aircraft from all feeds are merged by ICAO address.
+
+### Supported Protocols
+
+- **SBS-1 (BaseStation)**: CSV text on port 30003. Pre-decoded by dump1090/readsb.
+- **BEAST Binary**: Raw Mode-S frames on port 30005. Decoded directly by the adsb-client crate with CRC-24 validation, CPR position decoding, and BDS heuristic identification.
+
+### Mode-S Downlink Format Support
+
+**Supported:** DF=0 (Short ACAS), DF=4 (Altitude Reply), DF=5 (Identity Reply), DF=11 (All-Call), DF=16 (Long ACAS), DF=17 (ADS-B), DF=18 (TIS-B/ADS-R), DF=19 (Military Extended Squitter), DF=20 (Comm-B Altitude), DF=21 (Comm-B Identity).
+
+**ADS-B Type Codes (DF=17/18):** TC 1-4 (identification + category), TC 5-8 (surface position), TC 9-18 (airborne position, baro alt), TC 19 (velocity - ground speed and airspeed subtypes), TC 20-22 (GNSS altitude), TC 28 (aircraft status/emergency).
+
+**BDS Registers (Comm-B, heuristic):** BDS 2,0 (callsign), BDS 5,0 (track/turn/TAS), BDS 6,0 (heading/IAS/Mach). Not yet: BDS 4,0 (selected altitude), BDS 4,4 (meteorological).
+
+**ICAO extraction:** Direct from DF=11/17/18/19. Parity-based extraction for DF=0/4/5/16/20/21 validated against a known-aircraft set built from direct sources.
+
+### Connection Defaults
+
+Default staleness timeout: 180 seconds. Max distance: 250 miles. Constants in `src/main.rs::constants`. Feed configuration persisted in `config.toml` as `[[feeds]]` entries.
 
 ## Map Tile Caching
 
