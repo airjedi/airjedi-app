@@ -5,6 +5,9 @@
 /assets/tiles
 /assets/*.tile.png
 /tmp/
+# macOS bundle transient files
+macos/tmp/
+macos/assets/tiles
 /.worktrees/
 /.superpowers/
 config.toml
