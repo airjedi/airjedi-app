@@ -69,6 +69,7 @@ pub struct AircraftTypeInfo {
     pub type_code: Option<String>,
     pub manufacturer_model: Option<String>,
     pub operator: Option<String>,
+    pub is_military: bool,
 }
 
 /// Loading state for the aircraft type database
@@ -107,14 +108,53 @@ impl AircraftTypeDatabase {
         };
 
         let operator = non_empty(&record.operator);
+        let owner = non_empty(&record.owner);
+
+        let is_military = is_military_owner_or_operator(
+            owner.as_deref(),
+            operator.as_deref(),
+            icao,
+        );
 
         Some(AircraftTypeInfo {
             registration,
             type_code,
             manufacturer_model,
             operator,
+            is_military,
         })
     }
+}
+
+fn is_military_owner_or_operator(owner: Option<&str>, operator: Option<&str>, icao: &str) -> bool {
+    const MILITARY_KEYWORDS: &[&str] = &[
+        "air force", "navy", "army", "marine", "military",
+        "coast guard", "national guard", "air national",
+        "luftwaffe", "royal air force", "raf ",
+        "armed forces", "defense", "defence",
+        "fuerza aerea", "aeronautica militar",
+    ];
+
+    for field in [owner, operator].into_iter().flatten() {
+        let lower = field.to_lowercase();
+        for keyword in MILITARY_KEYWORDS {
+            if lower.contains(keyword) {
+                return true;
+            }
+        }
+    }
+
+    // US military ICAO address ranges (AE0000-AExxxx, AF0000-AFxxxx)
+    let icao_upper = icao.to_uppercase();
+    if icao_upper.starts_with("AE") || icao_upper.starts_with("AF") {
+        if let Ok(addr) = u32::from_str_radix(&icao_upper, 16) {
+            if (0xAE0000..=0xAFFFFF).contains(&addr) {
+                return true;
+            }
+        }
+    }
+
+    false
 }
 
 fn non_empty(s: &str) -> Option<String> {

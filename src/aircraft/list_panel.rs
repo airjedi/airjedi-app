@@ -109,6 +109,7 @@ pub struct AircraftDisplayData {
     pub type_code: Option<String>,
     pub manufacturer_model: Option<String>,
     pub registration: Option<String>,
+    pub is_military: bool,
 }
 
 /// Resource holding sorted/filtered aircraft for display
@@ -201,6 +202,7 @@ pub fn update_aircraft_display_list(
                 type_code: type_info.and_then(|ti| ti.type_code.clone()),
                 manufacturer_model: type_info.and_then(|ti| ti.manufacturer_model.clone()),
                 registration: type_info.and_then(|ti| ti.registration.clone()),
+                is_military: type_info.map(|ti| ti.is_military).unwrap_or(false),
             })
         })
         .collect();
@@ -513,7 +515,14 @@ pub fn render_aircraft_list_panel(
                                         .size(13.0),
                                 );
 
-                                // Display: registration > callsign > ICAO as primary label
+                                if aircraft.is_military {
+                                    ui.label(
+                                        egui::RichText::new("\u{2605}")
+                                            .color(egui::Color32::from_rgb(180, 160, 80))
+                                            .size(11.0),
+                                    );
+                                }
+
                                 let id_label = aircraft
                                     .registration
                                     .as_deref()

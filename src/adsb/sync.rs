@@ -174,11 +174,19 @@ pub fn update_aircraft_label_text(
                 .or(registration.as_deref())
                 .unwrap_or(&aircraft.icao);
 
+            let is_military = type_db
+                .as_ref()
+                .and_then(|db| db.lookup(&aircraft.icao))
+                .map(|info| info.is_military)
+                .unwrap_or(false);
+
+            let mil_prefix = if is_military { "\u{2605} " } else { "" };
+
             let alt_display = aircraft
                 .altitude
                 .map(|a| format!("{} ft", a))
                 .unwrap_or_default();
-            **text = format!("{}\n{}", display_name, alt_display);
+            **text = format!("{}{}\n{}", mil_prefix, display_name, alt_display);
         }
     }
 }
