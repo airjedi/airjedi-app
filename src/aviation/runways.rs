@@ -25,6 +25,48 @@ impl Default for RunwayRenderState {
     }
 }
 
+const FEET_TO_METERS_F32: f32 = 0.3048;
+const RUNWAY_BODY_Z: f32 = 4.5;
+const RUNWAY_LABEL_Z: f32 = 4.6;
+
+#[derive(Component)]
+pub struct RunwayBody {
+    pub runway_id: i64,
+    pub le_lat: f64,
+    pub le_lon: f64,
+    pub he_lat: f64,
+    pub he_lon: f64,
+    pub heading_deg: f64,
+    pub width_m: f32,
+    pub midpoint_lat: f64,
+    pub midpoint_lon: f64,
+}
+
+#[derive(Component)]
+pub struct RunwayLabel {
+    pub runway_id: i64,
+    pub le_lat: f64,
+    pub le_lon: f64,
+    pub he_lat: f64,
+    pub he_lon: f64,
+    pub heading_deg: f64,
+    pub is_he_end: bool,
+    pub midpoint_lat: f64,
+    pub midpoint_lon: f64,
+}
+
+pub fn heading_to_rotation(heading_deg: f64) -> f32 {
+    -(heading_deg as f32).to_radians()
+}
+
+pub fn le_label_pos(le: Vec2, he: Vec2) -> Vec2 {
+    le + (he - le) * 0.12
+}
+
+pub fn he_label_pos(le: Vec2, he: Vec2) -> Vec2 {
+    he + (le - he) * 0.12
+}
+
 const RUNWAY_COLOR: Color = Color::srgba(1.0, 1.0, 1.0, 0.7);
 
 /// System to render runways using Gizmos
@@ -90,5 +132,45 @@ pub fn draw_runways(
         } else {
             gizmos.line_2d(start, end, RUNWAY_COLOR);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn heading_to_rotation_north_is_zero() {
+        assert!((heading_to_rotation(0.0) - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn heading_to_rotation_east_is_neg_half_pi() {
+        let expected = -std::f32::consts::FRAC_PI_2;
+        assert!((heading_to_rotation(90.0) - expected).abs() < 1e-5);
+    }
+
+    #[test]
+    fn heading_to_rotation_south_is_neg_pi() {
+        let expected = -std::f32::consts::PI;
+        assert!((heading_to_rotation(180.0) - expected).abs() < 1e-5);
+    }
+
+    #[test]
+    fn le_label_pos_is_12_percent_inset() {
+        let le = Vec2::new(0.0, 0.0);
+        let he = Vec2::new(0.0, 1000.0);
+        let pos = le_label_pos(le, he);
+        assert!((pos.x).abs() < 1e-4);
+        assert!((pos.y - 120.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn he_label_pos_is_12_percent_inset_from_he() {
+        let le = Vec2::new(0.0, 0.0);
+        let he = Vec2::new(0.0, 1000.0);
+        let pos = he_label_pos(le, he);
+        assert!((pos.x).abs() < 1e-4);
+        assert!((pos.y - 880.0).abs() < 1e-3);
     }
 }
