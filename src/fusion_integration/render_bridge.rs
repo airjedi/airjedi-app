@@ -276,6 +276,36 @@ fn compute_vertical_rate(vel_ecef: &[f64; 3]) -> Option<i32> {
     }
 }
 
+/// Refresh visual aircraft last_seen directly from the feed tracker data.
+/// This keeps the visual entity "alive" (undimmed, not timed out) as long
+/// as the adsb-client tracker is still receiving messages for the aircraft,
+/// even when the fusion pipeline hasn't pushed a state change.
+pub fn refresh_aircraft_last_seen(
+    feed_mgr: Option<Res<FeedConnectionManager>>,
+    mut visuals: Query<&mut Aircraft>,
+) {
+    let Some(mgr) = feed_mgr else {
+        return;
+    };
+
+    let now = chrono::Utc::now();
+
+    for conn in mgr.connections.values() {
+        let aircraft_list = match conn.data.aircraft.try_lock() {
+            Ok(list) => list,
+            Err(_) => continue,
+        };
+
+        for raw_ac in aircraft_list.iter() {
+            for mut visual in visuals.iter_mut() {
+                if visual.icao == raw_ac.icao && raw_ac.last_seen > visual.last_seen {
+                    visual.last_seen = raw_ac.last_seen;
+                }
+            }
+        }
+    }
+}
+
 /// Despawn visual entities whose fusion track entity no longer exists,
 /// or whose last_seen age exceeds the staleness timeout.
 pub fn cleanup_orphaned_visuals(

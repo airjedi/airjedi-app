@@ -6,15 +6,19 @@ use airjedi_fusion::types::*;
 use bevy::prelude::*;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
+use std::time::Instant;
 
 use crate::adsb::connection::FeedConnectionManager;
 
-/// Tracks the last-pushed state per ICAO to avoid sending stale observations.
+/// Tracks the last-pushed state per ICAO to avoid sending redundant observations.
 pub(crate) struct LastPushedState {
     last_seen: DateTime<Utc>,
     lat: f64,
     lon: f64,
+    pushed_at: Instant,
 }
+
+const MAX_PUSH_INTERVAL_SECS: u64 = 5;
 
 pub fn adsb_to_fusion_system(
     feed_mgr: Option<Res<FeedConnectionManager>>,
@@ -47,13 +51,10 @@ pub fn adsb_to_fusion_system(
                 if prev.last_seen == ac.last_seen {
                     continue;
                 }
-                let age_since_last_push = (ac.last_seen - prev.last_seen).num_seconds();
                 let position_unchanged = (prev.lat - lat).abs() < f64::EPSILON
                     && (prev.lon - lon).abs() < f64::EPSILON;
-                // Skip only if position unchanged AND the gap is short (< 5s).
-                // Longer gaps mean the aircraft was refreshed after signal loss
-                // and we need to push to keep the fusion track alive.
-                if position_unchanged && age_since_last_push < 5 {
+                let secs_since_push = prev.pushed_at.elapsed().as_secs();
+                if position_unchanged && secs_since_push < MAX_PUSH_INTERVAL_SECS {
                     continue;
                 }
             }
@@ -63,6 +64,7 @@ pub fn adsb_to_fusion_system(
                     last_seen: ac.last_seen,
                     lat,
                     lon,
+                    pushed_at: Instant::now(),
                 },
             );
 
