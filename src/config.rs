@@ -268,6 +268,9 @@ impl std::fmt::Display for FeedProtocol {
 /// Configuration for a single ADS-B data feed.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct FeedSourceConfig {
+    /// Stable identifier for this feed (survives renames).
+    #[serde(default = "generate_feed_id")]
+    pub id: String,
     /// User-friendly name for this feed.
     pub name: String,
     /// Connection endpoint in host:port format.
@@ -280,12 +283,27 @@ pub struct FeedSourceConfig {
     pub enabled: bool,
 }
 
+pub fn new_feed_id() -> String {
+    generate_feed_id()
+}
+
+fn generate_feed_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos();
+    let pid = std::process::id();
+    format!("{:08x}{:04x}", nanos, pid & 0xFFFF)
+}
+
 fn default_true() -> bool {
     true
 }
 
 fn default_feeds() -> Vec<FeedSourceConfig> {
     vec![FeedSourceConfig {
+        id: generate_feed_id(),
         name: "Default".to_string(),
         endpoint: "192.168.1.10:30003".to_string(),
         protocol: FeedProtocol::Sbs1,

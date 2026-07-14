@@ -111,9 +111,9 @@ impl FeedConnectionManager {
 
     pub fn per_feed_stats(&self) -> Vec<FeedStats> {
         self.connections
-            .iter()
-            .map(|(name, conn)| FeedStats {
-                name: name.clone(),
+            .values()
+            .map(|conn| FeedStats {
+                name: conn.config.name.clone(),
                 state: conn.data.get_connection_state(),
                 aircraft_count: conn.data.try_aircraft_count().unwrap_or(0),
                 message_count: conn.data.message_count.load(Ordering::Relaxed),
@@ -123,10 +123,10 @@ impl FeedConnectionManager {
 
     pub fn all_aircraft(&self) -> Vec<(String, adsb_client::Aircraft)> {
         let mut result = Vec::new();
-        for (name, conn) in &self.connections {
+        for conn in self.connections.values() {
             if let Some(aircraft) = conn.data.try_get_aircraft() {
                 for ac in aircraft {
-                    result.push((name.clone(), ac));
+                    result.push((conn.config.name.clone(), ac));
                 }
             }
         }
@@ -150,7 +150,7 @@ pub fn setup_feed_connections(
         if feed.enabled {
             let data = spawn_feed_client(feed, map_state.latitude, map_state.longitude);
             manager.connections.insert(
-                feed.name.clone(),
+                feed.id.clone(),
                 FeedConnection {
                     config: feed.clone(),
                     data,
@@ -257,49 +257,49 @@ pub fn reconnect_on_feed_changes(
         return;
     }
 
-    let new_names: HashMap<String, &FeedSourceConfig> = app_config
+    let new_feeds: HashMap<String, &FeedSourceConfig> = app_config
         .feeds
         .iter()
-        .map(|f| (f.name.clone(), f))
+        .map(|f| (f.id.clone(), f))
         .collect();
 
     let mut to_remove = Vec::new();
-    for (name, conn) in &manager.connections {
-        match new_names.get(name) {
+    for (id, conn) in &manager.connections {
+        match new_feeds.get(id) {
             None => {
-                info!("[{}] Feed removed, shutting down", name);
+                info!("[{}] Feed removed, shutting down", conn.config.name);
                 conn.data.request_shutdown();
-                to_remove.push(name.clone());
+                to_remove.push(id.clone());
             }
             Some(new_config) => {
                 if !new_config.enabled {
-                    info!("[{}] Feed disabled, shutting down", name);
+                    info!("[{}] Feed disabled, shutting down", conn.config.name);
                     conn.data.request_shutdown();
-                    to_remove.push(name.clone());
+                    to_remove.push(id.clone());
                 } else if new_config.endpoint != conn.config.endpoint
                     || new_config.protocol != conn.config.protocol
                 {
-                    info!("[{}] Feed config changed, reconnecting", name);
+                    info!("[{}] Feed config changed, reconnecting", conn.config.name);
                     conn.data.request_shutdown();
-                    to_remove.push(name.clone());
+                    to_remove.push(id.clone());
                 }
             }
         }
     }
 
-    for name in &to_remove {
-        manager.connections.remove(name);
+    for id in &to_remove {
+        manager.connections.remove(id);
     }
 
     for feed in &app_config.feeds {
-        if feed.enabled && !manager.connections.contains_key(&feed.name) {
+        if feed.enabled && !manager.connections.contains_key(&feed.id) {
             info!(
                 "[{}] Spawning new feed connection to {}",
                 feed.name, feed.endpoint
             );
             let data = spawn_feed_client(feed, map_state.latitude, map_state.longitude);
             manager.connections.insert(
-                feed.name.clone(),
+                feed.id.clone(),
                 FeedConnection {
                     config: feed.clone(),
                     data,

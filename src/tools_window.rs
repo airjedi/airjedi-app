@@ -318,12 +318,12 @@ pub fn render_data_sources_tab(
 
     for (idx, feed) in feeds.iter_mut().enumerate() {
         let conn_state = feed_mgr
-            .and_then(|m| m.connections.get(&feed.name))
+            .and_then(|m| m.connections.get(&feed.id))
             .map(|c| c.data.get_connection_state())
             .unwrap_or(ConnectionState::Disconnected);
 
         let ac_count = feed_mgr
-            .and_then(|m| m.connections.get(&feed.name))
+            .and_then(|m| m.connections.get(&feed.id))
             .and_then(|c| c.data.try_aircraft_count())
             .unwrap_or(0);
 
@@ -410,6 +410,7 @@ pub fn render_data_sources_tab(
     if ui.button("+ Add Feed").clicked() {
         let count = feeds.len() + 1;
         feeds.push(FeedSourceConfig {
+            id: crate::config::new_feed_id(),
             name: format!("Feed {}", count),
             endpoint: String::new(),
             protocol: FeedProtocol::Sbs1,
