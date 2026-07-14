@@ -14,7 +14,7 @@ impl Plugin for AdsbPlugin {
             Startup,
             (
                 setup_aircraft_models,
-                setup_adsb_client.after(crate::setup_map),
+                setup_feed_connections.after(crate::setup_map),
             ),
         );
 
@@ -29,7 +29,7 @@ impl Plugin for AdsbPlugin {
 
         app.add_systems(
             Update,
-            (update_connection_status, reconnect_on_config_change),
+            (update_connection_status, reconnect_on_feed_changes),
         );
     }
 }

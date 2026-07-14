@@ -8,7 +8,8 @@ use std::path::Path;
 
 use crate::airspace::{AirspaceData, AirspaceDisplayState};
 use crate::coverage::CoverageState;
-use crate::data_sources::DataSourceManager;
+use crate::adsb::FeedConnectionManager;
+use crate::config::{FeedProtocol, FeedSourceConfig};
 use crate::export::{ExportFormat, ExportState};
 use crate::recording::{PlaybackState, RecordingState};
 use crate::terrain::TerrainState;
@@ -50,7 +51,7 @@ pub fn render_tools_window(
     mut coverage: ResMut<CoverageState>,
     mut airspace_display: ResMut<AirspaceDisplayState>,
     mut airspace_data: ResMut<AirspaceData>,
-    mut datasource_mgr: ResMut<DataSourceManager>,
+    feed_mgr: Option<Res<FeedConnectionManager>>,
     mut export_state: ResMut<ExportState>,
     mut recording: ResMut<RecordingState>,
     mut playback: ResMut<PlaybackState>,
@@ -145,7 +146,7 @@ pub fn render_tools_window(
                     ToolsTab::Airspace => {
                         render_airspace_tab(ui, &mut airspace_display, &mut airspace_data)
                     }
-                    ToolsTab::DataSources => render_data_sources_tab(ui, &mut datasource_mgr),
+                    ToolsTab::DataSources => render_data_sources_tab(ui, feed_mgr.as_deref(), &mut app_config),
                     ToolsTab::Export => render_export_tab(ui, &mut export_state),
                     ToolsTab::Recording => render_recording_tab(ui, &mut recording, &mut playback),
                     ToolsTab::View3D => render_view3d_tab(
@@ -291,41 +292,139 @@ pub fn render_airspace_tab(
     }
 }
 
-pub fn render_data_sources_tab(ui: &mut egui::Ui, manager: &mut DataSourceManager) {
-    let stats = manager.get_stats();
+pub fn render_data_sources_tab(
+    ui: &mut egui::Ui,
+    feed_mgr: Option<&FeedConnectionManager>,
+    app_config: &mut crate::config::AppConfig,
+) {
+    use adsb_client::ConnectionState;
+
+    let total_feeds = app_config.feeds.len();
+    let connected = feed_mgr.map(|m| m.connected_count()).unwrap_or(0);
+    let aircraft_count = feed_mgr.map(|m| m.unique_aircraft_count()).unwrap_or(0);
+
     ui.label(format!(
-        "{}/{} sources connected, {} aircraft",
-        stats.connected_sources, stats.total_sources, stats.total_aircraft
+        "{}/{} feeds connected, {} aircraft",
+        connected, total_feeds, aircraft_count
     ));
 
     ui.separator();
 
-    for source in &manager.sources {
-        let status = manager.states.get(&source.name);
-        let status_text = status
-            .map(|s| format!("{:?}", s.status))
-            .unwrap_or_else(|| "Unknown".to_string());
+    // Clone feeds to avoid triggering Bevy change detection on every frame.
+    // Only write back to app_config when something actually changes.
+    let mut feeds = app_config.feeds.clone();
+    let mut changed = false;
+    let mut remove_idx = None;
+
+    for (idx, feed) in feeds.iter_mut().enumerate() {
+        let conn_state = feed_mgr
+            .and_then(|m| m.connections.get(&feed.name))
+            .map(|c| c.data.get_connection_state())
+            .unwrap_or(ConnectionState::Disconnected);
+
+        let ac_count = feed_mgr
+            .and_then(|m| m.connections.get(&feed.name))
+            .and_then(|c| c.data.try_aircraft_count())
+            .unwrap_or(0);
+
+        let (status_color, status_text) = match &conn_state {
+            ConnectionState::Connected => (egui::Color32::GREEN, format!("{} ac", ac_count)),
+            ConnectionState::Connecting => (egui::Color32::YELLOW, "Connecting".to_string()),
+            ConnectionState::Disconnected => {
+                if feed.enabled {
+                    (egui::Color32::RED, "Disconnected".to_string())
+                } else {
+                    (egui::Color32::GRAY, "Disabled".to_string())
+                }
+            }
+            ConnectionState::Error(msg) => (egui::Color32::RED, format!("Err: {}", msg)),
+        };
 
         ui.horizontal(|ui| {
-            let enabled_icon = if source.enabled {
-                "\u{25CF}"
-            } else {
-                "\u{25CB}"
-            };
-            ui.label(enabled_icon);
-            ui.label(&source.name);
-            ui.label(
-                egui::RichText::new(&status_text)
-                    .size(10.0)
-                    .color(egui::Color32::GRAY),
-            );
+            if ui.checkbox(&mut feed.enabled, "").changed() {
+                changed = true;
+            }
+            ui.colored_label(status_color, "\u{25CF}");
+            ui.strong(&feed.name);
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.small_button("\u{2716}").on_hover_text("Remove feed").clicked() {
+                    remove_idx = Some(idx);
+                }
+                ui.label(
+                    egui::RichText::new(&status_text)
+                        .size(10.0)
+                        .color(egui::Color32::GRAY),
+                );
+            });
         });
 
-        ui.label(
-            egui::RichText::new(format!("  {}", source.endpoint))
-                .size(10.0)
-                .color(egui::Color32::from_rgb(150, 150, 150)),
-        );
+        ui.add_enabled_ui(true, |ui| {
+            ui.indent(format!("feed_{}", idx), |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Name:");
+                    let resp = ui.text_edit_singleline(&mut feed.name);
+                    if resp.lost_focus() {
+                        changed = true;
+                    }
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label("Protocol:");
+                    let combo_id = format!("protocol_{}", idx);
+                    egui::ComboBox::from_id_salt(&combo_id)
+                        .selected_text(feed.protocol.display_name())
+                        .show_ui(ui, |ui| {
+                            for &proto in FeedProtocol::ALL {
+                                if ui
+                                    .selectable_label(feed.protocol == proto, proto.display_name())
+                                    .clicked()
+                                {
+                                    feed.protocol = proto;
+                                    changed = true;
+                                }
+                            }
+                        });
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label("Endpoint:");
+                    let resp = ui.text_edit_singleline(&mut feed.endpoint);
+                    if resp.lost_focus() {
+                        changed = true;
+                    }
+                });
+            });
+        });
+
+        ui.add_space(6.0);
+    }
+
+    if let Some(idx) = remove_idx {
+        feeds.remove(idx);
+        changed = true;
+    }
+
+    ui.separator();
+
+    if ui.button("+ Add Feed").clicked() {
+        let count = feeds.len() + 1;
+        feeds.push(FeedSourceConfig {
+            name: format!("Feed {}", count),
+            endpoint: String::new(),
+            protocol: FeedProtocol::Sbs1,
+            enabled: false,
+        });
+        changed = true;
+    }
+
+    // Only write back when something actually changed
+    if changed {
+        app_config.feeds = feeds;
+    }
+
+    if changed {
+        crate::config::save_config(app_config);
     }
 }
 

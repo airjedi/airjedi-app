@@ -7,7 +7,7 @@ use bevy::prelude::*;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
-use crate::adsb::connection::AdsbAircraftData;
+use crate::adsb::connection::FeedConnectionManager;
 
 /// Tracks the last-pushed state per ICAO to avoid sending stale observations.
 pub(crate) struct LastPushedState {
@@ -17,51 +17,59 @@ pub(crate) struct LastPushedState {
 }
 
 pub fn adsb_to_fusion_system(
-    adsb_data: Option<Res<AdsbAircraftData>>,
+    feed_mgr: Option<Res<FeedConnectionManager>>,
     mut buffer: ResMut<ObservationBuffer>,
     mut last_pushed: Local<HashMap<String, LastPushedState>>,
 ) {
-    let Some(adsb_data) = adsb_data else {
+    let Some(feed_mgr) = feed_mgr else {
         return;
     };
 
-    let aircraft_list = match adsb_data.aircraft.try_lock() {
-        Ok(list) => list,
-        Err(_) => return,
-    };
+    let mut seen_icaos = Vec::new();
 
-    for ac in aircraft_list.iter() {
-        let (Some(lat), Some(lon)) = (ac.latitude, ac.longitude) else {
-            continue;
+    for (feed_name, conn) in &feed_mgr.connections {
+        let aircraft_list = match conn.data.aircraft.try_lock() {
+            Ok(list) => list,
+            Err(_) => continue,
         };
 
-        if let Some(prev) = last_pushed.get(&ac.icao) {
-            if prev.last_seen == ac.last_seen {
-                continue;
-            }
-            if (prev.lat - lat).abs() < f64::EPSILON && (prev.lon - lon).abs() < f64::EPSILON {
-                continue;
-            }
-        }
-        last_pushed.insert(
-            ac.icao.clone(),
-            LastPushedState {
-                last_seen: ac.last_seen,
-                lat,
-                lon,
-            },
-        );
+        let source_label = format!("ADS-B {}", feed_name);
+        let sensor_id_str = format!("adsb-{}", feed_name);
 
-        if let Some(obs) = adsb_aircraft_to_observation(ac, lat, lon) {
-            buffer.observations.push(obs);
+        for ac in aircraft_list.iter() {
+            let (Some(lat), Some(lon)) = (ac.latitude, ac.longitude) else {
+                continue;
+            };
+
+            seen_icaos.push(ac.icao.clone());
+
+            if let Some(prev) = last_pushed.get(&ac.icao) {
+                if prev.last_seen == ac.last_seen {
+                    continue;
+                }
+                if (prev.lat - lat).abs() < f64::EPSILON && (prev.lon - lon).abs() < f64::EPSILON {
+                    continue;
+                }
+            }
+            last_pushed.insert(
+                ac.icao.clone(),
+                LastPushedState {
+                    last_seen: ac.last_seen,
+                    lat,
+                    lon,
+                },
+            );
+
+            if let Some(obs) = adsb_aircraft_to_observation(ac, lat, lon, &sensor_id_str, &source_label) {
+                buffer.observations.push(obs);
+            }
         }
     }
 
-    // Clean up stale entries for aircraft no longer in the list
-    if last_pushed.len() > aircraft_list.len() * 2 {
-        let active: std::collections::HashSet<&str> =
-            aircraft_list.iter().map(|ac| ac.icao.as_str()).collect();
-        last_pushed.retain(|icao, _| active.contains(icao.as_str()));
+    // Clean up stale entries
+    if last_pushed.len() > seen_icaos.len() * 2 {
+        let active: std::collections::HashSet<String> = seen_icaos.into_iter().collect();
+        last_pushed.retain(|icao, _| active.contains(icao));
     }
 }
 
@@ -69,6 +77,8 @@ fn adsb_aircraft_to_observation(
     ac: &adsb_client::Aircraft,
     lat: f64,
     lon: f64,
+    sensor_id_str: &str,
+    source_label: &str,
 ) -> Option<SensorObservation> {
     let alt_m = ac.altitude.map(|a| f64::from(a) * 0.3048);
 
@@ -86,15 +96,15 @@ fn adsb_aircraft_to_observation(
 
     let vel_down = ac.vertical_rate.map(|vr| f64::from(-vr) * 0.00508);
 
-    let pos_var = 10_000.0_f64; // 100m sigma squared
-    let vel_var = 100.0_f64; // 10 m/s sigma squared
+    let pos_var = 10_000.0_f64;
+    let vel_var = 100.0_f64;
     let cov = nalgebra::DMatrix::from_diagonal(&nalgebra::DVector::from_vec(vec![
         pos_var, pos_var, pos_var, vel_var, vel_var, vel_var,
     ]));
 
     Some(SensorObservation {
         sensor_id: SensorId {
-            id: "adsb-primary".to_string(),
+            id: sensor_id_str.to_string(),
             kind: SensorKind::AdsbReceiver,
             tier: FusionTier::Regional,
             coordinate_frame: CoordinateFrame::Wgs84,
@@ -118,7 +128,7 @@ fn adsb_aircraft_to_observation(
         covariance: ObservationCovariance { matrix: cov },
         classification_hint: Some(TargetCategory::FixedWing),
         metadata: ObservationMetadata {
-            source_label: "ADS-B SBS1".to_string(),
+            source_label: source_label.to_string(),
             is_on_ground: ac.is_on_ground,
             ..Default::default()
         },

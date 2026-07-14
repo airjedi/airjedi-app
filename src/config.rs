@@ -116,7 +116,9 @@ impl BasemapStyle {
 
 #[derive(Resource, Serialize, Deserialize, Clone, Debug)]
 pub struct AppConfig {
-    pub feed: FeedConfig,
+    /// ADS-B data feeds (SBS-1, BEAST, etc.)
+    #[serde(default = "default_feeds")]
+    pub feeds: Vec<FeedSourceConfig>,
     pub map: MapConfig,
     #[serde(default)]
     pub overlays: OverlayConfig,
@@ -224,10 +226,71 @@ impl Default for AppearanceConfig {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct FeedConfig {
-    pub endpoint_url: String,
-    pub refresh_interval_ms: u64,
+/// Protocol type for an ADS-B data feed.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FeedProtocol {
+    /// BaseStation/SBS-1 CSV format (typically port 30003)
+    Sbs1,
+    /// BEAST binary format (typically port 30005)
+    Beast,
+}
+
+impl FeedProtocol {
+    pub const ALL: &'static [FeedProtocol] = &[FeedProtocol::Sbs1, FeedProtocol::Beast];
+
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Sbs1 => "SBS-1 (BaseStation)",
+            Self::Beast => "BEAST (Binary)",
+        }
+    }
+
+    pub fn default_port(self) -> u16 {
+        match self {
+            Self::Sbs1 => 30003,
+            Self::Beast => 30005,
+        }
+    }
+}
+
+impl Default for FeedProtocol {
+    fn default() -> Self {
+        Self::Sbs1
+    }
+}
+
+impl std::fmt::Display for FeedProtocol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.display_name())
+    }
+}
+
+/// Configuration for a single ADS-B data feed.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct FeedSourceConfig {
+    /// User-friendly name for this feed.
+    pub name: String,
+    /// Connection endpoint in host:port format.
+    pub endpoint: String,
+    /// Protocol type (SBS-1 or BEAST).
+    #[serde(default)]
+    pub protocol: FeedProtocol,
+    /// Whether this feed is active.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_feeds() -> Vec<FeedSourceConfig> {
+    vec![FeedSourceConfig {
+        name: "Default".to_string(),
+        endpoint: "192.168.1.10:30003".to_string(),
+        protocol: FeedProtocol::Sbs1,
+        enabled: true,
+    }]
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -359,11 +422,7 @@ impl Default for DataIngestConfig {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            feed: FeedConfig {
-                // Raw TCP address for ADS-B connection (host:port format)
-                endpoint_url: "192.168.1.10:30003".to_string(),
-                refresh_interval_ms: 1000,
-            },
+            feeds: default_feeds(),
             map: MapConfig {
                 default_latitude: 37.6872,
                 default_longitude: -97.3301,
@@ -429,8 +488,6 @@ pub fn save_config(config: &AppConfig) {
 #[derive(Resource, Default)]
 pub struct SettingsUiState {
     pub open: bool,
-    pub endpoint_url: String,
-    pub refresh_interval_ms: String,
     pub default_latitude: String,
     pub default_longitude: String,
     pub default_zoom: String,
@@ -453,8 +510,6 @@ pub struct SettingsUiState {
 
 impl SettingsUiState {
     pub fn populate_from_config(&mut self, config: &AppConfig) {
-        self.endpoint_url = config.feed.endpoint_url.clone();
-        self.refresh_interval_ms = config.feed.refresh_interval_ms.to_string();
         self.default_latitude = config.map.default_latitude.to_string();
         self.default_longitude = config.map.default_longitude.to_string();
         self.default_zoom = config.map.default_zoom.to_string();
@@ -474,33 +529,7 @@ impl SettingsUiState {
         self.error_message = None;
     }
 
-    pub fn validate_and_build(&self) -> Result<AppConfig, String> {
-        // Validate endpoint address (host:port format for raw TCP connection)
-        let endpoint = self.endpoint_url.trim();
-        if endpoint.is_empty() {
-            return Err("Endpoint address is required".to_string());
-        }
-        // Check for host:port format
-        let parts: Vec<&str> = endpoint.split(':').collect();
-        if parts.len() != 2 {
-            return Err(
-                "Endpoint must be in host:port format (e.g., 192.168.1.1:30003)".to_string(),
-            );
-        }
-        if parts[1].parse::<u16>().is_err() {
-            return Err("Port must be a valid number (1-65535)".to_string());
-        }
-
-        // Validate refresh interval
-        let refresh_ms: u64 = self
-            .refresh_interval_ms
-            .trim()
-            .parse()
-            .map_err(|_| "Refresh interval must be a number")?;
-        if refresh_ms < 100 || refresh_ms > 60000 {
-            return Err("Refresh interval must be 100-60000 ms".to_string());
-        }
-
+    pub fn validate_and_build(&self, current_feeds: &[FeedSourceConfig]) -> Result<AppConfig, String> {
         // Validate latitude
         let lat: f64 = self
             .default_latitude
@@ -542,10 +571,7 @@ impl SettingsUiState {
         }
 
         Ok(AppConfig {
-            feed: FeedConfig {
-                endpoint_url: endpoint.to_string(),
-                refresh_interval_ms: refresh_ms,
-            },
+            feeds: current_feeds.to_vec(),
             map: MapConfig {
                 default_latitude: lat,
                 default_longitude: lon,
@@ -599,18 +625,6 @@ pub fn render_settings_pane_content(
                     }
                 }
             });
-    });
-
-    ui.add_space(12.0);
-
-    // Feed section
-    ui.collapsing("Feed", |ui| {
-        ui.label("Endpoint (host:port):");
-        ui.text_edit_singleline(&mut ui_state.endpoint_url);
-        ui.add_space(8.0);
-
-        ui.label("Refresh Interval (ms):");
-        ui.text_edit_singleline(&mut ui_state.refresh_interval_ms);
     });
 
     ui.add_space(12.0);
@@ -725,7 +739,7 @@ pub fn render_settings_pane_content(
         }
 
         if ui.button("Save").clicked() {
-            match ui_state.validate_and_build() {
+            match ui_state.validate_and_build(&app_config.feeds) {
                 Ok(mut new_config) => {
                     new_config.bookmarks = app_config.bookmarks.clone();
                     new_config.appearance.theme = app_theme.name().to_string();

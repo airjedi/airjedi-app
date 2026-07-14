@@ -1,4 +1,4 @@
-use crate::adsb::connection::AdsbAircraftData;
+use crate::adsb::connection::FeedConnectionManager;
 use crate::adsb::sync::AircraftModelRegistry;
 use crate::aircraft::components::{Aircraft, AircraftLabel, FusionTrackLink};
 use crate::aircraft::picking::{on_aircraft_click, on_aircraft_hover, on_aircraft_out};
@@ -36,7 +36,7 @@ pub fn sync_tracks_to_visuals(
     label_query: Query<(Entity, &AircraftLabel)>,
     model_registry: Option<Res<AircraftModelRegistry>>,
     type_db: Option<Res<crate::aircraft::AircraftTypeDatabase>>,
-    adsb_data: Option<Res<AdsbAircraftData>>,
+    feed_mgr: Option<Res<FeedConnectionManager>>,
     theme: Res<AppTheme>,
     time: Res<Time<Real>>,
     map_state: Res<MapState>,
@@ -47,7 +47,9 @@ pub fn sync_tracks_to_visuals(
         return;
     };
 
-    let raw_aircraft = adsb_data.as_ref().and_then(|d| d.try_get_aircraft());
+    let raw_aircraft: Option<Vec<adsb_client::Aircraft>> = feed_mgr.as_ref().map(|mgr| {
+        mgr.all_aircraft().into_iter().map(|(_, ac)| ac).collect()
+    });
 
     for (track_entity, track, tracker, quality, classification) in &fusion_tracks {
         let (lat, lon, alt_m) = tracker.position_geodetic();
@@ -274,17 +276,22 @@ fn compute_vertical_rate(vel_ecef: &[f64; 3]) -> Option<i32> {
     }
 }
 
-/// Despawn visual entities whose fusion track entity no longer exists.
-/// This catches cases where the track was cleaned up (Lost -> despawned)
-/// but the render bridge didn't process it because TrackerState didn't change.
+/// Despawn visual entities whose fusion track entity no longer exists,
+/// or whose last_seen age exceeds the staleness timeout.
 pub fn cleanup_orphaned_visuals(
     mut commands: Commands,
-    visuals: Query<(Entity, &FusionTrackLink)>,
+    visuals: Query<(Entity, &FusionTrackLink, &Aircraft)>,
     fusion_tracks: Query<Entity, With<Track>>,
     label_query: Query<(Entity, &AircraftLabel)>,
 ) {
-    for (visual_entity, link) in &visuals {
-        if fusion_tracks.get(link.track_entity).is_err() {
+    let now = chrono::Utc::now();
+
+    for (visual_entity, link, aircraft) in &visuals {
+        let orphaned = fusion_tracks.get(link.track_entity).is_err();
+        let age_secs = (now - aircraft.last_seen).num_seconds();
+        let timed_out = age_secs > crate::constants::ADSB_AIRCRAFT_TIMEOUT_SECS;
+
+        if orphaned || timed_out {
             for (label_entity, label) in label_query.iter() {
                 if label.aircraft_entity == visual_entity {
                     commands.entity(label_entity).despawn();

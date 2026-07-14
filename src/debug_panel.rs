@@ -6,7 +6,7 @@ use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 use std::collections::VecDeque;
 
-use crate::adsb::AdsbAircraftData;
+use crate::adsb::FeedConnectionManager;
 use crate::theme::{to_egui_color32, to_egui_color32_alpha, AppTheme};
 use crate::ui_panels::{PanelId, UiPanelManager};
 use crate::{Aircraft, MapState, ZoomState};
@@ -343,7 +343,7 @@ pub fn render_debug_panel(
     mut panels: ResMut<UiPanelManager>,
     map_state: Option<Res<MapState>>,
     zoom_state: Option<Res<ZoomState>>,
-    adsb_data: Option<Res<AdsbAircraftData>>,
+    _feed_mgr: Option<Res<FeedConnectionManager>>,
     theme: Res<AppTheme>,
 ) {
     if !panels.is_open(PanelId::Debug) {
@@ -376,14 +376,8 @@ pub fn render_debug_panel(
         panels.close_panel(PanelId::Debug);
     }
 
-    // Render ADSB connection state separately (requires Bevy Res)
-    // This is intentionally kept in the system function since AdsbAircraftData
-    // cannot be provided outside of a Bevy context.
-    if let Some(ref adsb) = adsb_data {
-        // Connection state is displayed as part of the debug window metrics,
-        // but is rendered here to avoid coupling the testable function to Bevy resources.
-        let _ = adsb.get_connection_state();
-    }
+    // Feed connection state is available via FeedConnectionManager
+    // but aggregate display is handled by the statusbar and Data Sources tab.
 }
 
 #[cfg(test)]

@@ -15,7 +15,7 @@ use crate::airspace::{AirspaceData, AirspaceDisplayState};
 use crate::bookmarks::{self, BookmarksPanelState};
 use crate::config::{self, AppConfig, SettingsUiState};
 use crate::coverage::CoverageState;
-use crate::data_sources::DataSourceManager;
+use crate::adsb::FeedConnectionManager;
 use crate::debug_panel::{self, DebugPanelState};
 use crate::export::ExportState;
 use crate::inspector;
@@ -465,9 +465,12 @@ impl<'a> Behavior<DockPane> for DockBehavior<'a> {
             DockPane::DataSources => {
                 let world = &mut *self.world;
                 render_pane_with_bg(bg, ui, |ui| {
-                    let mut state = SystemState::<ResMut<DataSourceManager>>::new(world);
-                    let mut mgr = state.get_mut(world).unwrap();
-                    tools_window::render_data_sources_tab(ui, &mut mgr);
+                    let mut state = SystemState::<(
+                        Option<ResMut<FeedConnectionManager>>,
+                        ResMut<AppConfig>,
+                    )>::new(world);
+                    let (feed_mgr, mut app_config) = state.get_mut(world).unwrap();
+                    tools_window::render_data_sources_tab(ui, feed_mgr.as_deref(), &mut app_config);
                 });
             }
 
