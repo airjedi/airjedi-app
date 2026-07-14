@@ -74,6 +74,28 @@ pub fn sync_tracks_to_visuals(
         let alt_ft = raw_ac
             .and_then(|ac| ac.altitude)
             .unwrap_or(filter_alt_ft);
+        let vrate = raw_ac
+            .and_then(|ac| ac.vertical_rate)
+            .or_else(|| compute_vertical_rate(&vel_ecef, lat, lon));
+        let heading = raw_ac
+            .and_then(|ac| ac.track)
+            .or(heading);
+        let speed_kts = raw_ac
+            .and_then(|ac| ac.velocity)
+            .unwrap_or(speed_kts);
+        let lat = raw_ac
+            .and_then(|ac| ac.latitude)
+            .unwrap_or(lat);
+        let lon = raw_ac
+            .and_then(|ac| ac.longitude)
+            .unwrap_or(lon);
+        let squawk = raw_ac.and_then(|ac| ac.squawk.clone());
+        let is_on_ground = raw_ac
+            .and_then(|ac| ac.is_on_ground)
+            .or(Some(track.is_on_ground));
+        let alert = raw_ac.and_then(|ac| ac.alert);
+        let emergency = raw_ac.and_then(|ac| ac.emergency);
+        let spi = raw_ac.and_then(|ac| ac.spi);
 
         let existing_visual = visual_lookup
             .iter()
@@ -96,9 +118,15 @@ pub fn sync_tracks_to_visuals(
                 aircraft.altitude = Some(alt_ft);
                 aircraft.heading = heading.map(|h| h as f32);
                 aircraft.velocity = Some(speed_kts);
-                aircraft.vertical_rate = compute_vertical_rate(&vel_ecef);
-                aircraft.is_on_ground = Some(track.is_on_ground);
+                aircraft.vertical_rate = vrate;
+                aircraft.is_on_ground = is_on_ground;
+                aircraft.alert = alert;
+                aircraft.emergency = emergency;
+                aircraft.spi = spi;
                 aircraft.last_seen = track.last_update;
+                if squawk.is_some() {
+                    aircraft.squawk = squawk.clone();
+                }
 
                 if let Some(ac) = raw_ac {
                     if let Some(ref cs) = ac.callsign {
@@ -124,7 +152,7 @@ pub fn sync_tracks_to_visuals(
                             Some(alt_ft),
                             heading.map(|h| h as f32),
                             Some(speed_kts),
-                            compute_vertical_rate(&vel_ecef),
+                            vrate,
                             None,
                             time.elapsed_secs_f64(),
                         );
@@ -176,12 +204,12 @@ pub fn sync_tracks_to_visuals(
                     altitude: Some(alt_ft),
                     heading: heading.map(|h| h as f32),
                     velocity: Some(speed_kts),
-                    vertical_rate: compute_vertical_rate(&vel_ecef),
-                    squawk: None,
-                    is_on_ground: Some(track.is_on_ground),
-                    alert: None,
-                    emergency: None,
-                    spi: None,
+                    vertical_rate: vrate,
+                    squawk,
+                    is_on_ground,
+                    alert,
+                    emergency,
+                    spi,
                     last_seen: track.last_update,
                 },
                 FusionTrackLink {
@@ -195,7 +223,7 @@ pub fn sync_tracks_to_visuals(
                     Some(alt_ft),
                     heading.map(|h| h as f32),
                     Some(speed_kts),
-                    compute_vertical_rate(&vel_ecef),
+                    vrate,
                     None,
                     time.elapsed_secs_f64(),
                 ),
@@ -266,9 +294,20 @@ fn compute_heading_from_ecef(
     Some(((heading % 360.0) + 360.0) % 360.0)
 }
 
-fn compute_vertical_rate(vel_ecef: &[f64; 3]) -> Option<i32> {
-    let vu_approx = vel_ecef[2];
-    let vr_fpm = vu_approx / 0.00508;
+fn compute_vertical_rate(vel_ecef: &[f64; 3], lat_deg: f64, lon_deg: f64) -> Option<i32> {
+    let lat_rad = lat_deg.to_radians();
+    let lon_rad = lon_deg.to_radians();
+
+    let sin_lat = lat_rad.sin();
+    let cos_lat = lat_rad.cos();
+    let sin_lon = lon_rad.sin();
+    let cos_lon = lon_rad.cos();
+
+    let vu = cos_lat * cos_lon * vel_ecef[0]
+        + cos_lat * sin_lon * vel_ecef[1]
+        + sin_lat * vel_ecef[2];
+
+    let vr_fpm = vu / 0.00508;
     if vr_fpm.abs() > 0.1 {
         Some(vr_fpm as i32)
     } else {

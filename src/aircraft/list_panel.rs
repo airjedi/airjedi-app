@@ -1070,7 +1070,7 @@ pub fn render_aircraft_list_pane_content(
                                 (egui::Color32::from_rgb(150, 150, 150), "\u{2500}")
                             };
                             ui.label(
-                                egui::RichText::new(format!("{} {}ft/min", vr_symbol, vr))
+                                egui::RichText::new(format!("{} {}ft/min", vr_symbol, vr.abs()))
                                     .color(vr_color)
                                     .size(10.0)
                                     .monospace(),
