@@ -28,20 +28,17 @@ const RUNWAY_LABEL_Z: f32 = 4.6;
 
 #[derive(Component)]
 pub struct RunwayBody {
-    pub runway_id: i64,
     pub le_lat: f64,
     pub le_lon: f64,
     pub he_lat: f64,
     pub he_lon: f64,
     pub heading_deg: f64,
-    pub width_m: f32,
     pub midpoint_lat: f64,
     pub midpoint_lon: f64,
 }
 
 #[derive(Component)]
 pub struct RunwayLabel {
-    pub runway_id: i64,
     pub le_lat: f64,
     pub le_lon: f64,
     pub he_lat: f64,
@@ -142,13 +139,11 @@ pub fn spawn_runway_entities(
 
         commands.spawn((
             RunwayBody {
-                runway_id: runway.id,
                 le_lat,
                 le_lon,
                 he_lat,
                 he_lon,
                 heading_deg: heading,
-                width_m,
                 midpoint_lat: mid_lat,
                 midpoint_lon: mid_lon,
             },
@@ -166,7 +161,6 @@ pub fn spawn_runway_entities(
             let lp = le_label_pos(le_world, he_world);
             commands.spawn((
                 RunwayLabel {
-                    runway_id: runway.id,
                     le_lat,
                     le_lon,
                     he_lat,
@@ -197,7 +191,6 @@ pub fn spawn_runway_entities(
             let he_rotation = Quat::from_rotation_z(angle + std::f32::consts::PI);
             commands.spawn((
                 RunwayLabel {
-                    runway_id: runway.id,
                     le_lat,
                     le_lon,
                     he_lat,
@@ -361,7 +354,7 @@ pub fn draw_runways(
     render_state: Res<RunwayRenderState>,
     local_origin: Res<LocalOrigin>,
     map_state: Res<MapState>,
-    view3d_state: Res<crate::view3d::View3DState>,
+    view3d_state: Res<View3DState>,
 ) {
     if aviation_data.loading_state != LoadingState::Ready {
         return;
