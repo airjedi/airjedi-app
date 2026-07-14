@@ -39,16 +39,14 @@ fn calculate_zoom_delta(event: &MouseWheel) -> f32 {
 
 /// Calculate new map center to keep the point under cursor stationary during zoom.
 ///
-/// Uses Mercator meter coordinates which are zoom-independent, so changing
-/// the discrete tile zoom level doesn't affect the calculation.
+/// Uses effective ortho scale (meters_per_tile_pixel / camera_zoom) which
+/// accounts for both continuous zoom and discrete tile zoom level transitions.
 fn calculate_zoom_to_cursor_center(
     cursor_viewport_pos: Vec2,
     window_size: (f32, f32),
     current_center: (f64, f64),
-    camera_zoom_before: f32,
-    camera_zoom_after: f32,
-    _old_tile_zoom: ZoomLevel,
-    _new_tile_zoom: ZoomLevel,
+    ortho_scale_before: f64,
+    ortho_scale_after: f64,
 ) -> (f64, f64) {
     let screen_center = (window_size.0 / 2.0, window_size.1 / 2.0);
     let cursor_offset = (
@@ -56,20 +54,15 @@ fn calculate_zoom_to_cursor_center(
         -(cursor_viewport_pos.y - screen_center.1) as f64,
     );
 
-    // Convert cursor offset to Mercator meters before and after zoom.
-    // ortho.scale = 1/camera_zoom, so 1 screen pixel = (1/camera_zoom) meters.
-    let ortho_before = 1.0 / camera_zoom_before as f64;
-    let ortho_after = 1.0 / camera_zoom_after as f64;
-
     let center_merc = lonlat_to_mercator(current_center.1, current_center.0);
 
-    // Cursor position in Mercator meters (same point, same meters, zoom-independent)
-    let cursor_merc_x = center_merc.x + cursor_offset.0 * ortho_before;
-    let cursor_merc_y = center_merc.y + cursor_offset.1 * ortho_before;
+    // Cursor position in Mercator meters (1 pixel = ortho_scale meters)
+    let cursor_merc_x = center_merc.x + cursor_offset.0 * ortho_scale_before;
+    let cursor_merc_y = center_merc.y + cursor_offset.1 * ortho_scale_before;
 
     // New center: keep cursor at same Mercator position but at new screen offset
-    let new_center_x = cursor_merc_x - cursor_offset.0 * ortho_after;
-    let new_center_y = cursor_merc_y - cursor_offset.1 * ortho_after;
+    let new_center_x = cursor_merc_x - cursor_offset.0 * ortho_scale_after;
+    let new_center_y = cursor_merc_y - cursor_offset.1 * ortho_scale_after;
 
     let (new_lon, new_lat) = mercator_to_lonlat(bevy::math::DVec2::new(new_center_x, new_center_y));
     (new_lat, new_lon)
@@ -179,21 +172,19 @@ pub(crate) fn handle_zoom(
             return;
         }
     }
-    // Don't zoom the map when pointer is over a dock panel (but allow zoom over the map viewport)
+    // Don't zoom the map when pointer is over a UI panel.
+    // egui's CentralPanel covers the whole window, so is_pointer_over_egui()
+    // is always true. We check if the pointer is inside the map viewport pane;
+    // if not (over a docked panel like aircraft list), block zoom.
+    // Also block when egui wants pointer input (ScrollArea actively scrolling).
     if let Ok(ctx) = contexts.ctx_mut() {
-        if ctx.is_pointer_over_egui() {
-            // The egui CentralPanel covers the entire window, so is_pointer_over_egui() is
-            // always true. Check if the pointer is inside the map viewport pane -- if so,
-            // allow zoom through to Bevy.
-            if let Some(map_rect) = dock_state.map_viewport_rect {
-                if let Some(pos) = ctx.pointer_latest_pos() {
-                    if !map_rect.contains(pos) {
-                        return;
-                    }
-                } else {
-                    return;
-                }
+        if let Some(pos) = ctx.pointer_latest_pos() {
+            match dock_state.map_viewport_rect {
+                Some(map_rect) if map_rect.contains(pos) => {}
+                _ => return,
             }
+        } else {
+            return;
         }
     }
 
@@ -232,21 +223,23 @@ pub(crate) fn handle_zoom(
         let zoom_delta = calculate_zoom_delta(event);
         log_info!("Zoom delta: {}", zoom_delta);
 
-        // Get cursor position in viewport coordinates (None if cursor not in window)
-        let Some(cursor_viewport_pos) = window.cursor_position() else {
-            // No cursor, just zoom at center
+        // Get cursor position relative to the map viewport (not the full window)
+        let Some(cursor_window_pos) = window.cursor_position() else {
             log_info!("No cursor - new camera_zoom={}", zoom_state.camera_zoom);
             continue;
         };
 
         log_info!(
             "Cursor position: ({:.2}, {:.2})",
-            cursor_viewport_pos.x,
-            cursor_viewport_pos.y
+            cursor_window_pos.x,
+            cursor_window_pos.y,
         );
 
-        // Save old camera zoom BEFORE applying scroll zoom (needed for zoom-to-cursor)
-        let camera_zoom_before_scroll = zoom_state.camera_zoom;
+        // Compute effective ortho scale BEFORE zoom (meters_per_tile_pixel / camera_zoom)
+        let old_tile_meters = (2.0 * super::tiles::WEB_MERCATOR_EXTENT)
+            / (1u64 << map_state.zoom_level.to_u8()) as f64
+            / crate::constants::DEFAULT_TILE_PIXELS as f64;
+        let ortho_scale_before = old_tile_meters / zoom_state.camera_zoom as f64;
 
         // Update camera zoom (multiplicative for smooth feel)
         // Positive scroll (up/forward) = zoom in, negative = zoom out
@@ -284,14 +277,18 @@ pub(crate) fn handle_zoom(
 
         let old_lat = map_state.latitude;
         let old_lon = map_state.longitude;
+        // Compute effective ortho scale AFTER zoom (includes tile zoom transition)
+        let new_tile_meters = (2.0 * super::tiles::WEB_MERCATOR_EXTENT)
+            / (1u64 << map_state.zoom_level.to_u8()) as f64
+            / crate::constants::DEFAULT_TILE_PIXELS as f64;
+        let ortho_scale_after = new_tile_meters / zoom_state.camera_zoom as f64;
+
         let (new_lat, new_lon) = calculate_zoom_to_cursor_center(
-            cursor_viewport_pos,
+            cursor_window_pos,
             (window.width(), window.height()),
             (map_state.latitude, map_state.longitude),
-            camera_zoom_before_scroll,
-            zoom_state.camera_zoom,
-            old_tile_zoom,
-            map_state.zoom_level,
+            ortho_scale_before,
+            ortho_scale_after,
         );
         map_state.latitude = clamp_latitude(new_lat);
         map_state.longitude = clamp_longitude(new_lon);
@@ -388,26 +385,30 @@ pub(crate) fn handle_pinch_zoom(
     };
 
     for event in pinch_events.read() {
-        let camera_zoom_before = zoom_state.camera_zoom;
+        let old_tile_meters = (2.0 * super::tiles::WEB_MERCATOR_EXTENT)
+            / (1u64 << map_state.zoom_level.to_u8()) as f64
+            / crate::constants::DEFAULT_TILE_PIXELS as f64;
+        let ortho_scale_before = old_tile_meters / zoom_state.camera_zoom as f64;
 
-        // Apply pinch directly as a multiplicative factor
         let zoom_factor = 1.0 + event.0;
         zoom_state.camera_zoom =
             (zoom_state.camera_zoom * zoom_factor).clamp(zoom_state.min_zoom, zoom_state.max_zoom);
 
-        // Zoom-to-cursor: keep the point under cursor stationary
         if let Some(cursor_viewport_pos) = window.cursor_position() {
             let (zoom_level_changed, old_tile_zoom) =
                 check_zoom_level_transition(&mut zoom_state, &mut map_state);
+
+            let new_tile_meters = (2.0 * super::tiles::WEB_MERCATOR_EXTENT)
+                / (1u64 << map_state.zoom_level.to_u8()) as f64
+                / crate::constants::DEFAULT_TILE_PIXELS as f64;
+            let ortho_scale_after = new_tile_meters / zoom_state.camera_zoom as f64;
 
             let (new_lat, new_lon) = calculate_zoom_to_cursor_center(
                 cursor_viewport_pos,
                 (window.width(), window.height()),
                 (map_state.latitude, map_state.longitude),
-                camera_zoom_before,
-                zoom_state.camera_zoom,
-                old_tile_zoom,
-                map_state.zoom_level,
+                ortho_scale_before,
+                ortho_scale_after,
             );
             map_state.latitude = clamp_latitude(new_lat);
             map_state.longitude = clamp_longitude(new_lon);
