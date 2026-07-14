@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 use crate::tiles::*;
 
+use super::list_panel::AircraftListState;
 use super::staleness::{aircraft_age_secs, staleness_opacity};
 use super::trails::{age_opacity, altitude_color, TrailRenderer};
 use super::{SessionClock, TrailConfig, TrailHistory};
@@ -19,6 +20,7 @@ pub fn draw_trails(
     map_state: Res<MapState>,
     view3d_state: Res<View3DState>,
     trail_query: Query<(&TrailHistory, &Aircraft)>,
+    list_state: Res<AircraftListState>,
 ) {
     if !config.enabled {
         return;
@@ -41,6 +43,7 @@ pub fn draw_trails(
 
     for (trail, aircraft) in trail_query.iter() {
         let stale_opacity = staleness_opacity(aircraft_age_secs(aircraft));
+        let is_selected = list_state.selected_icao.as_ref() == Some(&aircraft.icao);
 
         if trail.points.len() < 2 {
             continue;
@@ -51,11 +54,21 @@ pub fn draw_trails(
         let mut prev_estimated = false;
 
         for point in trail.points.iter() {
-            let opacity = age_opacity(
-                clock.age_secs(point.timestamp),
-                config.solid_duration_seconds,
-                config.fade_duration_seconds,
-            );
+            let age = clock.age_secs(point.timestamp);
+            let max_age = config.max_age_seconds as f64;
+
+            let opacity = if is_selected {
+                // Selected: show full history with minimum opacity for old segments
+                let base = age_opacity(age, config.solid_duration_seconds, config.fade_duration_seconds);
+                base.max(0.3)
+            } else {
+                // Unselected: normal age-based fade, skip points beyond max_age
+                if age > max_age {
+                    prev_pos = None;
+                    continue;
+                }
+                age_opacity(age, config.solid_duration_seconds, config.fade_duration_seconds)
+            };
 
             if opacity <= 0.0 {
                 prev_pos = None;
@@ -120,13 +133,4 @@ fn draw_dashed(from: Vec3, to: Vec3, color: Color, is_3d: bool, gizmos: &mut Giz
     }
 }
 
-/// System to prune old trail points
-pub fn prune_trails(
-    config: Res<TrailConfig>,
-    clock: Res<SessionClock>,
-    mut trail_query: Query<&mut TrailHistory>,
-) {
-    for mut trail in trail_query.iter_mut() {
-        trail.prune(config.max_age_seconds, &clock);
-    }
-}
+

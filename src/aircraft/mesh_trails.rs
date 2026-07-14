@@ -86,6 +86,7 @@ pub fn update_mesh_trails(
     mut meshes: ResMut<Assets<Mesh>>,
     aircraft_query: Query<(&TrailHistory, &Aircraft)>,
     effect_query: Query<&MeshTrailEffect>,
+    list_state: Res<crate::aircraft::list_panel::AircraftListState>,
 ) {
     if !trail_config.enabled {
         return;
@@ -128,6 +129,7 @@ pub fn update_mesh_trails(
         }
 
         let stale_opacity = staleness_opacity(aircraft_age_secs(aircraft));
+        let is_selected = list_state.selected_icao.as_ref() == Some(&aircraft.icao);
 
         let mut positions: Vec<[f32; 3]> = Vec::with_capacity(trail.points.len() * 4);
         let mut colors: Vec<[f32; 4]> = Vec::with_capacity(trail.points.len() * 4);
@@ -138,11 +140,21 @@ pub fn update_mesh_trails(
         let mut prev_estimated = false;
 
         for (i, point) in trail.points.iter().enumerate() {
-            let opacity = age_opacity(
-                clock.age_secs(point.timestamp),
-                trail_config.solid_duration_seconds,
-                trail_config.fade_duration_seconds,
-            );
+            let age = clock.age_secs(point.timestamp);
+            let max_age = trail_config.max_age_seconds as f64;
+
+            let opacity = if is_selected {
+                let base = age_opacity(age, trail_config.solid_duration_seconds, trail_config.fade_duration_seconds);
+                base.max(0.3)
+            } else {
+                if age > max_age {
+                    prev_dir = None;
+                    prev_xy = None;
+                    prev_z = None;
+                    continue;
+                }
+                age_opacity(age, trail_config.solid_duration_seconds, trail_config.fade_duration_seconds)
+            };
 
             if opacity <= 0.0 {
                 prev_dir = None;

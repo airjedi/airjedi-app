@@ -16,7 +16,7 @@ use super::picking::{
     pick_aircraft_3d,
 };
 use super::staleness::dim_stale_aircraft;
-use super::trail_renderer::{draw_trails, prune_trails};
+use super::trail_renderer::draw_trails;
 use super::trails::record_trail_points;
 use super::typeloader::{
     attach_aircraft_type_info, poll_aircraft_type_loading, start_aircraft_type_loading,
@@ -51,7 +51,6 @@ impl Plugin for AircraftPlugin {
                 (
                     record_trail_points,
                     draw_trails.after(crate::ZoomSet::Change),
-                    prune_trails,
                     toggle_aircraft_list,
                     update_aircraft_display_list,
                     highlight_selected_aircraft,

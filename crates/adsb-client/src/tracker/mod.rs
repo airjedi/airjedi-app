@@ -256,7 +256,7 @@ impl Default for TrackerConfig {
             center: None,
             max_distance_miles: 400.0,
             aircraft_timeout_secs: 180,
-            position_history_secs: 300,
+            position_history_secs: i64::MAX,
             event_channel_capacity: 256,
         }
     }
