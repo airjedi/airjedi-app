@@ -99,6 +99,10 @@ pub struct Aircraft {
     pub heading: Option<f64>,
     /// Indicated or true airspeed in knots (from ADS-B velocity subtype 3/4).
     pub airspeed: Option<f64>,
+    /// Roll angle in degrees (from BEAST BDS 5,0). Positive = right wing down.
+    pub roll_angle: Option<f64>,
+    /// Track angle rate in degrees/second (from BEAST BDS 5,0). Positive = turning right.
+    pub track_angle_rate: Option<f64>,
     /// Last received signal level (0.0-1.0, from BEAST protocol).
     pub signal_level: Option<f32>,
     /// Timestamp of last received message.
@@ -130,6 +134,8 @@ impl Aircraft {
             category: None,
             heading: None,
             airspeed: None,
+            roll_angle: None,
+            track_angle_rate: None,
             signal_level: None,
             last_seen: Utc::now(),
             last_position_time: None,
@@ -384,6 +390,8 @@ impl AircraftTracker {
                 is_on_ground,
                 heading,
                 airspeed,
+                roll_angle,
+                track_angle_rate,
             } => {
                 aircraft.velocity = Some(speed);
                 aircraft.track = Some(track);
@@ -396,6 +404,12 @@ impl AircraftTracker {
                 }
                 if let Some(aspd) = airspeed {
                     aircraft.airspeed = Some(aspd);
+                }
+                if let Some(ra) = roll_angle {
+                    aircraft.roll_angle = Some(ra);
+                }
+                if let Some(tar) = track_angle_rate {
+                    aircraft.track_angle_rate = Some(tar);
                 }
             }
             MessagePayload::Altitude {

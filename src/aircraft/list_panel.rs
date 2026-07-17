@@ -107,6 +107,8 @@ pub struct AircraftDisplayData {
     pub velocity: Option<f64>,
     pub heading: Option<f32>,
     pub vertical_rate: Option<i32>,
+    pub roll_angle: Option<f32>,
+    pub track_angle_rate: Option<f32>,
     pub distance: f64,
     pub squawk: Option<String>,
     pub type_code: Option<String>,
@@ -207,6 +209,8 @@ pub fn update_aircraft_display_list(
                 velocity: a.velocity,
                 heading: a.heading,
                 vertical_rate: a.vertical_rate,
+                roll_angle: a.roll_angle,
+                track_angle_rate: a.track_angle_rate,
                 distance,
                 squawk: a.squawk.clone(),
                 type_code: type_info.and_then(|ti| ti.type_code.clone()),
@@ -1284,7 +1288,32 @@ fn render_inline_detail(
                             .fill_width(4.0),
                     );
                 }
+
+                if let Some(roll) = aircraft.roll_angle {
+                    let roll_norm = ((roll + 90.0) / 180.0).clamp(0.0, 1.0);
+                    ui.add(
+                        ArcGauge::themed(roll_norm, &wt)
+                            .size(60.0)
+                            .label("ROLL")
+                            .value_text(&format!("{:.1}\u{00B0}", roll))
+                            .fill_color(egui::Color32::from_rgb(180, 130, 220))
+                            .tick_count(5)
+                            .track_width(4.0)
+                            .fill_width(4.0),
+                    );
+                }
             });
+
+            if let Some(tar) = aircraft.track_angle_rate {
+                ui.horizontal(|ui| {
+                    let dir = if tar > 0.1 { "\u{21BB}" } else if tar < -0.1 { "\u{21BA}" } else { "-" };
+                    ui.label(
+                        egui::RichText::new(format!("Turn: {:.1}\u{00B0}/s {}", tar.abs(), dir))
+                            .color(wt.text_dim)
+                            .size(10.0),
+                    );
+                });
+            }
 
             ui.add_space(2.0);
 

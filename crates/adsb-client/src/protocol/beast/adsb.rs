@@ -276,6 +276,8 @@ fn decode_velocity_ground_speed(me: &[u8], subtype: u8) -> Result<Option<Message
         is_on_ground: Some(false),
         heading: None,
         airspeed: None,
+        roll_angle: None,
+        track_angle_rate: None,
     }))
 }
 
@@ -315,6 +317,8 @@ fn decode_velocity_airspeed(me: &[u8]) -> Result<Option<MessagePayload>, ParseEr
         is_on_ground: Some(false),
         heading: Some(heading),
         airspeed: Some(airspeed),
+        roll_angle: None,
+        track_angle_rate: None,
     }))
 }
 

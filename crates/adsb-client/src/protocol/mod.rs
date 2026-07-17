@@ -119,6 +119,10 @@ pub enum MessagePayload {
         heading: Option<f64>,
         /// Indicated or true airspeed in knots (from BEAST TC19 subtype 3/4). None for SBS-1.
         airspeed: Option<f64>,
+        /// Roll angle in degrees (from BEAST BDS 5,0). Positive = right wing down.
+        roll_angle: Option<f64>,
+        /// Track angle rate in degrees/second (from BEAST BDS 5,0). Positive = turning right.
+        track_angle_rate: Option<f64>,
     },
 
     /// Surveillance update (altitude, squawk, and status flags).

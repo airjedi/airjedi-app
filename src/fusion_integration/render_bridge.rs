@@ -96,6 +96,8 @@ pub fn sync_tracks_to_visuals(
         let alert = raw_ac.and_then(|ac| ac.alert);
         let emergency = raw_ac.and_then(|ac| ac.emergency);
         let spi = raw_ac.and_then(|ac| ac.spi);
+        let roll_angle = raw_ac.and_then(|ac| ac.roll_angle.map(|v| v as f32));
+        let track_angle_rate = raw_ac.and_then(|ac| ac.track_angle_rate.map(|v| v as f32));
 
         let existing_visual = visual_lookup
             .iter()
@@ -123,6 +125,8 @@ pub fn sync_tracks_to_visuals(
                 aircraft.alert = alert;
                 aircraft.emergency = emergency;
                 aircraft.spi = spi;
+                aircraft.roll_angle = roll_angle;
+                aircraft.track_angle_rate = track_angle_rate;
                 aircraft.last_seen = track.last_update;
                 if squawk.is_some() {
                     aircraft.squawk = squawk.clone();
@@ -205,6 +209,8 @@ pub fn sync_tracks_to_visuals(
                     heading: heading.map(|h| h as f32),
                     velocity: Some(speed_kts),
                     vertical_rate: vrate,
+                    roll_angle,
+                    track_angle_rate,
                     squawk,
                     is_on_ground,
                     alert,

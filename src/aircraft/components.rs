@@ -21,6 +21,10 @@ pub struct Aircraft {
     pub velocity: Option<f64>,
     /// Vertical rate in feet per minute
     pub vertical_rate: Option<i32>,
+    /// Roll angle in degrees (from BEAST BDS 5,0). Positive = right wing down.
+    pub roll_angle: Option<f32>,
+    /// Track angle rate in degrees/second (from BEAST BDS 5,0). Positive = turning right.
+    pub track_angle_rate: Option<f32>,
     /// Squawk code (transponder code)
     pub squawk: Option<String>,
     /// Whether the aircraft is on the ground

@@ -377,9 +377,29 @@ fn try_bds_50(mb: &[u8], icao: &str, signal_level: Option<f32>) -> Option<Aircra
         return None;
     }
 
-    let vr = if roll_status != 0 {
-        // Roll angle available but we don't have a field for it
+    // Decode roll angle (status at bit 0, sign at bit 1, 9-bit magnitude at bits 2-10)
+    // Resolution: 45/256 deg (~0.176 deg). Positive = right wing down.
+    let roll_angle_val = if roll_status != 0 {
+        let sign = (mb[0] >> 6) & 1;
+        let magnitude = (u16::from(mb[0] & 0x3F) << 3) | (u16::from(mb[1]) >> 5);
+        let angle = f64::from(magnitude) * 45.0 / 256.0;
+        let angle = if sign != 0 { -angle } else { angle };
+        if angle.abs() > 50.0 { return None; }
+        Some(angle)
+    } else {
         None
+    };
+
+    // Decode track angle rate (status at bit 34, sign at bit 35, 9-bit magnitude at bits 36-44)
+    // Resolution: 8/256 deg/s (~0.03125 deg/s). Positive = turning right.
+    let tar_status = (mb[4] >> 5) & 1;
+    let tar_val = if tar_status != 0 {
+        let sign = (mb[4] >> 4) & 1;
+        let magnitude = (u16::from(mb[4] & 0x0F) << 5) | (u16::from(mb[5]) >> 3);
+        let rate = f64::from(magnitude) * 8.0 / 256.0;
+        let rate = if sign != 0 { -rate } else { rate };
+        if rate.abs() > 16.0 { return None; }
+        Some(rate)
     } else {
         None
     };
@@ -390,10 +410,12 @@ fn try_bds_50(mb: &[u8], icao: &str, signal_level: Option<f32>) -> Option<Aircra
         payload: MessagePayload::Velocity {
             speed,
             track,
-            vertical_rate: vr,
+            vertical_rate: None,
             is_on_ground: None,
             heading: None,
             airspeed: airspeed_val,
+            roll_angle: roll_angle_val,
+            track_angle_rate: tar_val,
         },
     })
 }
@@ -472,6 +494,8 @@ fn try_bds_60(mb: &[u8], icao: &str, signal_level: Option<f32>) -> Option<Aircra
             is_on_ground: None,
             heading: Some(heading),
             airspeed: airspeed_val,
+            roll_angle: None,
+            track_angle_rate: None,
         },
     })
 }

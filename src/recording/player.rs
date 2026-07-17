@@ -210,6 +210,8 @@ pub fn playback_frame(
                     heading: state.heading,
                     velocity: state.velocity,
                     vertical_rate: state.vertical_rate,
+                    roll_angle: None,
+                    track_angle_rate: None,
                     squawk: state.squawk.clone(),
                     is_on_ground: None,
                     alert: None,
