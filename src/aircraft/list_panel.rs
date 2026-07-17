@@ -6,7 +6,7 @@ use super::typeinfo::AircraftTypeInfo;
 use super::{CameraFollowState, DetailPanelState, SessionClock, TrailHistory};
 use crate::geo::{haversine_distance_nm, CoordinateConverter};
 use crate::theme::{to_egui_color32, to_egui_color32_alpha, AppTheme};
-use crate::widgets::{ArcGauge, DataStrip, WidgetTheme};
+use crate::widgets::{ArcGauge, Card, DataStrip, WidgetTheme};
 use crate::MapState;
 
 /// Sort criteria for aircraft list
@@ -293,11 +293,7 @@ pub fn render_aircraft_list_panel(
     // Define colors matching desktop theme
     let panel_bg = to_egui_color32_alpha(theme.bg_secondary(), 230);
     let border_color = to_egui_color32(theme.bg_contrast());
-    let selected_bg = egui::Color32::from_rgba_unmultiplied(100, 140, 180, 26);
     let header_color = egui::Color32::from_rgb(150, 150, 150);
-    let icao_color = egui::Color32::from_rgb(200, 220, 255);
-    let callsign_color = egui::Color32::from_rgb(150, 220, 150);
-    let callsign_selected_color = egui::Color32::from_rgb(255, 50, 50);
     let metrics_color = egui::Color32::from_rgb(170, 170, 170);
     let range_color = egui::Color32::from_rgb(100, 200, 255);
     let status_active = egui::Color32::from_rgb(100, 255, 100);
@@ -489,10 +485,11 @@ pub fn render_aircraft_list_panel(
             ui.add_space(4.0);
 
             // -- Aircraft list --
+            let wt = WidgetTheme::from(&*theme);
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.y = 2.0;
+                    ui.spacing_mut().item_spacing.y = 6.0;
 
                     for aircraft in &display_list.aircraft {
                         let is_selected = list_state.selected_icao.as_ref() == Some(&aircraft.icao);
@@ -502,28 +499,32 @@ pub fn render_aircraft_list_panel(
                         let anim_id = ui.id().with(&aircraft.icao).with("expand");
                         let expand_t = ui.ctx().animate_bool_with_time(anim_id, is_selected, 0.15);
 
-                        // Create card frame with selection highlighting (no outline)
-                        let card_frame = if is_selected {
-                            egui::Frame::NONE
-                                .fill(selected_bg)
-                                .inner_margin(egui::Margin::symmetric(4, 3))
-                        } else {
-                            egui::Frame::NONE.inner_margin(egui::Margin::symmetric(4, 3))
-                        };
+                        let id_label = aircraft
+                            .registration
+                            .as_deref()
+                            .or(aircraft.callsign.as_deref().map(|s| s.trim()))
+                            .unwrap_or(&aircraft.icao);
+                        let has_better_id = aircraft.registration.is_some()
+                            || aircraft.callsign.is_some();
 
-                        let card_response = card_frame.show(ui, |ui| {
+                        let mut card = Card::new(&wt).header(id_label);
+                        if aircraft.altitude.is_some() {
+                            card = card.gradient_header(
+                                egui::Color32::from_rgba_unmultiplied(
+                                    alt_color.r(), alt_color.g(), alt_color.b(), 60,
+                                ),
+                                egui::Color32::TRANSPARENT,
+                            );
+                        }
+                        if is_selected {
+                            card = card.glow(alt_color);
+                        }
+
+                        let card_response = card.show(ui, |ui| {
                             ui.spacing_mut().item_spacing.y = 2.0;
 
-                            // Row 1: Chevron + Status + ICAO + Callsign + Altitude + Follow button
+                            // Row 1: Status + ICAO hex + Altitude + Follow button
                             ui.horizontal(|ui| {
-                                // Collapse/expand chevron
-                                let chevron = if is_selected { "v" } else { ">" };
-                                ui.label(
-                                    egui::RichText::new(chevron)
-                                        .color(egui::Color32::from_rgb(120, 120, 120))
-                                        .size(11.0),
-                                );
-
                                 // Status indicator
                                 ui.label(
                                     egui::RichText::new("\u{25CF}")
@@ -539,21 +540,6 @@ pub fn render_aircraft_list_panel(
                                             .strong(),
                                     );
                                 }
-
-                                let id_label = aircraft
-                                    .registration
-                                    .as_deref()
-                                    .or(aircraft.callsign.as_deref().map(|s| s.trim()))
-                                    .unwrap_or(&aircraft.icao);
-                                let has_better_id = aircraft.registration.is_some()
-                                    || aircraft.callsign.is_some();
-                                ui.label(
-                                    egui::RichText::new(id_label)
-                                        .color(icao_color)
-                                        .size(13.0)
-                                        .monospace()
-                                        .strong(),
-                                );
 
                                 // Show ICAO hex as dim secondary when a better label is primary
                                 if has_better_id {
@@ -614,7 +600,7 @@ pub fn render_aircraft_list_panel(
                                 );
                             });
 
-                            // Row 2: Speed + Heading + Range
+                            // Row 2: Speed + Heading + Squawk + Range
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 8.0;
 
@@ -715,17 +701,6 @@ pub fn render_aircraft_list_panel(
                                 list_state.selected_icao = Some(aircraft.icao.clone());
                             }
                         }
-
-                        // Subtle separator line between items
-                        ui.add_space(2.0);
-                        let separator_color = egui::Color32::from_rgb(50, 55, 65);
-                        let rect = ui.available_rect_before_wrap();
-                        ui.painter().hline(
-                            rect.x_range(),
-                            rect.top(),
-                            egui::Stroke::new(1.0, separator_color),
-                        );
-                        ui.add_space(2.0);
                     }
                 });
         });
@@ -747,13 +722,10 @@ pub fn render_aircraft_list_pane_content(
     aircraft_query: &Query<(&crate::Aircraft, &TrailHistory, Option<&AircraftTypeInfo>)>,
     theme: &AppTheme,
 ) {
-    let selected_bg = egui::Color32::from_rgba_unmultiplied(100, 140, 180, 26);
     let header_color = egui::Color32::from_rgb(150, 150, 150);
-    let icao_color = egui::Color32::from_rgb(200, 220, 255);
-    let callsign_color = egui::Color32::from_rgb(150, 220, 150);
-    let callsign_selected_color = egui::Color32::from_rgb(255, 50, 50);
     let metrics_color = egui::Color32::from_rgb(170, 170, 170);
     let range_color = egui::Color32::from_rgb(100, 200, 255);
+    let status_active = egui::Color32::from_rgb(100, 255, 100);
 
     // Header
     ui.horizontal(|ui| {
@@ -914,10 +886,11 @@ pub fn render_aircraft_list_pane_content(
     ui.add_space(4.0);
 
     // -- Aircraft list --
+    let wt = WidgetTheme::from(theme);
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 2.0;
+            ui.spacing_mut().item_spacing.y = 6.0;
 
             for aircraft in &display_list.aircraft {
                 let is_selected = list_state.selected_icao.as_ref() == Some(&aircraft.icao);
@@ -927,25 +900,37 @@ pub fn render_aircraft_list_pane_content(
                 let anim_id = ui.id().with(&aircraft.icao).with("expand");
                 let expand_t = ui.ctx().animate_bool_with_time(anim_id, is_selected, 0.15);
 
-                let card_frame = if is_selected {
-                    egui::Frame::NONE
-                        .fill(selected_bg)
-                        .inner_margin(egui::Margin::symmetric(4, 3))
-                } else {
-                    egui::Frame::NONE.inner_margin(egui::Margin::symmetric(4, 3))
-                };
+                let id_label = aircraft
+                    .registration
+                    .as_deref()
+                    .or(aircraft.callsign.as_deref().map(|s| s.trim()))
+                    .unwrap_or(&aircraft.icao);
+                let has_better_id = aircraft.registration.is_some()
+                    || aircraft.callsign.is_some();
 
-                let card_response = card_frame.show(ui, |ui| {
+                let mut card = Card::new(&wt).header(id_label);
+                if aircraft.altitude.is_some() {
+                    card = card.gradient_header(
+                        egui::Color32::from_rgba_unmultiplied(
+                            alt_color.r(), alt_color.g(), alt_color.b(), 60,
+                        ),
+                        egui::Color32::TRANSPARENT,
+                    );
+                }
+                if is_selected {
+                    card = card.glow(alt_color);
+                }
+
+                let card_response = card.show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
 
-                    // Row 1: Chevron + Status + ICAO + Callsign + Altitude + Follow button
+                    // Row 1: Status + ICAO hex + Altitude + Follow button
                     ui.horizontal(|ui| {
-                        // Collapse/expand chevron
-                        let chevron = if is_selected { "v" } else { ">" };
+                        // Status indicator
                         ui.label(
-                            egui::RichText::new(chevron)
-                                .color(egui::Color32::from_rgb(120, 120, 120))
-                                .size(11.0),
+                            egui::RichText::new("\u{25CF}")
+                                .color(status_active)
+                                .size(13.0),
                         );
 
                         if aircraft.is_military {
@@ -957,28 +942,17 @@ pub fn render_aircraft_list_pane_content(
                             );
                         }
 
-                        ui.label(
-                            egui::RichText::new(&aircraft.icao)
-                                .color(icao_color)
-                                .size(13.0)
-                                .monospace()
-                                .strong(),
-                        );
-
-                        if let Some(ref callsign) = aircraft.callsign {
-                            let cs_color = if is_selected {
-                                callsign_selected_color
-                            } else {
-                                callsign_color
-                            };
+                        // Show ICAO hex as dim secondary when a better label is primary
+                        if has_better_id {
                             ui.label(
-                                egui::RichText::new(format!("{}", callsign.trim()))
-                                    .color(cs_color)
-                                    .size(13.0)
-                                    .strong(),
+                                egui::RichText::new(&aircraft.icao)
+                                    .color(metrics_color)
+                                    .size(10.0)
+                                    .monospace(),
                             );
                         }
 
+                        // Altitude with indicator
                         if let Some(alt) = aircraft.altitude {
                             let alt_text =
                                 format!("{}", format_altitude_with_indicator(alt, alt_indicator));
@@ -1020,7 +994,7 @@ pub fn render_aircraft_list_pane_content(
                         });
                     });
 
-                    // Row 2: Speed + Heading + Range
+                    // Row 2: Speed + Heading + Squawk + Range
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 8.0;
 
@@ -1115,17 +1089,6 @@ pub fn render_aircraft_list_pane_content(
                         list_state.selected_icao = Some(aircraft.icao.clone());
                     }
                 }
-
-                // Subtle separator line between items
-                ui.add_space(2.0);
-                let separator_color = egui::Color32::from_rgb(50, 55, 65);
-                let rect = ui.available_rect_before_wrap();
-                ui.painter().hline(
-                    rect.x_range(),
-                    rect.top(),
-                    egui::Stroke::new(1.0, separator_color),
-                );
-                ui.add_space(2.0);
             }
         });
 }
