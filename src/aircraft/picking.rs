@@ -236,6 +236,101 @@ pub fn manage_selection_outline(
 }
 
 // =============================================================================
+// 2D Picking (screen-space proximity)
+// =============================================================================
+
+/// Screen-space proximity picking for 2D mode. Projects all aircraft world
+/// positions to screen coordinates via `Camera::world_to_viewport` on the
+/// AircraftCamera, then picks the nearest aircraft within a pixel radius.
+pub fn pick_aircraft_2d(
+    mouse_button: Res<ButtonInput<MouseButton>>,
+    window_query: Query<&Window>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<crate::AircraftCamera>>,
+    aircraft_query: Query<(Entity, &Aircraft, &GlobalTransform)>,
+    mut list_state: ResMut<AircraftListState>,
+    view3d_state: Res<crate::view3d::View3DState>,
+    drag_state: Res<crate::input::DragState>,
+    mut commands: Commands,
+    hover_query: Query<Entity, With<HoverOutline>>,
+    mut egui_ctx: Query<&mut bevy_egui::EguiContext>,
+) {
+    if view3d_state.is_3d_active() || view3d_state.is_transitioning() {
+        return;
+    }
+
+    if let Ok(mut ctx) = egui_ctx.single_mut() {
+        if ctx.get_mut().wants_pointer_input() {
+            return;
+        }
+    }
+
+    let Ok(window) = window_query.single() else {
+        return;
+    };
+    let Some(cursor_pos) = window.cursor_position() else {
+        // Cursor left the window - clear hover
+        for entity in hover_query.iter() {
+            if let Ok(mut ec) = commands.get_entity(entity) {
+                ec.try_remove::<HoverOutline>();
+            }
+        }
+        return;
+    };
+    let Ok((camera, cam_gtf)) = camera_query.single() else {
+        return;
+    };
+
+    const PICK_RADIUS_PX: f32 = 30.0;
+
+    let mut best: Option<(Entity, &Aircraft, f32)> = None;
+    for (entity, aircraft, global_tf) in &aircraft_query {
+        let Ok(screen_pos) = camera.world_to_viewport(cam_gtf, global_tf.translation()) else {
+            continue;
+        };
+        let dist = cursor_pos.distance(screen_pos);
+        if dist < PICK_RADIUS_PX {
+            if best.map_or(true, |(_, _, d)| dist < d) {
+                best = Some((entity, aircraft, dist));
+            }
+        }
+    }
+
+    // Hover
+    if let Some((ac_entity, _, _)) = best {
+        if hover_query.get(ac_entity).is_err() {
+            for entity in hover_query.iter() {
+                if let Ok(mut ec) = commands.get_entity(entity) {
+                    ec.try_remove::<HoverOutline>();
+                }
+            }
+            if let Ok(mut ec) = commands.get_entity(ac_entity) {
+                ec.try_insert(HoverOutline);
+            }
+        }
+    } else {
+        for entity in hover_query.iter() {
+            if let Ok(mut ec) = commands.get_entity(entity) {
+                ec.try_remove::<HoverOutline>();
+            }
+        }
+    }
+
+    // Click
+    if !mouse_button.just_pressed(MouseButton::Left) {
+        return;
+    }
+    if drag_state.is_dragging {
+        return;
+    }
+
+    if let Some((_, aircraft, _)) = best {
+        list_state.selected_icao = Some(aircraft.icao.clone());
+    } else if list_state.selected_icao.is_some() {
+        list_state.selected_icao = None;
+    }
+}
+
+// =============================================================================
 // Manual 3D Picking (bypasses broken mesh picking backend)
 // =============================================================================
 

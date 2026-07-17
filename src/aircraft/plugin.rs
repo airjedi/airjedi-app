@@ -1,8 +1,6 @@
 use bevy::prelude::*;
 
-use super::detail_panel::{
-    detect_aircraft_click, open_detail_on_selection, render_detail_panel, toggle_detail_panel,
-};
+use super::detail_panel::{open_detail_on_selection, render_detail_panel, toggle_detail_panel};
 use super::emergency::{
     detect_emergencies, draw_emergency_rings, update_emergency_banner, update_emergency_banner_text,
 };
@@ -13,7 +11,7 @@ use super::list_panel::{
 use super::mesh_trails::{cleanup_mesh_trails, spawn_mesh_trails, update_mesh_trails};
 use super::picking::{
     clear_stale_selection, deselect_on_escape, follow_aircraft_3d, manage_selection_outline,
-    pick_aircraft_3d,
+    pick_aircraft_2d, pick_aircraft_3d,
 };
 use super::staleness::dim_stale_aircraft;
 use super::trail_renderer::draw_trails;
@@ -56,7 +54,6 @@ impl Plugin for AircraftPlugin {
                     highlight_selected_aircraft,
                     toggle_detail_panel,
                     open_detail_on_selection,
-                    detect_aircraft_click,
                     detect_emergencies,
                     draw_emergency_rings.after(crate::ZoomSet::Change),
                     update_emergency_banner,
@@ -80,6 +77,7 @@ impl Plugin for AircraftPlugin {
                     deselect_on_escape,
                     clear_stale_selection,
                     follow_aircraft_3d,
+                    pick_aircraft_2d,
                     pick_aircraft_3d,
                 ),
             );

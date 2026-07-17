@@ -2,7 +2,6 @@ use bevy::prelude::*;
 use std::time::Instant;
 
 use super::AircraftListState;
-use crate::ZoomState;
 
 /// State for the aircraft detail panel
 #[derive(Resource, Default)]
@@ -92,65 +91,3 @@ pub fn open_detail_on_selection(
     }
 }
 
-/// System to detect clicks on aircraft sprites (2D mode only).
-/// In 3D mode, picking is handled by Bevy's picking system via observers.
-pub fn detect_aircraft_click(
-    mouse_button: Res<ButtonInput<MouseButton>>,
-    window_query: Query<&Window>,
-    camera_query: Query<(&Camera, &GlobalTransform), With<crate::MapCamera>>,
-    aircraft_query: Query<(&crate::Aircraft, &Transform)>,
-    mut list_state: ResMut<AircraftListState>,
-    zoom_state: Res<ZoomState>,
-    view3d_state: Res<crate::view3d::View3DState>,
-) {
-    // Skip in 3D mode — picking observers handle selection there
-    if view3d_state.is_3d_active() || view3d_state.is_transitioning() {
-        return;
-    }
-
-    if !mouse_button.just_pressed(MouseButton::Left) {
-        return;
-    }
-
-    let Ok(window) = window_query.single() else {
-        return;
-    };
-
-    let Some(cursor_pos) = window.cursor_position() else {
-        return;
-    };
-
-    let Ok((camera, camera_transform)) = camera_query.single() else {
-        return;
-    };
-
-    // Convert cursor position to world coordinates
-    let Ok(world_pos) = camera.viewport_to_world_2d(camera_transform, cursor_pos) else {
-        return;
-    };
-
-    // Check each aircraft for click hit
-    // Use a radius that accounts for the aircraft marker size and zoom
-    let click_radius = 20.0 / zoom_state.camera_zoom;
-
-    let mut closest_aircraft: Option<(String, f32)> = None;
-
-    for (aircraft, transform) in aircraft_query.iter() {
-        let aircraft_pos = Vec2::new(transform.translation.x, transform.translation.y);
-        let distance = world_pos.distance(aircraft_pos);
-
-        if distance < click_radius {
-            if let Some((_, closest_dist)) = &closest_aircraft {
-                if distance < *closest_dist {
-                    closest_aircraft = Some((aircraft.icao.clone(), distance));
-                }
-            } else {
-                closest_aircraft = Some((aircraft.icao.clone(), distance));
-            }
-        }
-    }
-
-    if let Some((icao, _)) = closest_aircraft {
-        list_state.selected_icao = Some(icao);
-    }
-}
