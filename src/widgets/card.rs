@@ -1,6 +1,6 @@
 use bevy_egui::egui;
 
-use super::effects::{paint_gradient_rect, GradientDirection};
+use super::effects::paint_horizontal_gradient_rounded_top;
 use super::shadow_frame::{ShadowFrame, ShadowPreset};
 use super::WidgetTheme;
 
@@ -74,26 +74,37 @@ impl<'a> Card<'a> {
         }
 
         if let Some(glow_color) = self.glow_color {
-            frame = frame.glow(glow_color, 16);
+            frame = frame.glow(glow_color, 10);
         }
 
+        let cr = self.corner_radius;
+        let stroke_w = 1.0_f32;
         frame.show(ui, |ui| {
             // Header
             if let Some(ref header_text) = self.header_text {
                 let header_rect = ui.allocate_space(egui::vec2(ui.available_width(), 28.0)).1;
+                // Expand the fill rect so it tucks under the frame border
+                let fill_rect = header_rect.expand2(egui::vec2(stroke_w, 0.0))
+                    .with_min_y(header_rect.top() - stroke_w);
+                let top_radius = egui::CornerRadius {
+                    nw: cr,
+                    ne: cr,
+                    sw: 0,
+                    se: 0,
+                };
 
                 if let Some((left, right)) = self.header_gradient {
-                    paint_gradient_rect(
+                    paint_horizontal_gradient_rounded_top(
                         ui.painter(),
-                        header_rect,
+                        fill_rect,
                         left,
                         right,
-                        GradientDirection::Horizontal,
+                        cr as f32,
                     );
                 } else {
                     ui.painter().rect_filled(
-                        header_rect,
-                        egui::CornerRadius::ZERO,
+                        fill_rect,
+                        top_radius,
                         self.theme.bg_secondary,
                     );
                 }

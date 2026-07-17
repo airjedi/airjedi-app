@@ -179,8 +179,9 @@ pub fn update_aircraft_label_text(
                 .map(|a| format!("{} ft", a))
                 .unwrap_or_default();
 
-            let prefix = if is_military { "MIL " } else { "" };
-            **text = format!("{}{}\n{}", prefix, display_name, alt_display);
+            let mil = if is_military { "MIL " } else { "" };
+            let gnd = if aircraft.is_on_ground == Some(true) { "GND " } else { "" };
+            **text = format!("{}{}{}\n{}", gnd, mil, display_name, alt_display);
         }
     }
 }

@@ -113,6 +113,7 @@ pub struct AircraftDisplayData {
     pub manufacturer_model: Option<String>,
     pub registration: Option<String>,
     pub is_military: bool,
+    pub is_on_ground: bool,
 }
 
 /// Resource holding sorted/filtered aircraft for display
@@ -212,6 +213,7 @@ pub fn update_aircraft_display_list(
                 manufacturer_model: type_info.and_then(|ti| ti.manufacturer_model.clone()),
                 registration: type_info.and_then(|ti| ti.registration.clone()),
                 is_military: type_info.map(|ti| ti.is_military).unwrap_or(false),
+                is_on_ground: a.is_on_ground.unwrap_or(false),
             })
         })
         .collect();
@@ -511,7 +513,7 @@ pub fn render_aircraft_list_panel(
                         if aircraft.altitude.is_some() {
                             card = card.gradient_header(
                                 egui::Color32::from_rgba_unmultiplied(
-                                    alt_color.r(), alt_color.g(), alt_color.b(), 60,
+                                    alt_color.r(), alt_color.g(), alt_color.b(), 140,
                                 ),
                                 egui::Color32::TRANSPARENT,
                             );
@@ -536,6 +538,15 @@ pub fn render_aircraft_list_panel(
                                     ui.label(
                                         egui::RichText::new("MIL")
                                             .color(egui::Color32::from_rgb(220, 180, 60))
+                                            .size(10.0)
+                                            .strong(),
+                                    );
+                                }
+
+                                if aircraft.is_on_ground {
+                                    ui.label(
+                                        egui::RichText::new("GND")
+                                            .color(egui::Color32::from_rgb(180, 140, 80))
                                             .size(10.0)
                                             .strong(),
                                     );
@@ -912,7 +923,7 @@ pub fn render_aircraft_list_pane_content(
                 if aircraft.altitude.is_some() {
                     card = card.gradient_header(
                         egui::Color32::from_rgba_unmultiplied(
-                            alt_color.r(), alt_color.g(), alt_color.b(), 60,
+                            alt_color.r(), alt_color.g(), alt_color.b(), 140,
                         ),
                         egui::Color32::TRANSPARENT,
                     );
@@ -937,6 +948,15 @@ pub fn render_aircraft_list_pane_content(
                             ui.label(
                                 egui::RichText::new("MIL")
                                     .color(egui::Color32::from_rgb(220, 180, 60))
+                                    .size(10.0)
+                                    .strong(),
+                            );
+                        }
+
+                        if aircraft.is_on_ground {
+                            ui.label(
+                                egui::RichText::new("GND")
+                                    .color(egui::Color32::from_rgb(180, 140, 80))
                                     .size(10.0)
                                     .strong(),
                             );
