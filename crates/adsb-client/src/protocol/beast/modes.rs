@@ -325,24 +325,26 @@ fn try_bds_20(mb: &[u8], icao: &str, signal_level: Option<f32>) -> Option<Aircra
 
 /// Try to decode BDS 5,0 (Track and turn report).
 fn try_bds_50(mb: &[u8], icao: &str, signal_level: Option<f32>) -> Option<AircraftMessage> {
-    // Status bits for BDS 5,0:
-    // bit 0 of byte 0: roll angle status
-    // bit 4 of byte 1: true track status
-    // bit 0 of byte 3: ground speed status
-    // bit 4 of byte 4: TAS status
+    // Status bits for BDS 5,0 (0-indexed from MSB, per pyModeS/ICAO Doc 9871):
+    // bit 0:  roll angle status
+    // bit 11: true track status
+    // bit 23: ground speed status
+    // bit 34: track angle rate status
+    // bit 45: TAS status
     let roll_status = (mb[0] >> 7) & 1;
-    let track_status = (mb[1] >> 3) & 1;
-    let gs_status = (mb[3] >> 7) & 1;
-    let tas_status = (mb[4] >> 3) & 1;
+    let track_status = (mb[1] >> 4) & 1;
+    let gs_status = (mb[2]) & 1;
+    let tas_status = (mb[5] >> 2) & 1;
 
     // Need at least track and one speed to be useful
     if track_status == 0 {
         return None;
     }
 
-    // Decode true track angle (11 bits, 180/1024 deg resolution)
-    let track_bits = (u16::from(mb[1] & 0x07) << 8) | u16::from(mb[2]);
-    let track_sign = (mb[1] >> 2) & 1;
+    // Decode true track angle: sign at bit 12, 10-bit magnitude at bits 13-22
+    // Resolution: 90/512 deg. Signed by bit 12, normalized to [0, 360).
+    let track_sign = (mb[1] >> 3) & 1;
+    let track_bits = (u16::from(mb[1] & 0x07) << 7) | (u16::from(mb[2]) >> 1);
     let track_val = f64::from(track_bits) * 90.0 / 512.0;
     let track = if track_sign != 0 { track_val + 180.0 } else { track_val };
 
@@ -353,17 +355,18 @@ fn try_bds_50(mb: &[u8], icao: &str, signal_level: Option<f32>) -> Option<Aircra
     let mut speed = 0.0;
     let mut has_speed = false;
 
-    // Decode ground speed (10 bits, 2 kt resolution) if available
+    // Decode ground speed: 10-bit unsigned at bits 24-33, resolution 2 kt
     if gs_status != 0 {
-        let gs_bits = (u16::from(mb[3] & 0x7F) << 3) | (u16::from(mb[4]) >> 5);
+        let gs_bits = (u16::from(mb[3]) << 2) | (u16::from(mb[4]) >> 6);
         speed = f64::from(gs_bits) * 2.0;
         has_speed = true;
         if speed > 600.0 { return None; }
     }
 
+    // Decode TAS: 10-bit unsigned at bits 46-55, resolution 2 kt
     let mut airspeed_val = None;
     if tas_status != 0 {
-        let tas_bits = (u16::from(mb[4] & 0x07) << 7) | (u16::from(mb[5]) >> 1);
+        let tas_bits = (u16::from(mb[5] & 0x03) << 8) | u16::from(mb[6]);
         let tas = f64::from(tas_bits) * 2.0;
         if tas > 600.0 { return None; }
         airspeed_val = Some(tas);
