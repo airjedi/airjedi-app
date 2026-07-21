@@ -23,10 +23,10 @@
 //! - BDS (Binary Data Store) heuristic decoding from Comm-B replies
 //! - Signal level and MLAT timestamp extraction
 
-mod adsb;
-mod cpr;
+pub(crate) mod adsb;
+pub(crate) mod cpr;
 mod frame;
-mod modes;
+pub(crate) mod modes;
 
 use std::collections::{HashMap, HashSet};
 

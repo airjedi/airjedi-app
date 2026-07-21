@@ -1,5 +1,9 @@
+mod native;
+
 use crate::framing::Frame;
 use crate::protocol::AircraftMessage;
+
+pub use native::NativeDecoder;
 
 /// Decodes protocol frames into aircraft messages.
 ///

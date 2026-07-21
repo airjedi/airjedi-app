@@ -90,7 +90,7 @@ use std::time::Duration;
 use log::warn;
 use tokio::sync::broadcast;
 
-pub use decoder::Decoder;
+pub use decoder::{Decoder, NativeDecoder};
 pub use framing::{BeastFramer, Frame, FrameType, Framer, LineFramer};
 pub use protocol::{AircraftMessage, BaseStationParser, BeastParser, Icao, MessagePayload, ParseError, Protocol};
 pub use tcp::{Connection, ConnectionConfig, ConnectionEvent, ConnectionState, FrameMode};
