@@ -23,7 +23,41 @@ pub mod beast;
 pub use basestation::BaseStationParser;
 pub use beast::BeastParser;
 
+use std::fmt;
 use thiserror::Error;
+
+/// ICAO 24-bit aircraft address.
+///
+/// Stored as a `u32` (only lower 24 bits used) to avoid heap allocation.
+/// Format as hex with `Display`: `format!("{icao}")` produces "A1B2C3".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Icao(pub u32);
+
+impl Icao {
+    /// Extract ICAO from bytes 1-3 of a Mode-S message (after the DF byte).
+    #[must_use]
+    pub fn from_message(data: &[u8]) -> Self {
+        Self(u32::from(data[1]) << 16 | u32::from(data[2]) << 8 | u32::from(data[3]))
+    }
+
+    /// Extract ICAO from the CRC-24 parity remainder.
+    #[must_use]
+    pub fn from_parity(crc: u32) -> Self {
+        Self(crc & 0x00FF_FFFF)
+    }
+
+    /// Parse a hex string (e.g., "A1B2C3") into an ICAO address.
+    #[must_use]
+    pub fn from_hex(s: &str) -> Option<Self> {
+        u32::from_str_radix(s, 16).ok().map(Self)
+    }
+}
+
+impl fmt::Display for Icao {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:06X}", self.0)
+    }
+}
 
 /// Errors that can occur during message parsing.
 #[derive(Debug, Error)]
