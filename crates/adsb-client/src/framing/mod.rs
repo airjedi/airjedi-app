@@ -1,4 +1,11 @@
+mod beast;
+pub(crate) mod beast_frame;
+mod line;
+
 use bytes::Bytes;
+
+pub use beast::BeastFramer;
+pub use line::LineFramer;
 
 /// The type of a protocol frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

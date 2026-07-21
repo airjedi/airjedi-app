@@ -91,7 +91,7 @@ use log::warn;
 use tokio::sync::broadcast;
 
 pub use decoder::Decoder;
-pub use framing::{Frame, FrameType, Framer};
+pub use framing::{BeastFramer, Frame, FrameType, Framer, LineFramer};
 pub use protocol::{AircraftMessage, BaseStationParser, BeastParser, Icao, MessagePayload, ParseError, Protocol};
 pub use tcp::{Connection, ConnectionConfig, ConnectionEvent, ConnectionState, FrameMode};
 pub use tracker::{Aircraft, AircraftTracker, PositionPoint, TrackerConfig, TrackerEvent};
