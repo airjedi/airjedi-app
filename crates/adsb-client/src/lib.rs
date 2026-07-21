@@ -76,9 +76,12 @@
 //! # }
 //! ```
 
+pub mod decoder;
+pub mod framing;
 pub mod protocol;
 pub mod tcp;
 pub mod tracker;
+pub mod transport;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
@@ -87,9 +90,12 @@ use std::time::Duration;
 use log::warn;
 use tokio::sync::broadcast;
 
+pub use decoder::Decoder;
+pub use framing::{Frame, FrameType, Framer};
 pub use protocol::{AircraftMessage, BaseStationParser, BeastParser, Icao, MessagePayload, ParseError, Protocol};
 pub use tcp::{Connection, ConnectionConfig, ConnectionEvent, ConnectionState, FrameMode};
 pub use tracker::{Aircraft, AircraftTracker, PositionPoint, TrackerConfig, TrackerEvent};
+pub use transport::{Transport, TransportEvent};
 
 /// Protocol type for the client.
 #[derive(Debug, Clone, Copy, Default)]
@@ -299,7 +305,7 @@ impl Client {
 
     /// Get a specific aircraft by ICAO address.
     #[must_use]
-    pub fn get_by_icao(&self, icao: &str) -> Option<Aircraft> {
+    pub fn get_by_icao(&self, icao: Icao) -> Option<Aircraft> {
         self.tracker
             .read()
             .ok()
