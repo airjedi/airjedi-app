@@ -65,7 +65,7 @@ pub fn sync_tracks_to_visuals(
             .cooperative_ids
             .iter()
             .find(|id| id.id_type == IdentifierType::Icao)
-            .map(|id| id.id.as_str());
+            .and_then(|id| adsb_client::Icao::from_hex(&id.id));
         let raw_ac = track_icao.and_then(|icao| {
             raw_aircraft
                 .as_ref()
@@ -337,7 +337,7 @@ pub fn refresh_aircraft_last_seen(
 
         for raw_ac in aircraft_list.iter() {
             for mut visual in visuals.iter_mut() {
-                if visual.icao == raw_ac.icao && raw_ac.last_seen > visual.last_seen {
+                if visual.icao == raw_ac.icao.to_string() && raw_ac.last_seen > visual.last_seen {
                     visual.last_seen = raw_ac.last_seen;
                 }
             }

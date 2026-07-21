@@ -22,7 +22,7 @@
 //! MSG,<type>,<session>,<aircraft>,<icao>,<flight>,<date>,<time>,<date>,<time>,<fields...>
 //! ```
 
-use super::{AircraftMessage, MessagePayload, ParseError, Protocol};
+use super::{AircraftMessage, Icao, MessagePayload, ParseError, Protocol};
 
 /// Parser for BaseStation/SBS-1 protocol messages.
 #[derive(Debug, Default)]
@@ -57,9 +57,9 @@ fn parse_bool_flag(field: &str) -> Option<bool> {
     }
 }
 
-fn msg(icao: &str, payload: MessagePayload) -> AircraftMessage {
+fn msg(icao: Icao, payload: MessagePayload) -> AircraftMessage {
     AircraftMessage {
-        icao: icao.to_string(),
+        icao,
         signal_level: None,
         payload,
     }
@@ -85,10 +85,13 @@ fn parse_basestation_line(line: &str) -> Result<Option<AircraftMessage>, ParseEr
         return Ok(None);
     }
 
-    let icao = parts[4].trim();
-    if icao.is_empty() {
+    let icao_str = parts[4].trim();
+    if icao_str.is_empty() {
         return Ok(None);
     }
+    let Some(icao) = Icao::from_hex(icao_str) else {
+        return Ok(None);
+    };
 
     // Need at least 11 fields to determine transmission type
     if parts.len() < 11 {
@@ -310,7 +313,7 @@ mod tests {
         let mut parser = BaseStationParser::new();
         let line = b"MSG,1,1,1,A1B2C3,1,2024/01/01,12:00:00.000,2024/01/01,12:00:00.000,UAL123";
         let result = parser.parse(line).unwrap().unwrap();
-        assert_eq!(result.icao, "A1B2C3");
+        assert_eq!(result.icao, Icao(0xA1B2C3));
         assert!(result.signal_level.is_none());
         assert!(matches!(
             result.payload,
@@ -324,7 +327,7 @@ mod tests {
         let mut parser = BaseStationParser::new();
         let line = b"MSG,3,1,1,A1B2C3,1,2024/01/01,12:00:00.000,2024/01/01,12:00:00.000,,35000,,,33.9425,-118.4081,";
         let result = parser.parse(line).unwrap().unwrap();
-        assert_eq!(result.icao, "A1B2C3");
+        assert_eq!(result.icao, Icao(0xA1B2C3));
         assert!(matches!(
             result.payload,
             MessagePayload::Position { latitude, longitude, altitude, altitude_gnss, .. }
@@ -340,7 +343,7 @@ mod tests {
         let mut parser = BaseStationParser::new();
         let line = b"MSG,4,1,1,A1B2C3,1,2024/01/01,12:00:00.000,2024/01/01,12:00:00.000,,,450,270,,,1500";
         let result = parser.parse(line).unwrap().unwrap();
-        assert_eq!(result.icao, "A1B2C3");
+        assert_eq!(result.icao, Icao(0xA1B2C3));
         assert!(matches!(
             result.payload,
             MessagePayload::Velocity { speed, track, vertical_rate, heading, airspeed, .. }
@@ -357,7 +360,7 @@ mod tests {
         let mut parser = BaseStationParser::new();
         let line = b"MSG,5,1,1,A1B2C3,1,2024/01/01,12:00:00.000,2024/01/01,12:00:00.000,,30000";
         let result = parser.parse(line).unwrap().unwrap();
-        assert_eq!(result.icao, "A1B2C3");
+        assert_eq!(result.icao, Icao(0xA1B2C3));
         assert!(matches!(
             result.payload,
             MessagePayload::Altitude { altitude, .. }
@@ -370,7 +373,7 @@ mod tests {
         let mut parser = BaseStationParser::new();
         let line = b"MSG,2,1,1,A1B2C3,1,2024/01/01,12:00:00.000,2024/01/01,12:00:00.000,,0,25,180,33.9425,-118.4081,,,,,,-1";
         let result = parser.parse(line).unwrap().unwrap();
-        assert_eq!(result.icao, "A1B2C3");
+        assert_eq!(result.icao, Icao(0xA1B2C3));
         assert!(matches!(
             result.payload,
             MessagePayload::Position { latitude, longitude, altitude, ground_speed, track, is_on_ground, .. }
@@ -400,7 +403,7 @@ mod tests {
         let mut parser = BaseStationParser::new();
         let line = b"MSG,5,1,1,A1B2C3,1,2024/01/01,12:00:00.000,2024/01/01,12:00:00.000,,30000,,,,,,1200,0,0,0,0";
         let result = parser.parse(line).unwrap().unwrap();
-        assert_eq!(result.icao, "A1B2C3");
+        assert_eq!(result.icao, Icao(0xA1B2C3));
         assert!(matches!(
             result.payload,
             MessagePayload::Altitude { altitude, ref squawk, alert, emergency, spi, is_on_ground }

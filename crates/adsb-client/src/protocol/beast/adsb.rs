@@ -26,7 +26,7 @@
 
 use std::collections::HashMap;
 
-use crate::protocol::{MessagePayload, ParseError};
+use crate::protocol::{Icao, MessagePayload, ParseError};
 use super::cpr::CprState;
 use super::modes;
 
@@ -34,8 +34,8 @@ use super::modes;
 pub fn decode_adsb(
     tc: u8,
     me: &[u8],
-    icao: &str,
-    cpr_state: &mut HashMap<String, CprState>,
+    icao: Icao,
+    cpr_state: &mut HashMap<Icao, CprState>,
     reference: Option<(f64, f64)>,
 ) -> Result<Option<MessagePayload>, ParseError> {
     match tc {
@@ -95,8 +95,8 @@ fn decode_identification(tc: u8, me: &[u8]) -> Result<Option<MessagePayload>, Pa
 /// TC 5-8: Surface Position.
 fn decode_surface_position(
     me: &[u8],
-    icao: &str,
-    cpr_state: &mut HashMap<String, CprState>,
+    icao: Icao,
+    cpr_state: &mut HashMap<Icao, CprState>,
     reference: Option<(f64, f64)>,
 ) -> Result<Option<MessagePayload>, ParseError> {
     if me.len() < 7 {
@@ -127,7 +127,7 @@ fn decode_surface_position(
     let lat_cpr = (u32::from(me[2] & 0x03) << 15) | (u32::from(me[3]) << 7) | (u32::from(me[4]) >> 1);
     let lon_cpr = (u32::from(me[4] & 0x01) << 16) | (u32::from(me[5]) << 8) | u32::from(me[6]);
 
-    let state = cpr_state.entry(icao.to_string()).or_insert_with(CprState::new);
+    let state = cpr_state.entry(icao).or_insert_with(CprState::new);
     let position = state.update(lat_cpr, lon_cpr, odd, true, reference);
 
     match position {
@@ -161,8 +161,8 @@ fn decode_surface_speed(encoded: u16) -> f64 {
 /// TC 9-18, 20-22: Airborne Position.
 fn decode_airborne_position(
     me: &[u8],
-    icao: &str,
-    cpr_state: &mut HashMap<String, CprState>,
+    icao: Icao,
+    cpr_state: &mut HashMap<Icao, CprState>,
     reference: Option<(f64, f64)>,
     is_gnss: bool,
 ) -> Result<Option<MessagePayload>, ParseError> {
@@ -183,7 +183,7 @@ fn decode_airborne_position(
     let lat_cpr = (u32::from(me[2] & 0x03) << 15) | (u32::from(me[3]) << 7) | (u32::from(me[4]) >> 1);
     let lon_cpr = (u32::from(me[4] & 0x01) << 16) | (u32::from(me[5]) << 8) | u32::from(me[6]);
 
-    let state = cpr_state.entry(icao.to_string()).or_insert_with(CprState::new);
+    let state = cpr_state.entry(icao).or_insert_with(CprState::new);
     let position = state.update(lat_cpr, lon_cpr, odd, false, reference);
 
     match position {

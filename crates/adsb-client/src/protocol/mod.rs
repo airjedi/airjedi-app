@@ -88,8 +88,8 @@ pub enum ParseError {
 /// is populated by protocols that provide RSSI (e.g., BEAST).
 #[derive(Debug, Clone, PartialEq)]
 pub struct AircraftMessage {
-    /// ICAO 24-bit address (hex string, e.g., "A1B2C3").
-    pub icao: String,
+    /// ICAO 24-bit aircraft address.
+    pub icao: Icao,
     /// Signal level / RSSI (0.0 - 1.0), if provided by the protocol.
     pub signal_level: Option<f32>,
     /// The message payload.
@@ -99,8 +99,8 @@ pub struct AircraftMessage {
 impl AircraftMessage {
     /// Get the ICAO address.
     #[must_use]
-    pub fn icao(&self) -> &str {
-        &self.icao
+    pub fn icao(&self) -> Icao {
+        self.icao
     }
 
     /// Get the signal level, if available.
