@@ -120,7 +120,13 @@ pub fn update_spatial_index(
     tracks: Query<(&Track, &TrackerState), Changed<TrackerState>>,
 ) {
     for (track, tracker) in &tracks {
+        if tracker.last_update.is_none() {
+            continue;
+        }
         let (lat, lon, _) = tracker.position_geodetic();
+        if lat.abs() < 0.001 && lon.abs() < 0.001 {
+            continue;
+        }
         spatial_index.update_track(&track.id, lat, lon);
     }
 }

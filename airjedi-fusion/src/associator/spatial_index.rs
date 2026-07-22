@@ -1,11 +1,13 @@
 use crate::prelude_imports::*;
 use crate::types::TrackId;
-use kiddo::KdTree;
+use kiddo::float::kdtree::KdTree;
 use std::collections::HashMap;
+
+type Tree = KdTree<f64, u64, 3, 1024, u32>;
 
 #[derive(Debug, Resource)]
 pub struct SpatialIndex {
-    tree: KdTree<f64, 3>,
+    tree: Tree,
     track_to_item: HashMap<TrackId, u64>,
     item_to_track: HashMap<u64, TrackId>,
     positions: HashMap<u64, [f64; 3]>,
@@ -17,7 +19,7 @@ impl SpatialIndex {
     #[must_use]
     pub fn new(search_radius_deg: f64) -> Self {
         Self {
-            tree: KdTree::new(),
+            tree: Tree::new(),
             track_to_item: HashMap::new(),
             item_to_track: HashMap::new(),
             positions: HashMap::new(),
@@ -75,7 +77,7 @@ impl SpatialIndex {
     }
 
     pub fn rebuild(&mut self) {
-        let mut new_tree = KdTree::new();
+        let mut new_tree = Tree::new();
         let mut new_item_to_track = HashMap::new();
         let mut new_track_to_item = HashMap::new();
         let mut new_positions = HashMap::new();
