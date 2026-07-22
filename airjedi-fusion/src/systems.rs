@@ -7,9 +7,13 @@ use crate::filter::{FilterResult, TrackerState};
 use crate::prelude_imports::*;
 use crate::sensor::SensorObservation;
 use crate::store::TimelineStore;
+use crate::track::initiation::MofNInitiator;
 use crate::track::{LifecycleProfiles, Track, TrackQuality, TrackStatus};
 use crate::types::TrackId;
 use chrono::Utc;
+
+#[derive(Resource)]
+pub struct TrackInitiator(pub MofNInitiator);
 
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FusionSet {
@@ -116,8 +120,17 @@ pub fn update_spatial_index(
     tracks: Query<(&Track, &TrackerState), Changed<TrackerState>>,
 ) {
     for (track, tracker) in &tracks {
+        if tracker.last_update.is_none() {
+            continue;
+        }
         let (lat, lon, _) = tracker.position_geodetic();
+        if lat.abs() < 0.001 && lon.abs() < 0.001 {
+            continue;
+        }
         spatial_index.update_track(&track.id, lat, lon);
+    }
+    if spatial_index.needs_compaction() {
+        spatial_index.rebuild();
     }
 }
 
@@ -138,6 +151,7 @@ pub fn track_initiation_system(
     store: Res<TimelineStore>,
     existing_tracks: Query<&Track>,
     fusion_config: Res<FusionConfig>,
+    mut initiator: ResMut<TrackInitiator>,
 ) {
     use std::collections::HashSet;
 
@@ -145,13 +159,13 @@ pub fn track_initiation_system(
         return;
     }
 
-    // Collect cooperative IDs from existing tracks to avoid duplicates
+    let now = Utc::now();
+
     let existing_ids: HashSet<String> = existing_tracks
         .iter()
         .flat_map(|t| t.cooperative_ids.iter().map(|cid| cid.id.clone()))
         .collect();
 
-    // Track which cooperative IDs we initiate this frame
     let mut initiated_ids: HashSet<String> = HashSet::new();
 
     for obs in store.unassociated() {
@@ -162,34 +176,49 @@ pub fn track_initiation_system(
             if initiated_ids.contains(&target_id.id) {
                 continue;
             }
+        }
+
+        let decision = initiator.0.process_observation(&obs.observation, now);
+
+        let promote_obs = match decision {
+            crate::track::initiation::InitiationDecision::Promote(promoted) => promoted,
+            crate::track::initiation::InitiationDecision::SinglePoint => {
+                obs.observation.clone()
+            }
+            crate::track::initiation::InitiationDecision::Pending => continue,
+        };
+
+        if let Some(ref target_id) = promote_obs.target_id {
+            if initiated_ids.contains(&target_id.id) {
+                continue;
+            }
             initiated_ids.insert(target_id.id.clone());
         }
 
-        let mut tracker = TrackerState::new_6dof(fusion_config.filter_defaults.clone());
-        tracker.variant.initialize(&obs.observation);
-        tracker.last_update = Some(Utc::now());
+        let category = promote_obs
+            .classification_hint
+            .unwrap_or(crate::types::TargetCategory::Unknown);
 
-        let track_id = TrackId::new();
+        let mut tracker = fusion_config.create_tracker(&category);
+        tracker.variant.initialize(&promote_obs);
+        tracker.last_update = Some(now);
 
         let mut cooperative_ids = Vec::new();
-        if let Some(ref target_id) = obs.observation.target_id {
+        if let Some(ref target_id) = promote_obs.target_id {
             cooperative_ids.push(target_id.clone());
         }
 
         let classification = TargetClassification {
-            category: obs
-                .observation
-                .classification_hint
-                .unwrap_or(crate::types::TargetCategory::Unknown),
+            category,
             ..Default::default()
         };
 
         commands.spawn((
             Track {
-                id: track_id,
+                id: TrackId::new(),
                 cooperative_ids,
-                created_at: Utc::now(),
-                last_update: Utc::now(),
+                created_at: now,
+                last_update: now,
                 is_on_ground: false,
             },
             tracker,
@@ -197,6 +226,8 @@ pub fn track_initiation_system(
             classification,
         ));
     }
+
+    initiator.0.evict_stale(now);
 }
 
 pub fn track_cleanup_system(

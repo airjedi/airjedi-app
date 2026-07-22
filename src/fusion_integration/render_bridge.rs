@@ -1,6 +1,6 @@
 use crate::adsb::connection::FeedConnectionManager;
 use crate::adsb::sync::AircraftModelRegistry;
-use crate::aircraft::components::{Aircraft, AircraftLabel, FusionTrackLink};
+use crate::aircraft::components::{Aircraft, AircraftLabel, FusionDiagnostics, FusionTrackLink};
 use crate::aircraft::picking::{on_aircraft_click, on_aircraft_hover, on_aircraft_out};
 use crate::aircraft::{InterpolationState, TrailHistory};
 use crate::constants;
@@ -31,6 +31,7 @@ pub fn sync_tracks_to_visuals(
         &FusionTrackLink,
         &mut Aircraft,
         Option<&mut InterpolationState>,
+        Option<&mut FusionDiagnostics>,
     )>,
     visual_lookup: Query<(Entity, &FusionTrackLink)>,
     label_query: Query<(Entity, &AircraftLabel)>,
@@ -111,7 +112,7 @@ pub fn sync_tracks_to_visuals(
         }
 
         if let Some((visual_entity, _)) = existing_visual {
-            if let Ok((_, mut aircraft, interp_opt)) = visuals.get_mut(visual_entity) {
+            if let Ok((_, mut aircraft, interp_opt, diag_opt)) = visuals.get_mut(visual_entity) {
                 let position_changed = (lat - aircraft.latitude).abs() > f64::EPSILON
                     || (lon - aircraft.longitude).abs() > f64::EPSILON;
 
@@ -145,6 +146,10 @@ pub fn sync_tracks_to_visuals(
                             break;
                         }
                     }
+                }
+
+                if let Some(mut diag) = diag_opt {
+                    update_diagnostics(&mut diag, tracker, quality);
                 }
 
                 if position_changed {
@@ -222,6 +227,7 @@ pub fn sync_tracks_to_visuals(
                     track_entity,
                     track_id: track.id.clone(),
                 },
+                make_diagnostics(tracker, quality),
                 TrailHistory::default(),
                 InterpolationState::new(
                     lat,
@@ -260,6 +266,41 @@ pub fn sync_tracks_to_visuals(
             ));
         }
     }
+}
+
+fn filter_type_label(tracker: &TrackerState) -> &'static str {
+    if tracker.mode_info().is_some() {
+        "IMM"
+    } else {
+        match tracker.state_type {
+            airjedi_fusion::StateVectorType::Surface4Dof => "Surface",
+            _ => "EKF",
+        }
+    }
+}
+
+fn make_diagnostics(tracker: &TrackerState, quality: &TrackQuality) -> FusionDiagnostics {
+    let mode = tracker.mode_info();
+    FusionDiagnostics {
+        filter_type: filter_type_label(tracker),
+        mode_probabilities: mode.as_ref().map(|m| m.probabilities.clone()),
+        dominant_mode: mode.as_ref().map(|m| m.dominant_mode),
+        track_status: Some(quality.status),
+        observation_count: quality.observation_count,
+    }
+}
+
+fn update_diagnostics(
+    diag: &mut FusionDiagnostics,
+    tracker: &TrackerState,
+    quality: &TrackQuality,
+) {
+    let mode = tracker.mode_info();
+    diag.filter_type = filter_type_label(tracker);
+    diag.mode_probabilities = mode.as_ref().map(|m| m.probabilities.clone());
+    diag.dominant_mode = mode.as_ref().map(|m| m.dominant_mode);
+    diag.track_status = Some(quality.status);
+    diag.observation_count = quality.observation_count;
 }
 
 fn is_air_target(category: TargetCategory) -> bool {

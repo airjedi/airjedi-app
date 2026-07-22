@@ -1,5 +1,10 @@
 pub mod ekf;
+pub mod imm;
+pub mod measurement;
 pub mod oosm;
+pub mod surface;
+pub mod transition;
+pub mod ukf;
 
 use crate::coord;
 use crate::prelude_imports::*;
@@ -80,7 +85,13 @@ impl Default for OosmConfig {
     }
 }
 
-pub trait TrackFilter: Send + Sync {
+#[derive(Debug, Clone)]
+pub struct ModeInfo {
+    pub probabilities: Vec<f64>,
+    pub dominant_mode: usize,
+}
+
+pub trait TrackFilter: Send + Sync + std::fmt::Debug {
     fn predict(&mut self, dt: f64);
     fn update(&mut self, observation: &SensorObservation) -> FilterResult;
     fn state_vec(&self) -> DVector<f64>;
@@ -90,70 +101,74 @@ pub trait TrackFilter: Send + Sync {
     fn initialize_from_state(&mut self, state: DVector<f64>, covariance: DMatrix<f64>);
     fn state_history(&self) -> &StateHistory;
     fn zero_velocity(&mut self);
+    fn clone_filter(&self) -> Box<dyn TrackFilter>;
+    fn mode_info(&self) -> Option<ModeInfo> {
+        None
+    }
+}
+
+impl Clone for Box<dyn TrackFilter> {
+    fn clone(&self) -> Self {
+        self.clone_filter()
+    }
 }
 
 #[derive(Debug, Clone)]
-pub enum FilterVariant {
-    Ekf6Dof(ekf::Ekf6Dof),
+pub struct FilterVariant {
+    inner: Box<dyn TrackFilter>,
 }
 
 impl FilterVariant {
-    pub fn predict(&mut self, dt: f64) {
-        match self {
-            Self::Ekf6Dof(f) => f.predict(dt),
+    #[must_use]
+    pub fn new(filter: impl TrackFilter + 'static) -> Self {
+        Self {
+            inner: Box::new(filter),
         }
     }
 
+    pub fn predict(&mut self, dt: f64) {
+        self.inner.predict(dt);
+    }
+
     pub fn update(&mut self, observation: &SensorObservation) -> FilterResult {
-        match self {
-            Self::Ekf6Dof(f) => f.update(observation),
-        }
+        self.inner.update(observation)
     }
 
     #[must_use]
     pub fn state_vec(&self) -> DVector<f64> {
-        match self {
-            Self::Ekf6Dof(f) => TrackFilter::state_vec(f),
-        }
+        self.inner.state_vec()
     }
 
     #[must_use]
     pub fn covariance_mat(&self) -> DMatrix<f64> {
-        match self {
-            Self::Ekf6Dof(f) => TrackFilter::covariance_mat(f),
-        }
+        self.inner.covariance_mat()
     }
 
     #[must_use]
     pub fn innovation(&self, observation: &SensorObservation) -> Option<Innovation> {
-        match self {
-            Self::Ekf6Dof(f) => f.innovation(observation),
-        }
+        self.inner.innovation(observation)
     }
 
     pub fn initialize(&mut self, observation: &SensorObservation) {
-        match self {
-            Self::Ekf6Dof(f) => TrackFilter::initialize(f, observation),
-        }
+        self.inner.initialize(observation);
     }
 
     pub fn initialize_from_state(&mut self, state: DVector<f64>, covariance: DMatrix<f64>) {
-        match self {
-            Self::Ekf6Dof(f) => TrackFilter::initialize_from_state(f, state, covariance),
-        }
+        self.inner.initialize_from_state(state, covariance);
     }
 
     #[must_use]
     pub fn state_history(&self) -> &StateHistory {
-        match self {
-            Self::Ekf6Dof(f) => TrackFilter::state_history(f),
-        }
+        self.inner.state_history()
     }
 
     pub fn zero_velocity(&mut self) {
-        match self {
-            Self::Ekf6Dof(f) => TrackFilter::zero_velocity(f),
-        }
+        self.inner.zero_velocity();
+    }
+
+    #[must_use]
+    pub fn mode_info(&self) -> Option<ModeInfo> {
+        self.inner.mode_info()
     }
 }
 
@@ -168,7 +183,7 @@ impl TrackerState {
     #[must_use]
     pub fn new_6dof(config: ekf::ProcessNoiseConfig) -> Self {
         Self {
-            variant: FilterVariant::Ekf6Dof(ekf::Ekf6Dof::new(config)),
+            variant: FilterVariant::new(ekf::Ekf6Dof::new(config)),
             state_type: StateVectorType::Cartesian6Dof,
             last_update: None,
         }
@@ -177,13 +192,19 @@ impl TrackerState {
     #[must_use]
     pub fn position_ecef(&self) -> [f64; 3] {
         let s = self.variant.state_vec();
-        [s[0], s[1], s[2]]
+        match self.state_type {
+            StateVectorType::Surface4Dof => [s[0], s[2], 0.0],
+            _ => [s[0], s[1], s[2]],
+        }
     }
 
     #[must_use]
     pub fn velocity_ecef(&self) -> [f64; 3] {
         let s = self.variant.state_vec();
-        [s[3], s[4], s[5]]
+        match self.state_type {
+            StateVectorType::Surface4Dof => [s[1], s[3], 0.0],
+            _ => [s[3], s[4], s[5]],
+        }
     }
 
     #[must_use]
@@ -194,5 +215,10 @@ impl TrackerState {
 
     pub fn zero_velocity(&mut self) {
         self.variant.zero_velocity();
+    }
+
+    #[must_use]
+    pub fn mode_info(&self) -> Option<ModeInfo> {
+        self.variant.mode_info()
     }
 }

@@ -37,6 +37,8 @@ nalgebra = "0.33"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
+pathfinding = "4"
+kiddo = "5"
 
 # Optional NATS transport dependencies
 async-nats = { version = "0.38", optional = true }
