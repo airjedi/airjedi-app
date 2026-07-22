@@ -42,6 +42,9 @@ impl Plugin for FusionIntegrationPlugin {
                     estimated_track::draw_estimated_track_cones
                         .after(estimated_track::update_heading_history)
                         .after(crate::ZoomSet::Change),
+                    estimated_track::draw_all_aircraft_predictions
+                        .after(render_bridge::sync_tracks_to_visuals)
+                        .after(crate::ZoomSet::Change),
                     render_bridge::refresh_aircraft_last_seen
                         .after(render_bridge::sync_tracks_to_visuals),
                     render_bridge::cleanup_orphaned_visuals

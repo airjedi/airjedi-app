@@ -1,7 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 
 use airjedi_fusion::nalgebra::DMatrix;
-use airjedi_fusion::{TrackQuality, TrackerState};
+use airjedi_fusion::{ModeInfo, TrackQuality, TrackerState};
 use bevy::prelude::*;
 use crate::tiles::LocalOrigin;
 
@@ -20,6 +20,8 @@ pub struct EstimatedTrackConfig {
     pub sigma_multiplier: f32,
     pub min_speed_kts: f64,
     pub max_turn_rate_dps: f64,
+    pub show_all_aircraft: bool,
+    pub all_aircraft_horizon_seconds: f32,
 }
 
 impl Default for EstimatedTrackConfig {
@@ -31,6 +33,8 @@ impl Default for EstimatedTrackConfig {
             sigma_multiplier: 2.0,
             min_speed_kts: 30.0,
             max_turn_rate_dps: 6.0,
+            show_all_aircraft: true,
+            all_aircraft_horizon_seconds: 60.0,
         }
     }
 }
@@ -174,23 +178,68 @@ fn horizontal_uncertainty_m(cov: &DMatrix<f64>, lat_deg: f64, lon_deg: f64) -> f
     (var_east.abs() + var_north.abs()).sqrt()
 }
 
+/// Scale the observed turn rate based on IMM mode probabilities.
+/// When CV mode (index 0) dominates, the aircraft is likely flying straight - damp the
+/// turn rate to reduce noise impact. When high-maneuver mode (index 1) dominates, trust it more.
+fn mode_weighted_turn_rate(
+    turn_rate_dps: f64,
+    mode_info: Option<&ModeInfo>,
+    max_turn_rate: f64,
+) -> f64 {
+    let weight = match mode_info {
+        None => 1.0,
+        Some(info) => {
+            let cv_prob = info.probabilities.first().copied().unwrap_or(0.5);
+            let maneuver_prob = info.probabilities.get(1).copied().unwrap_or(0.5);
+            // CV prob 1.0 -> 0.25x damping; maneuver prob 1.0 -> 1.2x amplification
+            cv_prob * 0.25 + maneuver_prob * 1.2
+        }
+    };
+    (turn_rate_dps * weight).clamp(-max_turn_rate, max_turn_rate)
+}
+
+/// Compute prediction center-line color from IMM mode probability.
+/// Mode 0 = CV (straight flight) -> blue-teal; Mode 1 = high maneuver -> amber
+fn prediction_center_color(mode_info: Option<&ModeInfo>, alpha: f32) -> Color {
+    let maneuver_prob = mode_info
+        .and_then(|m| m.probabilities.get(1).copied())
+        .unwrap_or(0.0) as f32;
+
+    let r = 0.0_f32 * (1.0 - maneuver_prob) + 1.0 * maneuver_prob;
+    let g = 0.85_f32 * (1.0 - maneuver_prob) + 0.65 * maneuver_prob;
+    let b = 1.0_f32 * (1.0 - maneuver_prob) + 0.0 * maneuver_prob;
+    Color::srgba(r, g, b, alpha)
+}
+
+fn prediction_boundary_color(mode_info: Option<&ModeInfo>, alpha: f32) -> Color {
+    let maneuver_prob = mode_info
+        .and_then(|m| m.probabilities.get(1).copied())
+        .unwrap_or(0.0) as f32;
+
+    let r = 0.3_f32 * (1.0 - maneuver_prob) + 1.0 * maneuver_prob;
+    let g = 0.7_f32 * (1.0 - maneuver_prob) + 0.55 * maneuver_prob;
+    let b = 1.0_f32 * (1.0 - maneuver_prob) + 0.1 * maneuver_prob;
+    Color::srgba(r, g, b, alpha)
+}
+
 fn sample_predicted_track(
     tracker: &TrackerState,
     config: &EstimatedTrackConfig,
     turn_rate_dps: f64,
+    mode_info: Option<&ModeInfo>,
 ) -> Vec<PredictedSample> {
     let mut cloned = tracker.clone();
     let dt = config.horizon_seconds as f64 / config.sample_count as f64;
     let mut samples = Vec::with_capacity(config.sample_count);
 
-    let applying_turn = turn_rate_dps.abs() > TURN_RATE_DEAD_ZONE;
-    let clamped_turn = turn_rate_dps.clamp(-config.max_turn_rate_dps, config.max_turn_rate_dps);
+    let effective_turn = mode_weighted_turn_rate(turn_rate_dps, mode_info, config.max_turn_rate_dps);
+    let applying_turn = effective_turn.abs() > TURN_RATE_DEAD_ZONE;
 
     for i in 0..config.sample_count {
         if applying_turn {
             let (lat, lon, _) = cloned.position_geodetic();
             let vel = cloned.velocity_ecef();
-            let rotated = rotate_velocity_ecef(&vel, lat, lon, clamped_turn * dt);
+            let rotated = rotate_velocity_ecef(&vel, lat, lon, effective_turn * dt);
 
             let state = cloned.variant.state_vec();
             let cov = cloned.variant.covariance_mat();
@@ -317,31 +366,31 @@ pub fn draw_estimated_track_cones(
         .copied()
         .unwrap_or(0.0);
 
+    let mode_info = tracker.mode_info();
     let converter = CoordinateConverter::new(&local_origin);
 
-    let samples = sample_predicted_track(tracker, &config, turn_rate);
+    let samples = sample_predicted_track(tracker, &config, turn_rate, mode_info.as_ref());
     if samples.is_empty() {
         return;
     }
 
     let aircraft_pos = converter.latlon_to_world(aircraft.latitude, aircraft.longitude);
-    // In Mercator meters, 1 world unit = 1 meter
-    let wu_per_m = 1.0_f64;
-
-    let center_color_base = Color::srgba(0.0, 0.9, 1.0, 0.7);
-    let boundary_color_base = Color::srgba(1.0, 0.6, 0.1, 0.4);
-    let crossbar_color_base = Color::srgba(1.0, 0.6, 0.1, 0.15);
 
     let mut prev_center = aircraft_pos;
     let mut prev_left = aircraft_pos;
     let mut prev_right = aircraft_pos;
 
+    // Sample interval for time mark detection
+    let sample_dt = config.horizon_seconds / config.sample_count as f32;
+    let mark_tolerance = sample_dt * 0.6;
+
     for (i, sample) in samples.iter().enumerate() {
         let t_frac = sample.time_ahead / config.horizon_seconds;
-        let alpha_fade = 1.0 - t_frac * 0.6;
+        // Quadratic fade: stays bright longer, then falls off toward the end
+        let alpha_fade = (1.0 - t_frac * t_frac * 0.7).max(0.1);
 
         let sample_pos = converter.latlon_to_world(sample.lat, sample.lon);
-        let radius_world = (sample.h_uncertainty_m * wu_per_m) as f32;
+        let radius_world = sample.h_uncertainty_m as f32;
 
         let heading_rad = sample.heading_deg.to_radians();
         let heading_dir = Vec2::new(heading_rad.sin() as f32, heading_rad.cos() as f32);
@@ -355,18 +404,34 @@ pub fn draw_estimated_track_cones(
         let left = sample_pos + perp * radius_world;
         let right = sample_pos - perp * radius_world;
 
-        let center_color = center_color_base.with_alpha(0.7 * alpha_fade);
-        gizmos.line_2d(prev_center, sample_pos, center_color);
+        let center_color = prediction_center_color(mode_info.as_ref(), 0.75 * alpha_fade);
+        let boundary_color = prediction_boundary_color(mode_info.as_ref(), 0.45 * alpha_fade);
+        let crossbar_color = prediction_boundary_color(mode_info.as_ref(), 0.12 * alpha_fade);
 
-        let boundary_color = boundary_color_base.with_alpha(0.4 * alpha_fade);
+        gizmos.line_2d(prev_center, sample_pos, center_color);
         gizmos.line_2d(prev_left, left, boundary_color);
         gizmos.line_2d(prev_right, right, boundary_color);
-
-        let crossbar_color = crossbar_color_base.with_alpha(0.15 * alpha_fade);
         gizmos.line_2d(left, right, crossbar_color);
 
+        // Time tick marks at 30s, 60s, 90s - perpendicular lines extending beyond the cone
+        let t = sample.time_ahead;
+        let is_time_mark = (t - 30.0).abs() < mark_tolerance
+            || (t - 60.0).abs() < mark_tolerance
+            || (t - 90.0).abs() < mark_tolerance;
+
+        if is_time_mark && radius_world > 50.0 {
+            let tick_extra = radius_world * 0.35;
+            let tick_left = sample_pos + perp * (radius_world + tick_extra);
+            let tick_right = sample_pos - perp * (radius_world + tick_extra);
+            let tick_color = Color::srgba(1.0, 1.0, 1.0, 0.55 * alpha_fade);
+            gizmos.line_2d(tick_left, tick_right, tick_color);
+        }
+
+        // Terminal endpoint circle at the end of the prediction horizon
         if i == samples.len() - 1 {
-            gizmos.circle_2d(sample_pos, 3.0, center_color);
+            let endpoint_color = prediction_center_color(mode_info.as_ref(), 0.55);
+            let endpoint_radius = radius_world.max(200.0);
+            gizmos.circle_2d(sample_pos, endpoint_radius, endpoint_color);
         }
 
         prev_center = sample_pos;
@@ -375,9 +440,109 @@ pub fn draw_estimated_track_cones(
     }
 }
 
+/// Draw simple straight-line prediction vectors for all non-selected aircraft.
+/// Uses linear ECEF extrapolation - no filter operations, fast for many aircraft.
+pub fn draw_all_aircraft_predictions(
+    mut gizmos: Gizmos,
+    config: Res<EstimatedTrackConfig>,
+    list_state: Res<AircraftListState>,
+    follow_state: Res<CameraFollowState>,
+    local_origin: Res<LocalOrigin>,
+    fusion_tracks: Query<(&TrackerState, &TrackQuality)>,
+    visuals: Query<(&FusionTrackLink, &Aircraft)>,
+) {
+    if !config.enabled || !config.show_all_aircraft {
+        return;
+    }
+
+    let selected_icao = follow_state
+        .following_icao
+        .as_ref()
+        .or(list_state.selected_icao.as_ref());
+
+    let converter = CoordinateConverter::new(&local_origin);
+    let horizon = config.all_aircraft_horizon_seconds as f64;
+
+    for (link, aircraft) in visuals.iter() {
+        // Selected/followed aircraft gets the full cone - skip here
+        if let Some(sel) = selected_icao {
+            if &aircraft.icao == sel {
+                continue;
+            }
+        }
+
+        let Ok((tracker, _quality)) = fusion_tracks.get(link.track_entity) else {
+            continue;
+        };
+
+        let vel = tracker.velocity_ecef();
+        let speed_mps = (vel[0].powi(2) + vel[1].powi(2) + vel[2].powi(2)).sqrt();
+        let speed_kts = speed_mps / 0.514444;
+        if speed_kts < config.min_speed_kts {
+            continue;
+        }
+
+        // Linear ECEF extrapolation - no filter clone, runs every frame
+        let pos = tracker.position_ecef();
+        let end_ecef = [
+            pos[0] + vel[0] * horizon,
+            pos[1] + vel[1] * horizon,
+            pos[2] + vel[2] * horizon,
+        ];
+        let (end_lat, end_lon, _) = airjedi_fusion::coord::ecef_to_geodetic(&end_ecef);
+
+        let start_pos = converter.latlon_to_world(aircraft.latitude, aircraft.longitude);
+        let end_pos = converter.latlon_to_world(end_lat, end_lon);
+
+        let mode_info = tracker.mode_info();
+        let line_color = prediction_center_color(mode_info.as_ref(), 0.22);
+        gizmos.line_2d(start_pos, end_pos, line_color);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use airjedi_fusion::ModeInfo;
+
+    #[test]
+    fn test_mode_weighted_turn_rate_cv_damps() {
+        let mode_info = ModeInfo {
+            probabilities: vec![0.9, 0.1],
+            dominant_mode: 0,
+        };
+        let weighted = mode_weighted_turn_rate(3.0, Some(&mode_info), 6.0);
+        // 0.9*0.25 + 0.1*1.2 = 0.345, so 3.0*0.345 = 1.035
+        assert!(weighted < 3.0, "CV dominant should damp turn rate");
+        assert!(weighted > 0.0);
+    }
+
+    #[test]
+    fn test_mode_weighted_turn_rate_maneuver_amplifies() {
+        let mode_info = ModeInfo {
+            probabilities: vec![0.1, 0.9],
+            dominant_mode: 1,
+        };
+        let weighted = mode_weighted_turn_rate(3.0, Some(&mode_info), 6.0);
+        // 0.1*0.25 + 0.9*1.2 = 1.105, so 3.0*1.105 = 3.315
+        assert!(weighted > 3.0, "Maneuver dominant should amplify turn rate");
+    }
+
+    #[test]
+    fn test_mode_weighted_turn_rate_clamped() {
+        let mode_info = ModeInfo {
+            probabilities: vec![0.0, 1.0],
+            dominant_mode: 1,
+        };
+        let weighted = mode_weighted_turn_rate(5.9, Some(&mode_info), 6.0);
+        assert!(weighted <= 6.0);
+    }
+
+    #[test]
+    fn test_mode_weighted_turn_rate_no_mode() {
+        let weighted = mode_weighted_turn_rate(3.0, None, 6.0);
+        assert!((weighted - 3.0).abs() < 0.001);
+    }
 
     #[test]
     fn test_compute_turn_rate_empty_or_single() {
@@ -471,7 +636,7 @@ mod tests {
 
         let config = EstimatedTrackConfig::default();
         let turn_rate = 3.0;
-        let samples = sample_predicted_track(&tracker, &config, turn_rate);
+        let samples = sample_predicted_track(&tracker, &config, turn_rate, None);
 
         assert_eq!(samples.len(), config.sample_count);
 
@@ -527,7 +692,7 @@ mod tests {
         tracker.variant.initialize_from_state(state, DMatrix::identity(6, 6) * 100.0);
 
         let config = EstimatedTrackConfig::default();
-        let samples = sample_predicted_track(&tracker, &config, 0.0);
+        let samples = sample_predicted_track(&tracker, &config, 0.0, None);
 
         let first = &samples[0];
         let last = samples.last().unwrap();
