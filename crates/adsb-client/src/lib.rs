@@ -91,6 +91,8 @@ use log::warn;
 use tokio::sync::broadcast;
 
 pub use decoder::{BaseStationDecoder, Decoder, NativeDecoder};
+#[cfg(feature = "decoder-rs1090")]
+pub use decoder::Rs1090Decoder;
 pub use framing::{BeastFramer, Frame, FrameType, Framer, LineFramer};
 pub use protocol::{AircraftMessage, BaseStationParser, BeastParser, Icao, MessagePayload, ParseError, Protocol};
 pub use tcp::{Connection, ConnectionConfig, ConnectionEvent, ConnectionState, FrameMode};
@@ -173,7 +175,12 @@ impl Client {
                 }
                 ProtocolType::Beast => {
                     conn_config.frame_mode = FrameMode::Raw;
+
+                    #[cfg(feature = "decoder-rs1090")]
+                    let mut dec = Rs1090Decoder::new();
+                    #[cfg(not(feature = "decoder-rs1090"))]
                     let mut dec = NativeDecoder::new();
+
                     if let Some((lat, lon)) = config.tracker.center {
                         dec.set_reference_position(lat, lon);
                     }

@@ -1,11 +1,17 @@
 mod basestation;
 mod native;
+#[cfg(feature = "decoder-rs1090")]
+mod rs1090_decoder;
+#[cfg(feature = "decoder-rs1090")]
+mod rs1090_mapping;
 
 use crate::framing::Frame;
 use crate::protocol::AircraftMessage;
 
 pub use basestation::BaseStationDecoder;
 pub use native::NativeDecoder;
+#[cfg(feature = "decoder-rs1090")]
+pub use rs1090_decoder::Rs1090Decoder;
 
 /// Decodes protocol frames into aircraft messages.
 ///
