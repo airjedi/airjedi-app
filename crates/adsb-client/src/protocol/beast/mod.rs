@@ -23,17 +23,24 @@
 //! - BDS (Binary Data Store) heuristic decoding from Comm-B replies
 //! - Signal level and MLAT timestamp extraction
 
+#[cfg(feature = "decoder-native")]
 pub(crate) mod adsb;
+#[cfg(feature = "decoder-native")]
 pub(crate) mod cpr;
 mod frame;
 pub(crate) mod modes;
 
+#[cfg(feature = "decoder-native")]
 use std::collections::{HashMap, HashSet};
 
+#[cfg(feature = "decoder-native")]
 use crate::protocol::{AircraftMessage, Icao, MessagePayload, ParseError, Protocol};
+#[cfg(feature = "decoder-native")]
 use cpr::CprState;
+#[cfg(feature = "decoder-native")]
 use frame::FrameDecoder;
 
+#[cfg(feature = "decoder-native")]
 /// Parser for BEAST binary protocol (Mode-S Beast, dump1090 port 30005).
 ///
 /// Maintains internal state for:
@@ -48,6 +55,7 @@ pub struct BeastParser {
     reference_position: Option<(f64, f64)>,
 }
 
+#[cfg(feature = "decoder-native")]
 impl std::fmt::Debug for BeastParser {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BeastParser")
@@ -58,6 +66,7 @@ impl std::fmt::Debug for BeastParser {
     }
 }
 
+#[cfg(feature = "decoder-native")]
 impl BeastParser {
     #[must_use]
     pub fn new() -> Self {
@@ -296,12 +305,14 @@ impl BeastParser {
     }
 }
 
+#[cfg(feature = "decoder-native")]
 impl Default for BeastParser {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(feature = "decoder-native")]
 impl Protocol for BeastParser {
     type Message = AircraftMessage;
     type Error = ParseError;
