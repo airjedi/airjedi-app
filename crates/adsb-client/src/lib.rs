@@ -90,7 +90,9 @@ use std::time::Duration;
 use log::warn;
 use tokio::sync::broadcast;
 
-pub use decoder::{BaseStationDecoder, Decoder, NativeDecoder};
+pub use decoder::{BaseStationDecoder, Decoder};
+#[cfg(feature = "decoder-native")]
+pub use decoder::NativeDecoder;
 #[cfg(feature = "decoder-rs1090")]
 pub use decoder::Rs1090Decoder;
 pub use framing::{BeastFramer, Frame, FrameType, Framer, LineFramer};
@@ -208,8 +210,10 @@ impl Client {
 
                     #[cfg(feature = "decoder-rs1090")]
                     let mut dec = Rs1090Decoder::new();
-                    #[cfg(not(feature = "decoder-rs1090"))]
+                    #[cfg(all(not(feature = "decoder-rs1090"), feature = "decoder-native"))]
                     let mut dec = NativeDecoder::new();
+                    #[cfg(all(not(feature = "decoder-rs1090"), not(feature = "decoder-native")))]
+                    compile_error!("BEAST protocol requires either decoder-rs1090 or decoder-native feature");
 
                     if let Some((lat, lon)) = config.tracker.center {
                         dec.set_reference_position(lat, lon);

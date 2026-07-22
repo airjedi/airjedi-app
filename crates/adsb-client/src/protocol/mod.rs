@@ -21,6 +21,7 @@ mod basestation;
 pub mod beast;
 
 pub use basestation::BaseStationParser;
+#[cfg(feature = "decoder-native")]
 pub use beast::BeastParser;
 
 use std::fmt;

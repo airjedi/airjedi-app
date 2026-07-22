@@ -37,6 +37,8 @@ module_name_repetitions = "allow"
 [features]
 default = ["decoder-rs1090"]
 decoder-rs1090 = ["dep:rs1090"]
+decoder-native = []
+tracker-jump-detection = []
 
 [dependencies]
 async-trait = "0.1"
@@ -47,3 +49,11 @@ chrono = { version = "0.4", features = ["serde"] }
 log = "0.4"
 thiserror = "1"
 rs1090 = { version = "0.6", optional = true }
+
+[[example]]
+name = "bds_diag"
+required-features = ["decoder-native"]
+
+[[example]]
+name = "beast_diag"
+required-features = ["decoder-native"]

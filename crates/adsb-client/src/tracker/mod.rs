@@ -27,8 +27,11 @@ use crate::protocol::{AircraftMessage, Icao, MessagePayload};
 
 // Constants for position validation and tracking
 const NAUTICAL_MILE_CONVERSION: f64 = 1.15078; // 1 nautical mile = 1.15078 statute miles
+#[cfg(feature = "tracker-jump-detection")]
 const JUMP_DETECTION_TIME_WINDOW_SECONDS: i64 = 20;
+#[cfg(feature = "tracker-jump-detection")]
 const JUMP_DETECTION_THRESHOLD_MILES: f64 = 10.0;
+#[cfg(feature = "tracker-jump-detection")]
 const MAX_CONSECUTIVE_REJECTIONS: u32 = 3;
 const POSITION_CHANGE_THRESHOLD_DEGREES: f64 = 0.001; // ~100 meters at mid-latitudes
 
@@ -121,7 +124,7 @@ pub struct Aircraft {
     last_position_time: Option<DateTime<Utc>>,
     /// Position history for trail rendering.
     pub position_history: Vec<PositionPoint>,
-    /// Counter for consecutive position rejections (internal use).
+    #[cfg(feature = "tracker-jump-detection")]
     consecutive_rejections: u32,
 }
 
@@ -155,6 +158,7 @@ impl Aircraft {
             last_seen: Utc::now(),
             last_position_time: None,
             position_history: Vec::new(),
+            #[cfg(feature = "tracker-jump-detection")]
             consecutive_rejections: 0,
         }
     }
@@ -184,7 +188,8 @@ impl Aircraft {
             return false;
         }
 
-        // Check if position is within threshold of previous position (only if recent update)
+        // Redundant with rs1090 CPR validation; enable for hardware decoders that bypass it.
+        #[cfg(feature = "tracker-jump-detection")]
         if let (Some(last_lat), Some(last_lon)) = (self.latitude, self.longitude) {
             let now = Utc::now();
             let time_since_last_position = self
@@ -233,7 +238,10 @@ impl Aircraft {
         self.latitude = Some(lat);
         self.longitude = Some(lon);
         self.last_position_time = Some(Utc::now());
-        self.consecutive_rejections = 0;
+        #[cfg(feature = "tracker-jump-detection")]
+        {
+            self.consecutive_rejections = 0;
+        }
 
         true
     }
