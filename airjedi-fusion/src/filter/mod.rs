@@ -85,6 +85,12 @@ impl Default for OosmConfig {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ModeInfo {
+    pub probabilities: Vec<f64>,
+    pub dominant_mode: usize,
+}
+
 pub trait TrackFilter: Send + Sync + std::fmt::Debug {
     fn predict(&mut self, dt: f64);
     fn update(&mut self, observation: &SensorObservation) -> FilterResult;
@@ -96,6 +102,9 @@ pub trait TrackFilter: Send + Sync + std::fmt::Debug {
     fn state_history(&self) -> &StateHistory;
     fn zero_velocity(&mut self);
     fn clone_filter(&self) -> Box<dyn TrackFilter>;
+    fn mode_info(&self) -> Option<ModeInfo> {
+        None
+    }
 }
 
 impl Clone for Box<dyn TrackFilter> {
@@ -156,6 +165,11 @@ impl FilterVariant {
     pub fn zero_velocity(&mut self) {
         self.inner.zero_velocity();
     }
+
+    #[must_use]
+    pub fn mode_info(&self) -> Option<ModeInfo> {
+        self.inner.mode_info()
+    }
 }
 
 #[derive(Component, Debug, Clone)]
@@ -178,13 +192,19 @@ impl TrackerState {
     #[must_use]
     pub fn position_ecef(&self) -> [f64; 3] {
         let s = self.variant.state_vec();
-        [s[0], s[1], s[2]]
+        match self.state_type {
+            StateVectorType::Surface4Dof => [s[0], s[2], 0.0],
+            _ => [s[0], s[1], s[2]],
+        }
     }
 
     #[must_use]
     pub fn velocity_ecef(&self) -> [f64; 3] {
         let s = self.variant.state_vec();
-        [s[3], s[4], s[5]]
+        match self.state_type {
+            StateVectorType::Surface4Dof => [s[1], s[3], 0.0],
+            _ => [s[3], s[4], s[5]],
+        }
     }
 
     #[must_use]
@@ -195,5 +215,10 @@ impl TrackerState {
 
     pub fn zero_velocity(&mut self) {
         self.variant.zero_velocity();
+    }
+
+    #[must_use]
+    pub fn mode_info(&self) -> Option<ModeInfo> {
+        self.variant.mode_info()
     }
 }

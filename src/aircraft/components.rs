@@ -52,3 +52,12 @@ pub struct FusionTrackLink {
     pub track_entity: Entity,
     pub track_id: airjedi_fusion::TrackId,
 }
+
+#[derive(Component, Debug, Default)]
+pub struct FusionDiagnostics {
+    pub filter_type: &'static str,
+    pub mode_probabilities: Option<Vec<f64>>,
+    pub dominant_mode: Option<usize>,
+    pub track_status: Option<airjedi_fusion::TrackStatus>,
+    pub observation_count: u32,
+}

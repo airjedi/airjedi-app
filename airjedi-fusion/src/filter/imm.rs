@@ -1,4 +1,4 @@
-use super::{FilterResult, Innovation, StateHistory, StateSnapshot, TrackFilter};
+use super::{FilterResult, Innovation, ModeInfo, StateHistory, StateSnapshot, TrackFilter};
 use crate::sensor::SensorObservation;
 use nalgebra::{DMatrix, DVector};
 
@@ -252,6 +252,13 @@ impl TrackFilter for ImmFilter {
 
     fn clone_filter(&self) -> Box<dyn TrackFilter> {
         Box::new(self.clone())
+    }
+
+    fn mode_info(&self) -> Option<ModeInfo> {
+        Some(ModeInfo {
+            probabilities: self.mode_probabilities.clone(),
+            dominant_mode: self.dominant_mode(),
+        })
     }
 }
 

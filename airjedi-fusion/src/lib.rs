@@ -14,7 +14,7 @@ pub mod types;
 
 pub use classification::TargetClassification;
 pub use config::FusionConfig;
-pub use filter::TrackerState;
+pub use filter::{ModeInfo, TrackerState};
 pub use sensor::{Measurement, SensorObservation};
 pub use store::TimelineStore;
 pub use track::{Track, TrackQuality, TrackStatus};
@@ -35,10 +35,15 @@ impl Plugin for FusionPlugin {
             .cloned()
             .unwrap_or_default();
 
+        let initiator = systems::TrackInitiator(
+            track::initiation::MofNInitiator::new(config.initiation.clone()),
+        );
+
         app.init_resource::<systems::ObservationBuffer>()
             .insert_resource(TimelineStore::new(config.store.clone()))
             .insert_resource(config.lifecycle.clone())
             .insert_resource(config.associator.clone())
+            .insert_resource(initiator)
             .insert_resource(config.clone())
             .insert_resource(associator::spatial_index::SpatialIndex::new(
                 config.spatial_cell_size_deg,

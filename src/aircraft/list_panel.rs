@@ -285,7 +285,7 @@ pub fn render_aircraft_list_panel(
     map_state: Res<MapState>,
     app_config: Res<crate::config::AppConfig>,
     clock: Res<SessionClock>,
-    aircraft_query: Query<(&crate::Aircraft, &TrailHistory, Option<&AircraftTypeInfo>)>,
+    aircraft_query: Query<(&crate::Aircraft, &TrailHistory, Option<&AircraftTypeInfo>, Option<&super::components::FusionDiagnostics>)>,
     theme: Res<AppTheme>,
 ) {
     if !list_state.expanded {
@@ -734,7 +734,7 @@ pub fn render_aircraft_list_pane_content(
     display_list: &AircraftDisplayList,
     app_config: &crate::config::AppConfig,
     clock: &SessionClock,
-    aircraft_query: &Query<(&crate::Aircraft, &TrailHistory, Option<&AircraftTypeInfo>)>,
+    aircraft_query: &Query<(&crate::Aircraft, &TrailHistory, Option<&AircraftTypeInfo>, Option<&crate::aircraft::components::FusionDiagnostics>)>,
     theme: &AppTheme,
 ) {
     let header_color = egui::Color32::from_rgb(150, 150, 150);
@@ -1127,12 +1127,12 @@ fn render_inline_detail(
     follow_state: &mut CameraFollowState,
     app_config: &crate::config::AppConfig,
     clock: &SessionClock,
-    aircraft_query: &Query<(&crate::Aircraft, &TrailHistory, Option<&AircraftTypeInfo>)>,
+    aircraft_query: &Query<(&crate::Aircraft, &TrailHistory, Option<&AircraftTypeInfo>, Option<&crate::aircraft::components::FusionDiagnostics>)>,
     theme: &AppTheme,
 ) {
-    let Some((aircraft, trail, type_info)) = aircraft_query
+    let Some((aircraft, trail, type_info, fusion_diag)) = aircraft_query
         .iter()
-        .find(|(a, _, _)| a.icao == selected_icao)
+        .find(|(a, _, _, _)| a.icao == selected_icao)
     else {
         return;
     };
@@ -1241,6 +1241,46 @@ fn render_inline_detail(
                         });
                     });
                 ui.add_space(1.0);
+            }
+
+            if let Some(diag) = fusion_diag {
+                ui.add_space(2.0);
+                DataStrip::new(&wt)
+                    .accent_left(wt.border, 2.0)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new("Filter").color(wt.text_dim).size(10.0));
+                            ui.label(
+                                egui::RichText::new(diag.filter_type)
+                                    .color(wt.accent)
+                                    .size(10.0)
+                                    .monospace(),
+                            );
+                            if let (Some(probs), Some(dominant)) = (&diag.mode_probabilities, diag.dominant_mode) {
+                                ui.add_space(8.0);
+                                let mode_label = match dominant {
+                                    0 => "CV",
+                                    1 => "MNV",
+                                    _ => "?",
+                                };
+                                let dominant_pct = probs.get(dominant).copied().unwrap_or(0.0) * 100.0;
+                                ui.label(
+                                    egui::RichText::new(format!("{} {:.0}%", mode_label, dominant_pct))
+                                        .color(wt.text)
+                                        .size(10.0)
+                                        .monospace(),
+                                );
+                            }
+                            ui.add_space(8.0);
+                            ui.label(egui::RichText::new("Obs").color(wt.text_dim).size(10.0));
+                            ui.label(
+                                egui::RichText::new(format!("{}", diag.observation_count))
+                                    .color(wt.text)
+                                    .size(10.0)
+                                    .monospace(),
+                            );
+                        });
+                    });
             }
 
             ui.add_space(2.0);
@@ -1365,7 +1405,7 @@ fn render_detail_section(
     follow_state: &mut CameraFollowState,
     app_config: &crate::config::AppConfig,
     clock: &SessionClock,
-    aircraft_query: &Query<(&crate::Aircraft, &TrailHistory, Option<&AircraftTypeInfo>)>,
+    aircraft_query: &Query<(&crate::Aircraft, &TrailHistory, Option<&AircraftTypeInfo>, Option<&crate::aircraft::components::FusionDiagnostics>)>,
 ) {
     let label_color = egui::Color32::from_rgb(150, 150, 150);
     let value_color = egui::Color32::from_rgb(220, 220, 220);
@@ -1373,9 +1413,9 @@ fn render_detail_section(
     let highlight_color = egui::Color32::from_rgb(100, 200, 255);
 
     // Find the selected aircraft
-    let Some((aircraft, trail, type_info)) = aircraft_query
+    let Some((aircraft, trail, type_info, _diag)) = aircraft_query
         .iter()
-        .find(|(a, _, _)| a.icao == selected_icao)
+        .find(|(a, _, _, _)| a.icao == selected_icao)
     else {
         detail_state.open = false;
         detail_state.track_start = None;

@@ -368,6 +368,7 @@ impl<'a> Behavior<DockPane> for DockBehavior<'a> {
                             &'static Aircraft,
                             &'static TrailHistory,
                             Option<&'static AircraftTypeInfo>,
+                            Option<&'static crate::aircraft::components::FusionDiagnostics>,
                         )>,
                         Res<AppTheme>,
                     )>::new(world);
