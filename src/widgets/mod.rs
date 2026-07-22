@@ -4,6 +4,7 @@ pub mod effects;
 pub mod gauge;
 pub mod gradient_panel;
 pub mod shadow_frame;
+pub mod sparkline;
 
 pub use crate::theme::WidgetTheme;
 

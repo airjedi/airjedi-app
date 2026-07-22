@@ -1,13 +1,16 @@
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
 use crate::adsb::FeedConnectionManager;
 use crate::aircraft::stats_panel::StatsPanelState;
 use crate::recording::RecordingState;
 use crate::theme::{to_egui_color32, AppTheme};
+use crate::widgets::sparkline::sparkline;
 use crate::MapState;
+
+const RATE_HISTORY_SECS: usize = 60;
 
 /// FPS smoothing state and message rate tracking.
 #[derive(Resource)]
@@ -19,6 +22,7 @@ pub struct StatusBarState {
     pub message_rate: f32,
     last_per_feed_counts: HashMap<String, u64>,
     pub per_feed_rates: HashMap<String, f32>,
+    pub rate_history: VecDeque<f32>,
 }
 
 impl Default for StatusBarState {
@@ -31,6 +35,7 @@ impl Default for StatusBarState {
             message_rate: 0.0,
             last_per_feed_counts: HashMap::new(),
             per_feed_rates: HashMap::new(),
+            rate_history: VecDeque::with_capacity(RATE_HISTORY_SECS + 1),
         }
     }
 }
@@ -70,6 +75,12 @@ pub fn render_statusbar(
             state.message_rate = delta as f32 / elapsed;
             state.last_msg_count = current_count;
             state.last_msg_check = now;
+
+            let rate = state.message_rate;
+            state.rate_history.push_back(rate);
+            if state.rate_history.len() > RATE_HISTORY_SECS {
+                state.rate_history.pop_front();
+            }
 
             for feed_stats in mgr.per_feed_stats() {
                 let prev = state.last_per_feed_counts.get(&feed_stats.name).copied().unwrap_or(0);
@@ -115,7 +126,13 @@ pub fn render_statusbar(
                 // Show popup below the clickable area
                 if show_popup {
                     let per_feed_rates = state.per_feed_rates.clone();
-                    render_feed_popup(ui, &feed_mgr, &theme, msg_rate, &per_feed_rates, &mut state.show_feed_popup);
+                    let rate_history: Vec<f32> = state.rate_history.iter().copied().collect();
+                    let payload_counts = feed_mgr.as_ref().map(|m| m.total_payload_counts());
+                    let mut close_popup = false;
+                    render_feed_popup(ui, &feed_mgr, &theme, msg_rate, &per_feed_rates, &rate_history, payload_counts.as_ref(), &mut close_popup);
+                    if close_popup {
+                        state.show_feed_popup = false;
+                    }
                 }
 
                 separator(ui, dim);
@@ -234,6 +251,8 @@ fn render_feed_popup(
     theme: &AppTheme,
     total_msg_rate: f32,
     per_feed_rates: &HashMap<String, f32>,
+    rate_history: &[f32],
+    payload_counts: Option<&[u64; adsb_client::PayloadKind::COUNT]>,
     show: &mut bool,
 ) {
     let Some(mgr) = feed_mgr else {
@@ -244,6 +263,7 @@ fn render_feed_popup(
     let border = to_egui_color32(theme.bg_contrast());
     let dim = to_egui_color32(theme.text_dim());
     let primary = to_egui_color32(theme.text_primary());
+    let accent = to_egui_color32(theme.accent_primary());
 
     let popup_frame = egui::Frame::default()
         .fill(panel_bg)
@@ -257,7 +277,7 @@ fn render_feed_popup(
         .interactable(true)
         .show(ui.ctx(), |ui| {
             popup_frame.show(ui, |ui| {
-                ui.set_min_width(300.0);
+                ui.set_min_width(320.0);
 
                 ui.strong("Feed Status");
                 ui.separator();
@@ -298,12 +318,55 @@ fn render_feed_popup(
                         ui.label(egui::RichText::new(format!("{:.0}", total_msg_rate)).size(11.0).color(primary).strong());
                         ui.end_row();
                     });
+
+                // Message breakdown by payload type
+                if let Some(counts) = payload_counts {
+                    let total: u64 = counts.iter().sum();
+                    if total > 0 {
+                        ui.add_space(6.0);
+                        ui.label(egui::RichText::new("Message Breakdown").size(10.0).color(dim));
+                        ui.separator();
+
+                        egui::Grid::new("payload_breakdown_grid")
+                            .num_columns(2)
+                            .spacing([12.0, 2.0])
+                            .show(ui, |ui| {
+                                for kind in adsb_client::PayloadKind::ALL {
+                                    let count = counts[kind as usize];
+                                    if count > 0 {
+                                        ui.label(egui::RichText::new(kind.label()).size(10.0).color(dim));
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            ui.label(egui::RichText::new(format_count(count)).size(10.0).color(primary));
+                                        });
+                                        ui.end_row();
+                                    }
+                                }
+                            });
+                    }
+                }
+
+                // Sparkline of msg/s over last 60 seconds
+                if rate_history.len() >= 2 {
+                    ui.add_space(6.0);
+                    ui.label(egui::RichText::new(format!("Throughput (last {}s)", rate_history.len())).size(10.0).color(dim));
+                    ui.add_space(2.0);
+                    sparkline(ui, rate_history, egui::vec2(300.0, 40.0), accent);
+                }
             });
         });
 
-    // Close popup on Escape
     if ui.ctx().input(|i| i.key_pressed(egui::Key::Escape)) {
-        *show = false;
+        *show = true;
+    }
+}
+
+fn format_count(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.1}K", n as f64 / 1_000.0)
+    } else {
+        format!("{n}")
     }
 }
 

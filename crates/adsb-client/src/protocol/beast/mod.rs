@@ -23,14 +23,14 @@
 //! - BDS (Binary Data Store) heuristic decoding from Comm-B replies
 //! - Signal level and MLAT timestamp extraction
 
-mod adsb;
-mod cpr;
+pub(crate) mod adsb;
+pub(crate) mod cpr;
 mod frame;
-mod modes;
+pub(crate) mod modes;
 
 use std::collections::{HashMap, HashSet};
 
-use crate::protocol::{AircraftMessage, MessagePayload, ParseError, Protocol};
+use crate::protocol::{AircraftMessage, Icao, MessagePayload, ParseError, Protocol};
 use cpr::CprState;
 use frame::FrameDecoder;
 
@@ -43,8 +43,8 @@ use frame::FrameDecoder;
 /// - Reference position for local CPR decode
 pub struct BeastParser {
     frame_decoder: FrameDecoder,
-    cpr_state: HashMap<String, CprState>,
-    known_icao: HashSet<String>,
+    cpr_state: HashMap<Icao, CprState>,
+    known_icao: HashSet<Icao>,
     reference_position: Option<(f64, f64)>,
 }
 
@@ -106,7 +106,7 @@ impl BeastParser {
                     return Ok(None);
                 }
                 let icao = modes::icao_from_bytes(data);
-                self.known_icao.insert(icao.clone());
+                self.known_icao.insert(icao);
                 icao
             }
             0 | 4 | 5 | 16 => {
@@ -183,7 +183,7 @@ impl BeastParser {
                     return Ok(None);
                 }
                 let icao = modes::icao_from_bytes(data);
-                self.known_icao.insert(icao.clone());
+                self.known_icao.insert(icao);
 
                 let me = &data[4..11];
                 let tc = me[0] >> 3;
@@ -191,7 +191,7 @@ impl BeastParser {
                 let payload = adsb::decode_adsb(
                     tc,
                     me,
-                    &icao,
+                    icao,
                     &mut self.cpr_state,
                     self.reference_position,
                 )?;
@@ -228,7 +228,7 @@ impl BeastParser {
                 let altitude = modes::decode_altitude_13bit(data);
                 let fs = modes::flight_status(data);
 
-                let bds_msg = modes::decode_bds(&data[4..11], &icao, signal_level);
+                let bds_msg = modes::decode_bds(&data[4..11], icao, signal_level);
                 if let Some(msg) = bds_msg {
                     return Ok(Some(msg));
                 }
@@ -254,7 +254,7 @@ impl BeastParser {
                 let squawk = modes::decode_identity(data);
                 let fs = modes::flight_status(data);
 
-                let bds_msg = modes::decode_bds(&data[4..11], &icao, signal_level);
+                let bds_msg = modes::decode_bds(&data[4..11], icao, signal_level);
                 if let Some(msg) = bds_msg {
                     return Ok(Some(msg));
                 }
@@ -277,7 +277,7 @@ impl BeastParser {
                     return Ok(None);
                 }
                 let icao = modes::icao_from_bytes(data);
-                self.known_icao.insert(icao.clone());
+                self.known_icao.insert(icao);
                 Ok(Some(AircraftMessage {
                     icao,
                     signal_level,

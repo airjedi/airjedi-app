@@ -23,7 +23,7 @@ use chrono::{DateTime, Utc};
 use log::{info, warn};
 use tokio::sync::broadcast;
 
-use crate::protocol::{AircraftMessage, MessagePayload};
+use crate::protocol::{AircraftMessage, Icao, MessagePayload};
 
 // Constants for position validation and tracking
 const NAUTICAL_MILE_CONVERSION: f64 = 1.15078; // 1 nautical mile = 1.15078 statute miles
@@ -67,8 +67,8 @@ pub struct PositionPoint {
 /// Aircraft data.
 #[derive(Debug, Clone)]
 pub struct Aircraft {
-    /// ICAO 24-bit address (hex string).
-    pub icao: String,
+    /// ICAO 24-bit aircraft address.
+    pub icao: Icao,
     /// Aircraft callsign.
     pub callsign: Option<String>,
     /// Current latitude in degrees.
@@ -99,10 +99,20 @@ pub struct Aircraft {
     pub heading: Option<f64>,
     /// Indicated or true airspeed in knots (from ADS-B velocity subtype 3/4).
     pub airspeed: Option<f64>,
-    /// Roll angle in degrees (from BEAST BDS 5,0). Positive = right wing down.
+    /// Roll angle in degrees (from BDS 5,0). Positive = right wing down.
     pub roll_angle: Option<f64>,
-    /// Track angle rate in degrees/second (from BEAST BDS 5,0). Positive = turning right.
+    /// Track angle rate in degrees/second (from BDS 5,0). Positive = turning right.
     pub track_angle_rate: Option<f64>,
+    /// MCP/FCU selected altitude in feet (from BDS 4,0).
+    pub selected_altitude: Option<i32>,
+    /// Barometric pressure setting in hPa (from BDS 4,0).
+    pub barometric_setting: Option<f64>,
+    /// Wind speed in knots (from BDS 4,4).
+    pub wind_speed: Option<u16>,
+    /// Wind direction in degrees (from BDS 4,4).
+    pub wind_direction: Option<f64>,
+    /// Static air temperature in Celsius (from BDS 4,4/4,5).
+    pub temperature: Option<f64>,
     /// Last received signal level (0.0-1.0, from BEAST protocol).
     pub signal_level: Option<f32>,
     /// Timestamp of last received message.
@@ -116,7 +126,7 @@ pub struct Aircraft {
 }
 
 impl Aircraft {
-    fn new(icao: String) -> Self {
+    fn new(icao: Icao) -> Self {
         Self {
             icao,
             callsign: None,
@@ -136,6 +146,11 @@ impl Aircraft {
             airspeed: None,
             roll_angle: None,
             track_angle_rate: None,
+            selected_altitude: None,
+            barometric_setting: None,
+            wind_speed: None,
+            wind_direction: None,
+            temperature: None,
             signal_level: None,
             last_seen: Utc::now(),
             last_position_time: None,
@@ -234,11 +249,11 @@ impl Aircraft {
 #[derive(Debug, Clone)]
 pub enum TrackerEvent {
     /// A new aircraft was added to tracking.
-    AircraftAdded(String),
+    AircraftAdded(Icao),
     /// An aircraft's position was updated.
-    PositionUpdated(String),
+    PositionUpdated(Icao),
     /// An aircraft was removed due to timeout.
-    AircraftRemoved(String),
+    AircraftRemoved(Icao),
 }
 
 /// Configuration for the aircraft tracker.
@@ -270,7 +285,7 @@ impl Default for TrackerConfig {
 
 /// Aircraft tracker that maintains state and emits events.
 pub struct AircraftTracker {
-    aircraft: HashMap<String, Aircraft>,
+    aircraft: HashMap<Icao, Aircraft>,
     center_lat: f64,
     center_lon: f64,
     max_distance_miles: f64,
@@ -321,13 +336,13 @@ impl AircraftTracker {
 
     /// Process an incoming aircraft message.
     pub fn process_message(&mut self, msg: AircraftMessage) {
-        let icao = msg.icao().to_string();
+        let icao = msg.icao();
         let is_new = !self.aircraft.contains_key(&icao);
 
         let aircraft = self
             .aircraft
-            .entry(icao.clone())
-            .or_insert_with(|| Aircraft::new(icao.clone()));
+            .entry(icao)
+            .or_insert_with(|| Aircraft::new(icao));
 
         aircraft.last_seen = Utc::now();
 
@@ -336,7 +351,7 @@ impl AircraftTracker {
         }
 
         if is_new {
-            let _ = self.event_tx.send(TrackerEvent::AircraftAdded(icao.clone()));
+            let _ = self.event_tx.send(TrackerEvent::AircraftAdded(icao));
         }
 
         match msg.payload {
@@ -439,6 +454,35 @@ impl AircraftTracker {
                     aircraft.is_on_ground = Some(on_ground);
                 }
             }
+            MessagePayload::SelectedAltitude {
+                mcp_altitude,
+                barometric_setting,
+                ..
+            } => {
+                if let Some(alt) = mcp_altitude {
+                    aircraft.selected_altitude = Some(alt);
+                }
+                if let Some(baro) = barometric_setting {
+                    aircraft.barometric_setting = Some(baro);
+                }
+            }
+            MessagePayload::Meteorological {
+                wind_speed,
+                wind_direction,
+                temperature,
+                ..
+            } => {
+                aircraft.wind_speed = wind_speed;
+                aircraft.wind_direction = wind_direction;
+                aircraft.temperature = Some(temperature);
+            }
+            MessagePayload::MeteorologicalHazard {
+                temperature, ..
+            } => {
+                if let Some(t) = temperature {
+                    aircraft.temperature = Some(t);
+                }
+            }
         }
     }
 
@@ -450,8 +494,8 @@ impl AircraftTracker {
 
     /// Get a specific aircraft by ICAO address.
     #[must_use]
-    pub fn get_by_icao(&self, icao: &str) -> Option<&Aircraft> {
-        self.aircraft.get(icao)
+    pub fn get_by_icao(&self, icao: Icao) -> Option<&Aircraft> {
+        self.aircraft.get(&icao)
     }
 
     /// Get the number of tracked aircraft.
@@ -486,7 +530,7 @@ impl AircraftTracker {
             .aircraft
             .iter()
             .filter(|(_, a)| (now - a.last_seen).num_seconds() >= self.aircraft_timeout_secs)
-            .map(|(icao, _)| icao.clone())
+            .map(|(icao, _)| *icao)
             .collect();
 
         for icao in removed {
@@ -512,7 +556,7 @@ mod tests {
         let mut tracker = AircraftTracker::new(TrackerConfig::default());
 
         tracker.process_message(AircraftMessage {
-            icao: "A1B2C3".to_string(),
+            icao: Icao(0xA1B2C3),
             signal_level: None,
             payload: MessagePayload::Identification {
                 callsign: "UAL123".to_string(),
@@ -521,7 +565,7 @@ mod tests {
         });
 
         assert_eq!(tracker.len(), 1);
-        let aircraft = tracker.get_by_icao("A1B2C3").unwrap();
+        let aircraft = tracker.get_by_icao(Icao(0xA1B2C3)).unwrap();
         assert_eq!(aircraft.callsign.as_deref(), Some("UAL123"));
     }
 
@@ -533,7 +577,7 @@ mod tests {
         });
 
         tracker.process_message(AircraftMessage {
-            icao: "A1B2C3".to_string(),
+            icao: Icao(0xA1B2C3),
             signal_level: None,
             payload: MessagePayload::Position {
                 latitude: 34.0,
@@ -546,7 +590,7 @@ mod tests {
             },
         });
 
-        let aircraft = tracker.get_by_icao("A1B2C3").unwrap();
+        let aircraft = tracker.get_by_icao(Icao(0xA1B2C3)).unwrap();
         assert_eq!(aircraft.latitude, Some(34.0));
         assert_eq!(aircraft.longitude, Some(-118.5));
         assert_eq!(aircraft.altitude, Some(35000));
@@ -560,9 +604,8 @@ mod tests {
             ..Default::default()
         });
 
-        // Position far from center should be rejected (LAX to NYC)
         tracker.process_message(AircraftMessage {
-            icao: "A1B2C3".to_string(),
+            icao: Icao(0xA1B2C3),
             signal_level: None,
             payload: MessagePayload::Position {
                 latitude: 40.6413,
@@ -575,7 +618,7 @@ mod tests {
             },
         });
 
-        let aircraft = tracker.get_by_icao("A1B2C3").unwrap();
+        let aircraft = tracker.get_by_icao(Icao(0xA1B2C3)).unwrap();
         assert!(aircraft.latitude.is_none());
     }
 }

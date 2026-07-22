@@ -34,9 +34,16 @@ missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 module_name_repetitions = "allow"
 
+[features]
+default = ["decoder-rs1090"]
+decoder-rs1090 = ["dep:rs1090"]
+
 [dependencies]
+async-trait = "0.1"
+bytes = "1"
 tokio = { version = "1", features = ["net", "io-util", "sync", "time", "rt", "macros"] }
 tokio-util = "0.7"
 chrono = { version = "0.4", features = ["serde"] }
 log = "0.4"
 thiserror = "1"
+rs1090 = { version = "0.6", optional = true }

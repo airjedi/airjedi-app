@@ -8,6 +8,7 @@ use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::time::Instant;
 
+use adsb_client::Icao;
 use crate::adsb::connection::FeedConnectionManager;
 
 /// Tracks the last-pushed state per ICAO to avoid sending redundant observations.
@@ -23,7 +24,7 @@ const MAX_PUSH_INTERVAL_SECS: u64 = 5;
 pub fn adsb_to_fusion_system(
     feed_mgr: Option<Res<FeedConnectionManager>>,
     mut buffer: ResMut<ObservationBuffer>,
-    mut last_pushed: Local<HashMap<String, LastPushedState>>,
+    mut last_pushed: Local<HashMap<Icao, LastPushedState>>,
 ) {
     let Some(feed_mgr) = feed_mgr else {
         return;
@@ -45,7 +46,7 @@ pub fn adsb_to_fusion_system(
                 continue;
             };
 
-            seen_icaos.push(ac.icao.clone());
+            seen_icaos.push(ac.icao);
 
             if let Some(prev) = last_pushed.get(&ac.icao) {
                 if prev.last_seen == ac.last_seen {
@@ -59,7 +60,7 @@ pub fn adsb_to_fusion_system(
                 }
             }
             last_pushed.insert(
-                ac.icao.clone(),
+                ac.icao,
                 LastPushedState {
                     last_seen: ac.last_seen,
                     lat,
@@ -76,7 +77,7 @@ pub fn adsb_to_fusion_system(
 
     // Clean up stale entries
     if last_pushed.len() > seen_icaos.len() * 2 {
-        let active: std::collections::HashSet<String> = seen_icaos.into_iter().collect();
+        let active: std::collections::HashSet<Icao> = seen_icaos.into_iter().collect();
         last_pushed.retain(|icao, _| active.contains(icao));
     }
 }
@@ -121,7 +122,7 @@ fn adsb_aircraft_to_observation(
         receipt_time: Utc::now(),
         target_id: Some(TargetId {
             domain: TargetDomain::Air,
-            id: ac.icao.clone(),
+            id: ac.icao.to_string(),
             id_type: IdentifierType::Icao,
         }),
         measurement: Measurement::PositionVelocity3D {
