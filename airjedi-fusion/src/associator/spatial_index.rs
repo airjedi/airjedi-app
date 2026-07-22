@@ -2,6 +2,7 @@ use crate::prelude_imports::*;
 use crate::types::TrackId;
 use kiddo::float::kdtree::KdTree;
 use std::collections::HashMap;
+use std::time::Instant;
 
 type Tree = KdTree<f64, u64, 3, 1024, u32>;
 
@@ -13,7 +14,10 @@ pub struct SpatialIndex {
     positions: HashMap<u64, [f64; 3]>,
     next_item: u64,
     search_radius_deg: f64,
+    last_rebuild: Instant,
 }
+
+const MIN_REBUILD_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 
 impl SpatialIndex {
     #[must_use]
@@ -25,6 +29,7 @@ impl SpatialIndex {
             positions: HashMap::new(),
             next_item: 0,
             search_radius_deg,
+            last_rebuild: Instant::now(),
         }
     }
 
@@ -79,7 +84,9 @@ impl SpatialIndex {
     #[must_use]
     pub fn needs_compaction(&self) -> bool {
         let live = self.track_to_item.len() as u64;
-        live > 0 && self.next_item > live * 3
+        live > 0
+            && self.next_item > live * 3
+            && self.last_rebuild.elapsed() >= MIN_REBUILD_INTERVAL
     }
 
     pub fn rebuild(&mut self) {
@@ -104,6 +111,7 @@ impl SpatialIndex {
         self.item_to_track = new_item_to_track;
         self.positions = new_positions;
         self.next_item = next;
+        self.last_rebuild = Instant::now();
     }
 }
 

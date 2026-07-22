@@ -236,7 +236,6 @@ pub fn track_cleanup_system(
     lifecycle: Res<LifecycleProfiles>,
     tracks: Query<(Entity, &Track, &TrackQuality, &TargetClassification)>,
 ) {
-    let mut removed = false;
     for (entity, track, quality, classification) in &tracks {
         if quality.status == TrackStatus::Lost {
             let config = lifecycle.get(&classification.category);
@@ -244,12 +243,8 @@ pub fn track_cleanup_system(
             if quality.staleness > cleanup_after {
                 spatial_index.remove_track(&track.id);
                 commands.entity(entity).despawn();
-                removed = true;
             }
         }
-    }
-    if removed {
-        spatial_index.rebuild();
     }
 }
 
