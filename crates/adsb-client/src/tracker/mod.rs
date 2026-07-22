@@ -99,6 +99,20 @@ pub struct Aircraft {
     pub heading: Option<f64>,
     /// Indicated or true airspeed in knots (from ADS-B velocity subtype 3/4).
     pub airspeed: Option<f64>,
+    /// Roll angle in degrees (from BDS 5,0). Positive = right wing down.
+    pub roll_angle: Option<f64>,
+    /// Track angle rate in degrees/second (from BDS 5,0). Positive = turning right.
+    pub track_angle_rate: Option<f64>,
+    /// MCP/FCU selected altitude in feet (from BDS 4,0).
+    pub selected_altitude: Option<i32>,
+    /// Barometric pressure setting in hPa (from BDS 4,0).
+    pub barometric_setting: Option<f64>,
+    /// Wind speed in knots (from BDS 4,4).
+    pub wind_speed: Option<u16>,
+    /// Wind direction in degrees (from BDS 4,4).
+    pub wind_direction: Option<f64>,
+    /// Static air temperature in Celsius (from BDS 4,4/4,5).
+    pub temperature: Option<f64>,
     /// Last received signal level (0.0-1.0, from BEAST protocol).
     pub signal_level: Option<f32>,
     /// Timestamp of last received message.
@@ -130,6 +144,13 @@ impl Aircraft {
             category: None,
             heading: None,
             airspeed: None,
+            roll_angle: None,
+            track_angle_rate: None,
+            selected_altitude: None,
+            barometric_setting: None,
+            wind_speed: None,
+            wind_direction: None,
+            temperature: None,
             signal_level: None,
             last_seen: Utc::now(),
             last_position_time: None,
@@ -384,6 +405,8 @@ impl AircraftTracker {
                 is_on_ground,
                 heading,
                 airspeed,
+                roll_angle,
+                track_angle_rate,
             } => {
                 aircraft.velocity = Some(speed);
                 aircraft.track = Some(track);
@@ -396,6 +419,12 @@ impl AircraftTracker {
                 }
                 if let Some(aspd) = airspeed {
                     aircraft.airspeed = Some(aspd);
+                }
+                if let Some(ra) = roll_angle {
+                    aircraft.roll_angle = Some(ra);
+                }
+                if let Some(tar) = track_angle_rate {
+                    aircraft.track_angle_rate = Some(tar);
                 }
             }
             MessagePayload::Altitude {
@@ -423,6 +452,35 @@ impl AircraftTracker {
                 }
                 if let Some(on_ground) = is_on_ground {
                     aircraft.is_on_ground = Some(on_ground);
+                }
+            }
+            MessagePayload::SelectedAltitude {
+                mcp_altitude,
+                barometric_setting,
+                ..
+            } => {
+                if let Some(alt) = mcp_altitude {
+                    aircraft.selected_altitude = Some(alt);
+                }
+                if let Some(baro) = barometric_setting {
+                    aircraft.barometric_setting = Some(baro);
+                }
+            }
+            MessagePayload::Meteorological {
+                wind_speed,
+                wind_direction,
+                temperature,
+                ..
+            } => {
+                aircraft.wind_speed = wind_speed;
+                aircraft.wind_direction = wind_direction;
+                aircraft.temperature = Some(temperature);
+            }
+            MessagePayload::MeteorologicalHazard {
+                temperature, ..
+            } => {
+                if let Some(t) = temperature {
+                    aircraft.temperature = Some(t);
                 }
             }
         }

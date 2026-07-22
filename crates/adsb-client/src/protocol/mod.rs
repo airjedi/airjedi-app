@@ -153,6 +153,10 @@ pub enum MessagePayload {
         heading: Option<f64>,
         /// Indicated or true airspeed in knots (from BEAST TC19 subtype 3/4). None for SBS-1.
         airspeed: Option<f64>,
+        /// Roll angle in degrees (from BDS 5,0). Positive = right wing down.
+        roll_angle: Option<f64>,
+        /// Track angle rate in degrees/second (from BDS 5,0). Positive = turning right.
+        track_angle_rate: Option<f64>,
     },
 
     /// Surveillance update (altitude, squawk, and status flags).
@@ -169,6 +173,44 @@ pub enum MessagePayload {
         spi: Option<bool>,
         /// Whether the aircraft is on the ground.
         is_on_ground: Option<bool>,
+    },
+
+    /// Selected vertical intention (BDS 4,0).
+    SelectedAltitude {
+        /// MCP/FCU selected altitude in feet.
+        mcp_altitude: Option<i32>,
+        /// FMS selected altitude in feet.
+        fms_altitude: Option<i32>,
+        /// Barometric pressure setting in hPa (QNH).
+        barometric_setting: Option<f64>,
+    },
+
+    /// Meteorological routine air report (BDS 4,4).
+    Meteorological {
+        /// Wind speed in knots.
+        wind_speed: Option<u16>,
+        /// Wind direction in degrees.
+        wind_direction: Option<f64>,
+        /// Static air temperature in Celsius.
+        temperature: f64,
+        /// Static pressure in hPa.
+        pressure: Option<u16>,
+    },
+
+    /// Meteorological hazard report (BDS 4,5).
+    MeteorologicalHazard {
+        /// Turbulence severity (0-3).
+        turbulence: Option<u8>,
+        /// Wind shear severity (0-3).
+        wind_shear: Option<u8>,
+        /// Icing severity (0-3).
+        icing: Option<u8>,
+        /// Wake vortex severity (0-3).
+        wake_vortex: Option<u8>,
+        /// Static air temperature in Celsius.
+        temperature: Option<f64>,
+        /// Static pressure in hPa.
+        pressure: Option<u16>,
     },
 }
 

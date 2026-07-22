@@ -227,6 +227,8 @@ fn parse_basestation_line(line: &str) -> Result<Option<AircraftMessage>, ParseEr
                         is_on_ground,
                         heading: None,
                         airspeed: None,
+                        roll_angle: None,
+                        track_angle_rate: None,
                     })));
                 }
             }
