@@ -179,8 +179,8 @@ fn horizontal_uncertainty_m(cov: &DMatrix<f64>, lat_deg: f64, lon_deg: f64) -> f
 }
 
 /// Scale the observed turn rate based on IMM mode probabilities.
-/// When CV mode (index 0) dominates, the aircraft is likely flying straight - damp the
-/// turn rate to reduce noise impact. When high-maneuver mode (index 1) dominates, trust it more.
+/// When CV mode (index 0) dominates, damp heavily - the recorded turn is likely historical noise.
+/// When high-maneuver mode (index 1) dominates, trust the rate but never amplify beyond 1.0x.
 fn mode_weighted_turn_rate(
     turn_rate_dps: f64,
     mode_info: Option<&ModeInfo>,
@@ -191,8 +191,8 @@ fn mode_weighted_turn_rate(
         Some(info) => {
             let cv_prob = info.probabilities.first().copied().unwrap_or(0.5);
             let maneuver_prob = info.probabilities.get(1).copied().unwrap_or(0.5);
-            // CV prob 1.0 -> 0.25x damping; maneuver prob 1.0 -> 1.2x amplification
-            cv_prob * 0.25 + maneuver_prob * 1.2
+            // CV dominant -> 0.1x (strongly damp stale turn); maneuver dominant -> 1.0x (trust it)
+            cv_prob * 0.1 + maneuver_prob * 1.0
         }
     };
     (turn_rate_dps * weight).clamp(-max_turn_rate, max_turn_rate)
@@ -233,13 +233,20 @@ fn sample_predicted_track(
     let mut samples = Vec::with_capacity(config.sample_count);
 
     let effective_turn = mode_weighted_turn_rate(turn_rate_dps, mode_info, config.max_turn_rate_dps);
-    let applying_turn = effective_turn.abs() > TURN_RATE_DEAD_ZONE;
 
     for i in 0..config.sample_count {
+        // Turn rate decays exponentially over the prediction horizon so the far end asymptotes
+        // toward straight flight. Half-life ~= 1/3 of the horizon. This prevents turn
+        // compounding into full loops when the aircraft is only briefly maneuvering.
+        let horizon_frac = (i + 1) as f64 / config.sample_count as f64;
+        let turn_decay = (-3.0 * horizon_frac).exp();
+        let step_turn = effective_turn * turn_decay;
+        let applying_turn = step_turn.abs() > TURN_RATE_DEAD_ZONE;
+
         if applying_turn {
             let (lat, lon, _) = cloned.position_geodetic();
             let vel = cloned.velocity_ecef();
-            let rotated = rotate_velocity_ecef(&vel, lat, lon, effective_turn * dt);
+            let rotated = rotate_velocity_ecef(&vel, lat, lon, step_turn * dt);
 
             let state = cloned.variant.state_vec();
             let cov = cloned.variant.covariance_mat();
@@ -512,20 +519,21 @@ mod tests {
             dominant_mode: 0,
         };
         let weighted = mode_weighted_turn_rate(3.0, Some(&mode_info), 6.0);
-        // 0.9*0.25 + 0.1*1.2 = 0.345, so 3.0*0.345 = 1.035
-        assert!(weighted < 3.0, "CV dominant should damp turn rate");
+        // 0.9*0.1 + 0.1*1.0 = 0.19, so 3.0*0.19 = 0.57
+        assert!(weighted < 1.0, "CV dominant should strongly damp turn rate");
         assert!(weighted > 0.0);
     }
 
     #[test]
-    fn test_mode_weighted_turn_rate_maneuver_amplifies() {
+    fn test_mode_weighted_turn_rate_maneuver_trusts_not_amplifies() {
         let mode_info = ModeInfo {
             probabilities: vec![0.1, 0.9],
             dominant_mode: 1,
         };
         let weighted = mode_weighted_turn_rate(3.0, Some(&mode_info), 6.0);
-        // 0.1*0.25 + 0.9*1.2 = 1.105, so 3.0*1.105 = 3.315
-        assert!(weighted > 3.0, "Maneuver dominant should amplify turn rate");
+        // 0.1*0.1 + 0.9*1.0 = 0.91, so 3.0*0.91 = 2.73
+        assert!(weighted < 3.0, "Maneuver dominant should trust but not amplify");
+        assert!(weighted > 2.0, "Should retain most of the raw turn rate");
     }
 
     #[test]
@@ -647,23 +655,25 @@ mod tests {
         if heading_delta > 180.0 { heading_delta -= 360.0; }
         if heading_delta < -180.0 { heading_delta += 360.0; }
 
-        let dt = config.horizon_seconds as f64 / config.sample_count as f64;
-        let expected_delta = (config.sample_count - 1) as f64 * turn_rate * dt;
-
         println!(
-            "First heading: {:.1}, Last heading: {:.1}, Delta: {:.1}, Expected: {:.1}",
-            first.heading_deg, last.heading_deg, heading_delta, expected_delta
+            "First heading: {:.1}, Last heading: {:.1}, Delta: {:.1}",
+            first.heading_deg, last.heading_deg, heading_delta
         );
         println!(
             "First pos: ({:.6}, {:.6}), Last pos: ({:.6}, {:.6})",
             first.lat, first.lon, last.lat, last.lon
         );
 
+        // With temporal decay (exp(-3*t/T)), total heading change for a 3 deg/s turn over 45s
+        // is ~40 degrees (not 130), and at the near end the heading is still changing.
+        // Verify: heading changes in the right direction, is bounded by decay, and exceeds a floor.
+        let no_decay_delta = (config.sample_count - 1) as f64 * turn_rate
+            * (config.horizon_seconds as f64 / config.sample_count as f64);
+        assert!(heading_delta > 15.0, "Should turn at least 15 degrees: {:.1}", heading_delta);
         assert!(
-            (heading_delta - expected_delta).abs() < expected_delta * 0.15,
-            "Heading delta {:.1} too far from expected {:.1}",
-            heading_delta,
-            expected_delta
+            heading_delta < no_decay_delta,
+            "Decay must reduce total turn from {:.1} to {:.1}",
+            no_decay_delta, heading_delta
         );
     }
 
