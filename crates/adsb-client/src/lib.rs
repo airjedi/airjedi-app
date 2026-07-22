@@ -15,12 +15,12 @@
 //! ADS-B client library for connecting to and parsing ADS-B data feeds.
 //!
 //! This library provides a modular, reusable architecture for receiving and
-//! processing ADS-B aircraft tracking data. It supports multiple layers that
-//! can be used independently or composed together:
+//! processing ADS-B aircraft tracking data. It uses a layered pipeline:
 //!
-//! - **Protocol layer**: Message parsing (BaseStation/SBS-1 and BEAST binary)
-//! - **Tracker layer**: Aircraft state management, position history, and validation
-//! - **Connection layer**: Async TCP with automatic reconnection and address hot-reload
+//! - **Transport layer**: Async byte delivery (TCP, future: NATS, Zenoh, SDR)
+//! - **Framing layer**: Protocol frame extraction (BEAST binary, SBS-1 lines)
+//! - **Decoder layer**: Pluggable Mode-S decode (native or rs1090-backed)
+//! - **Tracker layer**: Aircraft state management, position history, validation
 //!
 //! # Quick Start
 //!
@@ -94,7 +94,7 @@ pub use decoder::{BaseStationDecoder, Decoder, NativeDecoder};
 #[cfg(feature = "decoder-rs1090")]
 pub use decoder::Rs1090Decoder;
 pub use framing::{BeastFramer, Frame, FrameType, Framer, LineFramer};
-pub use protocol::{AircraftMessage, BaseStationParser, BeastParser, Icao, MessagePayload, ParseError, Protocol};
+pub use protocol::{AircraftMessage, Icao, MessagePayload, ParseError};
 pub use tcp::{Connection, ConnectionConfig, ConnectionEvent, ConnectionState, FrameMode};
 pub use tracker::{Aircraft, AircraftTracker, PositionPoint, TrackerConfig, TrackerEvent};
 pub use transport::{TcpTransport, Transport, TransportEvent};
