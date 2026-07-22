@@ -1,8 +1,10 @@
+mod basestation;
 mod native;
 
 use crate::framing::Frame;
 use crate::protocol::AircraftMessage;
 
+pub use basestation::BaseStationDecoder;
 pub use native::NativeDecoder;
 
 /// Decodes protocol frames into aircraft messages.

@@ -90,12 +90,12 @@ use std::time::Duration;
 use log::warn;
 use tokio::sync::broadcast;
 
-pub use decoder::{Decoder, NativeDecoder};
+pub use decoder::{BaseStationDecoder, Decoder, NativeDecoder};
 pub use framing::{BeastFramer, Frame, FrameType, Framer, LineFramer};
 pub use protocol::{AircraftMessage, BaseStationParser, BeastParser, Icao, MessagePayload, ParseError, Protocol};
 pub use tcp::{Connection, ConnectionConfig, ConnectionEvent, ConnectionState, FrameMode};
 pub use tracker::{Aircraft, AircraftTracker, PositionPoint, TrackerConfig, TrackerEvent};
-pub use transport::{Transport, TransportEvent};
+pub use transport::{TcpTransport, Transport, TransportEvent};
 
 /// Protocol type for the client.
 #[derive(Debug, Clone, Copy, Default)]
