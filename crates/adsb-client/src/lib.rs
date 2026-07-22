@@ -131,28 +131,22 @@ impl Default for ClientConfig {
     }
 }
 
-/// Parser state that handles both protocols behind a common interface.
-enum ParserState {
-    BaseStation(BaseStationParser),
-    Beast(BeastParser),
-}
-
-/// Full-stack ADS-B client that wires all layers together.
+/// Full-stack ADS-B client using layered Transport + Framer + Decoder architecture.
 ///
-/// The client manages a TCP connection, parses incoming messages using the
-/// configured protocol, and maintains aircraft state in a tracker.
+/// The client manages an async transport, extracts protocol frames via a framer,
+/// decodes them through a pluggable decoder, and maintains aircraft state in a tracker.
 pub struct Client {
     tracker: Arc<RwLock<AircraftTracker>>,
-    connection: Connection,
+    transport: Box<dyn Transport>,
+    framer: Box<dyn Framer>,
+    decoder: Box<dyn Decoder>,
     connection_state: Arc<RwLock<ConnectionState>>,
-    parser: ParserState,
     messages_processed: Arc<AtomicU64>,
 }
 
 impl std::fmt::Debug for Client {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Client")
-            .field("connection", &self.connection)
             .finish_non_exhaustive()
     }
 }
@@ -166,24 +160,31 @@ impl Client {
     pub fn spawn(config: ClientConfig) -> Self {
         let tracker = Arc::new(RwLock::new(AircraftTracker::new(config.tracker.clone())));
 
-        // Set frame mode based on protocol
         let mut conn_config = config.connection;
-        let parser = match config.protocol {
-            ProtocolType::BaseStation => {
-                conn_config.frame_mode = FrameMode::Line;
-                ParserState::BaseStation(BaseStationParser::new())
-            }
-            ProtocolType::Beast => {
-                conn_config.frame_mode = FrameMode::Raw;
-                let mut beast = BeastParser::new();
-                if let Some((lat, lon)) = config.tracker.center {
-                    beast.set_reference_position(lat, lon);
+        let (transport, framer, decoder): (Box<dyn Transport>, Box<dyn Framer>, Box<dyn Decoder>) =
+            match config.protocol {
+                ProtocolType::BaseStation => {
+                    conn_config.frame_mode = FrameMode::Line;
+                    (
+                        Box::new(TcpTransport::new(conn_config)),
+                        Box::new(LineFramer::new()),
+                        Box::new(BaseStationDecoder::new()),
+                    )
                 }
-                ParserState::Beast(beast)
-            }
-        };
+                ProtocolType::Beast => {
+                    conn_config.frame_mode = FrameMode::Raw;
+                    let mut dec = NativeDecoder::new();
+                    if let Some((lat, lon)) = config.tracker.center {
+                        dec.set_reference_position(lat, lon);
+                    }
+                    (
+                        Box::new(TcpTransport::new(conn_config)),
+                        Box::new(BeastFramer::new()),
+                        Box::new(dec),
+                    )
+                }
+            };
 
-        let connection = Connection::spawn(conn_config);
         let connection_state = Arc::new(RwLock::new(ConnectionState::Disconnected));
 
         let tracker_clone = Arc::clone(&tracker);
@@ -203,9 +204,10 @@ impl Client {
 
         Self {
             tracker,
-            connection,
+            transport,
+            framer,
+            decoder,
             connection_state,
-            parser,
             messages_processed: Arc::new(AtomicU64::new(0)),
         }
     }
@@ -220,25 +222,31 @@ impl Client {
     ///
     /// This should be called in a loop to process incoming data.
     pub async fn process_next(&mut self) -> bool {
-        let event = match self.connection.recv().await {
+        let event = match self.transport.recv().await {
             Some(event) => event,
             None => return false,
         };
 
         match event {
-            ConnectionEvent::StateChanged(state) => {
-                if state == ConnectionState::Connected {
-                    match &mut self.parser {
-                        ParserState::BaseStation(p) => p.reset(),
-                        ParserState::Beast(p) => p.reset(),
-                    }
-                }
+            TransportEvent::Connected => {
+                self.framer.reset();
+                self.decoder.reset();
                 if let Ok(mut s) = self.connection_state.write() {
-                    *s = state;
+                    *s = ConnectionState::Connected;
                 }
             }
-            ConnectionEvent::DataReceived(data) => {
+            TransportEvent::Disconnected => {
+                if let Ok(mut s) = self.connection_state.write() {
+                    *s = ConnectionState::Disconnected;
+                }
+            }
+            TransportEvent::Data(data) => {
                 self.process_data(&data);
+            }
+            TransportEvent::Error(e) => {
+                if let Ok(mut s) = self.connection_state.write() {
+                    *s = ConnectionState::Error(e);
+                }
             }
         }
 
@@ -246,49 +254,13 @@ impl Client {
     }
 
     fn process_data(&mut self, data: &[u8]) {
-        match &mut self.parser {
-            ParserState::BaseStation(parser) => {
-                match parser.parse(data) {
-                    Ok(Some(msg)) => {
-                        self.messages_processed.fetch_add(1, Ordering::Relaxed);
-                        if let Ok(mut tracker) = self.tracker.write() {
-                            tracker.process_message(msg);
-                        }
-                    }
-                    Ok(None) => {}
-                    Err(e) => {
-                        warn!("Parse error: {}", e);
-                    }
-                }
-            }
-            ParserState::Beast(parser) => {
-                match parser.parse(data) {
-                    Ok(Some(msg)) => {
-                        self.messages_processed.fetch_add(1, Ordering::Relaxed);
-                        if let Ok(mut tracker) = self.tracker.write() {
-                            tracker.process_message(msg);
-                        }
-                    }
-                    Ok(None) => {}
-                    Err(e) => {
-                        warn!("BEAST parse error: {}", e);
-                    }
-                }
-
-                loop {
-                    match parser.parse(&[]) {
-                        Ok(Some(msg)) => {
-                            self.messages_processed.fetch_add(1, Ordering::Relaxed);
-                            if let Ok(mut tracker) = self.tracker.write() {
-                                tracker.process_message(msg);
-                            }
-                        }
-                        Ok(None) => break,
-                        Err(e) => {
-                            warn!("BEAST parse error: {}", e);
-                            break;
-                        }
-                    }
+        self.framer.feed(data);
+        while let Some(frame) = self.framer.next_frame() {
+            let messages = self.decoder.decode(&frame);
+            for msg in messages {
+                self.messages_processed.fetch_add(1, Ordering::Relaxed);
+                if let Ok(mut tracker) = self.tracker.write() {
+                    tracker.process_message(msg);
                 }
             }
         }
@@ -342,13 +314,13 @@ impl Client {
 
     /// Change the server address.
     pub fn set_address(&self, address: String) {
-        self.connection.set_address(address);
+        self.transport.set_address(address);
     }
 
     /// Get the current server address.
     #[must_use]
     pub fn current_address(&self) -> String {
-        self.connection.current_address()
+        self.transport.current_address()
     }
 
     /// Set the center point for distance filtering.
@@ -360,6 +332,6 @@ impl Client {
 
     /// Shut down the client.
     pub fn shutdown(&self) {
-        self.connection.shutdown();
+        self.transport.shutdown();
     }
 }
