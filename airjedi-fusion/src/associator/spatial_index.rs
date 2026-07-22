@@ -1,82 +1,101 @@
 use crate::prelude_imports::*;
 use crate::types::TrackId;
-use std::collections::{HashMap, HashSet};
+use kiddo::KdTree;
+use std::collections::HashMap;
 
 #[derive(Debug, Resource)]
 pub struct SpatialIndex {
-    grid: HashMap<(i32, i32), HashSet<TrackId>>,
-    track_cells: HashMap<TrackId, (i32, i32)>,
-    cell_size_deg: f64,
+    tree: KdTree<f64, 3>,
+    track_to_item: HashMap<TrackId, u64>,
+    item_to_track: HashMap<u64, TrackId>,
+    positions: HashMap<u64, [f64; 3]>,
+    next_item: u64,
+    search_radius_deg: f64,
 }
 
 impl SpatialIndex {
     #[must_use]
-    pub fn new(cell_size_deg: f64) -> Self {
+    pub fn new(search_radius_deg: f64) -> Self {
         Self {
-            grid: HashMap::new(),
-            track_cells: HashMap::new(),
-            cell_size_deg,
+            tree: KdTree::new(),
+            track_to_item: HashMap::new(),
+            item_to_track: HashMap::new(),
+            positions: HashMap::new(),
+            next_item: 0,
+            search_radius_deg,
         }
-    }
-
-    fn cell_for(&self, lat_deg: f64, lon_deg: f64) -> (i32, i32) {
-        #[allow(clippy::cast_possible_truncation)]
-        let lat_bin = (lat_deg / self.cell_size_deg).floor() as i32;
-        #[allow(clippy::cast_possible_truncation)]
-        let lon_bin = (lon_deg / self.cell_size_deg).floor() as i32;
-        (lat_bin, lon_bin)
     }
 
     pub fn update_track(&mut self, track_id: &TrackId, lat_deg: f64, lon_deg: f64) {
-        let new_cell = self.cell_for(lat_deg, lon_deg);
-
-        if let Some(old_cell) = self.track_cells.get(track_id) {
-            if *old_cell == new_cell {
-                return;
-            }
-            if let Some(set) = self.grid.get_mut(old_cell) {
-                set.remove(track_id);
-                if set.is_empty() {
-                    self.grid.remove(old_cell);
+        if let Some(&item_id) = self.track_to_item.get(track_id) {
+            if let Some(old_pos) = self.positions.get(&item_id) {
+                let dlat = (old_pos[0] - lat_deg).abs();
+                let dlon = (old_pos[1] - lon_deg).abs();
+                if dlat < 0.001 && dlon < 0.001 {
+                    return;
                 }
             }
+            self.item_to_track.remove(&item_id);
+            self.positions.remove(&item_id);
+            self.track_to_item.remove(track_id);
         }
 
-        self.grid
-            .entry(new_cell)
-            .or_default()
-            .insert(track_id.clone());
-        self.track_cells.insert(track_id.clone(), new_cell);
+        let item_id = self.next_item;
+        self.next_item += 1;
+
+        let point = [lat_deg, lon_deg, 0.0];
+        self.tree.add(&point, item_id);
+        self.track_to_item.insert(track_id.clone(), item_id);
+        self.item_to_track.insert(item_id, track_id.clone());
+        self.positions.insert(item_id, point);
     }
 
     pub fn remove_track(&mut self, track_id: &TrackId) {
-        if let Some(cell) = self.track_cells.remove(track_id) {
-            if let Some(set) = self.grid.get_mut(&cell) {
-                set.remove(track_id);
-                if set.is_empty() {
-                    self.grid.remove(&cell);
-                }
-            }
+        if let Some(item_id) = self.track_to_item.remove(track_id) {
+            self.item_to_track.remove(&item_id);
+            self.positions.remove(&item_id);
         }
     }
 
     #[must_use]
     pub fn nearby_tracks(&self, lat_deg: f64, lon_deg: f64) -> Vec<TrackId> {
-        let (cy, cx) = self.cell_for(lat_deg, lon_deg);
-        let mut result = Vec::new();
-        for dy in -1..=1 {
-            for dx in -1..=1 {
-                if let Some(set) = self.grid.get(&(cy + dy, cx + dx)) {
-                    result.extend(set.iter().cloned());
-                }
-            }
-        }
-        result
+        let query = [lat_deg, lon_deg, 0.0];
+        let radius_sq = self.search_radius_deg * self.search_radius_deg;
+
+        self.tree
+            .within_unsorted::<kiddo::SquaredEuclidean>(&query, radius_sq)
+            .iter()
+            .filter_map(|entry| self.item_to_track.get(&entry.item).cloned())
+            .collect()
     }
 
     #[must_use]
     pub fn track_count(&self) -> usize {
-        self.track_cells.len()
+        self.track_to_item.len()
+    }
+
+    pub fn rebuild(&mut self) {
+        let mut new_tree = KdTree::new();
+        let mut new_item_to_track = HashMap::new();
+        let mut new_track_to_item = HashMap::new();
+        let mut new_positions = HashMap::new();
+        let mut next = 0u64;
+
+        for (track_id, &old_item) in &self.track_to_item {
+            if let Some(&pos) = self.positions.get(&old_item) {
+                new_tree.add(&pos, next);
+                new_track_to_item.insert(track_id.clone(), next);
+                new_item_to_track.insert(next, track_id.clone());
+                new_positions.insert(next, pos);
+                next += 1;
+            }
+        }
+
+        self.tree = new_tree;
+        self.track_to_item = new_track_to_item;
+        self.item_to_track = new_item_to_track;
+        self.positions = new_positions;
+        self.next_item = next;
     }
 }
 
@@ -114,17 +133,19 @@ mod tests {
         let t1 = TrackId::new();
         idx.update_track(&t1, 37.0, -97.0);
         idx.remove_track(&t1);
+        idx.rebuild();
         let nearby = idx.nearby_tracks(37.0, -97.0);
         assert!(nearby.is_empty());
         assert_eq!(idx.track_count(), 0);
     }
 
     #[test]
-    fn track_moves_between_cells() {
+    fn track_moves_between_positions() {
         let mut idx = SpatialIndex::new(0.5);
         let t1 = TrackId::new();
         idx.update_track(&t1, 37.0, -97.0);
         idx.update_track(&t1, 50.0, -50.0);
+        idx.rebuild();
         let near_old = idx.nearby_tracks(37.0, -97.0);
         let near_new = idx.nearby_tracks(50.0, -50.0);
         assert!(!near_old.contains(&t1));
@@ -132,11 +153,25 @@ mod tests {
     }
 
     #[test]
-    fn same_cell_no_churn() {
+    fn small_move_no_churn() {
         let mut idx = SpatialIndex::new(0.5);
         let t1 = TrackId::new();
         idx.update_track(&t1, 37.0, -97.0);
-        idx.update_track(&t1, 37.01, -97.01); // same 0.5 deg cell
+        idx.update_track(&t1, 37.0001, -97.0001);
         assert_eq!(idx.track_count(), 1);
+    }
+
+    #[test]
+    fn rebuild_compacts() {
+        let mut idx = SpatialIndex::new(0.5);
+        let t1 = TrackId::new();
+        let t2 = TrackId::new();
+        idx.update_track(&t1, 37.0, -97.0);
+        idx.update_track(&t2, 37.1, -97.1);
+        idx.remove_track(&t1);
+        idx.rebuild();
+        assert_eq!(idx.track_count(), 1);
+        let nearby = idx.nearby_tracks(37.1, -97.1);
+        assert!(nearby.contains(&t2));
     }
 }

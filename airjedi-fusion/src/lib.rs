@@ -3,6 +3,7 @@ pub mod classification;
 pub mod config;
 pub mod coord;
 pub mod filter;
+pub mod metrics;
 pub mod prelude_imports;
 pub mod sensor;
 pub mod store;

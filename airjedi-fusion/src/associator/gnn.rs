@@ -93,32 +93,20 @@ impl GnnAssociator {
             }
         }
 
-        // Greedy assignment sorted by cost (upgrade to JV for optimality later)
-        costs.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+        let assignments =
+            optimal_assignment(&costs, observations.len(), tracks.len(), &id_matched_obs);
 
-        let mut assigned_obs = vec![false; observations.len()];
-        let mut assigned_tracks = vec![false; tracks.len()];
-        let mut assignments = Vec::new();
-
-        for (obs_idx, track_idx, distance) in &costs {
-            if !assigned_obs[*obs_idx] && !assigned_tracks[*track_idx] {
-                #[allow(clippy::cast_possible_truncation)]
-                assignments.push(Assignment {
-                    observation_idx: *obs_idx,
-                    track_idx: *track_idx,
-                    distance: *distance,
-                    confidence: (1.0 - distance / 10.0).clamp(0.0, 1.0) as f32,
-                });
-                assigned_obs[*obs_idx] = true;
-                assigned_tracks[*track_idx] = true;
-            }
-        }
+        let assigned_obs_set: HashSet<usize> =
+            assignments.iter().map(|a| a.observation_idx).collect();
+        let assigned_track_set: HashSet<usize> =
+            assignments.iter().map(|a| a.track_idx).collect();
 
         let unassigned_observations: Vec<usize> = (0..observations.len())
-            .filter(|i| !assigned_obs[*i])
+            .filter(|i| !assigned_obs_set.contains(i))
             .collect();
-        let unassigned_tracks: Vec<usize> =
-            (0..tracks.len()).filter(|i| !assigned_tracks[*i]).collect();
+        let unassigned_tracks: Vec<usize> = (0..tracks.len())
+            .filter(|i| !assigned_track_set.contains(i))
+            .collect();
 
         AssociationResult {
             assignments,
@@ -126,6 +114,92 @@ impl GnnAssociator {
             unassigned_tracks,
         }
     }
+}
+
+fn optimal_assignment(
+    costs: &[(usize, usize, f64)],
+    n_obs: usize,
+    n_tracks: usize,
+    id_matched_obs: &HashSet<usize>,
+) -> Vec<Assignment> {
+    // Separate ID-forced assignments from gated candidates
+    let mut forced: Vec<Assignment> = Vec::new();
+    let mut gated: Vec<&(usize, usize, f64)> = Vec::new();
+
+    for entry in costs {
+        if id_matched_obs.contains(&entry.0) {
+            #[allow(clippy::cast_possible_truncation)]
+            forced.push(Assignment {
+                observation_idx: entry.0,
+                track_idx: entry.1,
+                distance: entry.2,
+                confidence: 1.0,
+            });
+        } else {
+            gated.push(entry);
+        }
+    }
+
+    if gated.is_empty() {
+        return forced;
+    }
+
+    // Build dense cost matrix for Hungarian algorithm using i64 (pathfinding requires integer weights)
+    let scale = 1_000_000i64;
+    let big_cost = i64::MAX / 2;
+
+    let forced_obs: HashSet<usize> = forced.iter().map(|a| a.observation_idx).collect();
+    let forced_tracks: HashSet<usize> = forced.iter().map(|a| a.track_idx).collect();
+
+    let free_obs: Vec<usize> = (0..n_obs).filter(|i| !forced_obs.contains(i)).collect();
+    let free_tracks: Vec<usize> = (0..n_tracks).filter(|i| !forced_tracks.contains(i)).collect();
+
+    if free_obs.is_empty() || free_tracks.is_empty() {
+        return forced;
+    }
+
+    let dim = free_obs.len().max(free_tracks.len());
+    let mut matrix = pathfinding::matrix::Matrix::new(dim, dim, big_cost);
+
+    // Map original indices to dense matrix indices
+    let obs_to_dense: HashMap<usize, usize> = free_obs.iter().enumerate().map(|(d, &o)| (o, d)).collect();
+    let track_to_dense: HashMap<usize, usize> =
+        free_tracks.iter().enumerate().map(|(d, &t)| (t, d)).collect();
+
+    for (obs_idx, track_idx, distance) in &gated {
+        if let (Some(&row), Some(&col)) = (obs_to_dense.get(obs_idx), track_to_dense.get(track_idx))
+        {
+            #[allow(clippy::cast_possible_truncation)]
+            let int_cost = (*distance * scale as f64) as i64;
+            matrix[(row, col)] = int_cost;
+        }
+    }
+
+    let (_, col_assignments) = pathfinding::kuhn_munkres::kuhn_munkres_min(&matrix);
+
+    for (dense_row, dense_col) in col_assignments.iter().enumerate() {
+        if dense_row >= free_obs.len() || *dense_col >= free_tracks.len() {
+            continue;
+        }
+        let cell_cost = matrix[(dense_row, *dense_col)];
+        if cell_cost >= big_cost {
+            continue;
+        }
+
+        let obs_idx = free_obs[dense_row];
+        let track_idx = free_tracks[*dense_col];
+        let distance = cell_cost as f64 / scale as f64;
+
+        #[allow(clippy::cast_possible_truncation)]
+        forced.push(Assignment {
+            observation_idx: obs_idx,
+            track_idx,
+            distance,
+            confidence: (1.0 - distance / 10.0).clamp(0.0, 1.0) as f32,
+        });
+    }
+
+    forced
 }
 
 fn observation_geodetic_position(obs: &SensorObservation) -> Option<(f64, f64)> {
