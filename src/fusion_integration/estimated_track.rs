@@ -1,7 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 
 use airjedi_fusion::nalgebra::DMatrix;
-use airjedi_fusion::{TrackQuality, TrackerState};
+use airjedi_fusion::{ModeInfo, TrackQuality, TrackStatus, TrackerState};
 use bevy::prelude::*;
 use crate::tiles::LocalOrigin;
 
@@ -20,6 +20,8 @@ pub struct EstimatedTrackConfig {
     pub sigma_multiplier: f32,
     pub min_speed_kts: f64,
     pub max_turn_rate_dps: f64,
+    pub show_all_aircraft: bool,
+    pub all_aircraft_horizon_seconds: f32,
 }
 
 impl Default for EstimatedTrackConfig {
@@ -31,6 +33,8 @@ impl Default for EstimatedTrackConfig {
             sigma_multiplier: 2.0,
             min_speed_kts: 30.0,
             max_turn_rate_dps: 6.0,
+            show_all_aircraft: true,
+            all_aircraft_horizon_seconds: 60.0,
         }
     }
 }
@@ -174,23 +178,92 @@ fn horizontal_uncertainty_m(cov: &DMatrix<f64>, lat_deg: f64, lon_deg: f64) -> f
     (var_east.abs() + var_north.abs()).sqrt()
 }
 
+/// Scale the observed turn rate based on IMM mode probabilities.
+/// When CV mode (index 0) dominates, damp heavily - the recorded turn is likely historical noise.
+/// When high-maneuver mode (index 1) dominates, trust the rate but never amplify beyond 1.0x.
+fn mode_weighted_turn_rate(
+    turn_rate_dps: f64,
+    mode_info: Option<&ModeInfo>,
+    max_turn_rate: f64,
+) -> f64 {
+    let weight = match mode_info {
+        None => 1.0,
+        Some(info) => {
+            let cv_prob = info.probabilities.first().copied().unwrap_or(0.5);
+            let maneuver_prob = info.probabilities.get(1).copied().unwrap_or(0.5);
+            // CV dominant -> 0.1x (strongly damp stale turn); maneuver dominant -> 1.0x (trust it)
+            cv_prob * 0.1 + maneuver_prob * 1.0
+        }
+    };
+    (turn_rate_dps * weight).clamp(-max_turn_rate, max_turn_rate)
+}
+
+/// Compute prediction center-line color from IMM mode probability.
+/// Mode 0 = CV (straight flight) -> blue-teal; Mode 1 = high maneuver -> amber
+fn prediction_center_color(mode_info: Option<&ModeInfo>, alpha: f32) -> Color {
+    let maneuver_prob = mode_info
+        .and_then(|m| m.probabilities.get(1).copied())
+        .unwrap_or(0.0) as f32;
+
+    let r = 0.0_f32 * (1.0 - maneuver_prob) + 1.0 * maneuver_prob;
+    let g = 0.85_f32 * (1.0 - maneuver_prob) + 0.65 * maneuver_prob;
+    let b = 1.0_f32 * (1.0 - maneuver_prob) + 0.0 * maneuver_prob;
+    Color::srgba(r, g, b, alpha)
+}
+
+fn prediction_boundary_color(mode_info: Option<&ModeInfo>, alpha: f32) -> Color {
+    let maneuver_prob = mode_info
+        .and_then(|m| m.probabilities.get(1).copied())
+        .unwrap_or(0.0) as f32;
+
+    let r = 0.3_f32 * (1.0 - maneuver_prob) + 1.0 * maneuver_prob;
+    let g = 0.7_f32 * (1.0 - maneuver_prob) + 0.55 * maneuver_prob;
+    let b = 1.0_f32 * (1.0 - maneuver_prob) + 0.1 * maneuver_prob;
+    Color::srgba(r, g, b, alpha)
+}
+
+/// Return a clone of `tracker` with its position overridden to match the aircraft's visual
+/// lat/lon, keeping the velocity and covariance unchanged. This makes the prediction cone
+/// start exactly at the aircraft icon rather than at the (potentially offset) filter position.
+fn snap_tracker_to_visual(tracker: &TrackerState, lat: f64, lon: f64) -> TrackerState {
+    let mut aligned = tracker.clone();
+    let (_, _, alt_m) = tracker.position_geodetic();
+    let ecef = airjedi_fusion::coord::geodetic_to_ecef(lat, lon, alt_m);
+    let state = aligned.variant.state_vec();
+    let cov = aligned.variant.covariance_mat();
+    let mut new_state = state.clone();
+    new_state[0] = ecef[0];
+    new_state[1] = ecef[1];
+    new_state[2] = ecef[2];
+    aligned.variant.initialize_from_state(new_state, cov);
+    aligned
+}
+
 fn sample_predicted_track(
     tracker: &TrackerState,
     config: &EstimatedTrackConfig,
     turn_rate_dps: f64,
+    mode_info: Option<&ModeInfo>,
 ) -> Vec<PredictedSample> {
     let mut cloned = tracker.clone();
     let dt = config.horizon_seconds as f64 / config.sample_count as f64;
     let mut samples = Vec::with_capacity(config.sample_count);
 
-    let applying_turn = turn_rate_dps.abs() > TURN_RATE_DEAD_ZONE;
-    let clamped_turn = turn_rate_dps.clamp(-config.max_turn_rate_dps, config.max_turn_rate_dps);
+    let effective_turn = mode_weighted_turn_rate(turn_rate_dps, mode_info, config.max_turn_rate_dps);
 
     for i in 0..config.sample_count {
+        // Turn rate decays exponentially over the prediction horizon so the far end asymptotes
+        // toward straight flight. Half-life ~= 1/3 of the horizon. This prevents turn
+        // compounding into full loops when the aircraft is only briefly maneuvering.
+        let horizon_frac = (i + 1) as f64 / config.sample_count as f64;
+        let turn_decay = (-3.0 * horizon_frac).exp();
+        let step_turn = effective_turn * turn_decay;
+        let applying_turn = step_turn.abs() > TURN_RATE_DEAD_ZONE;
+
         if applying_turn {
             let (lat, lon, _) = cloned.position_geodetic();
             let vel = cloned.velocity_ecef();
-            let rotated = rotate_velocity_ecef(&vel, lat, lon, clamped_turn * dt);
+            let rotated = rotate_velocity_ecef(&vel, lat, lon, step_turn * dt);
 
             let state = cloned.variant.state_vec();
             let cov = cloned.variant.covariance_mat();
@@ -238,6 +311,24 @@ pub fn update_heading_history(
 
         let (lat, lon, _) = tracker.position_geodetic();
         let heading = ecef_vel_to_heading_deg(&vel, lat, lon);
+
+        // Detect large heading discontinuities caused by signal gaps. If the aircraft
+        // reappears at a heading more than 30° different from the last known heading,
+        // clear the history so the pre-gap turn rate doesn't corrupt the prediction.
+        let clear_due_to_jump = history.entries.get(&entity)
+            .and_then(|ring| ring.back())
+            .map(|&(_, prev_heading)| {
+                let mut dh = heading - prev_heading;
+                if dh > 180.0 { dh -= 360.0; }
+                if dh < -180.0 { dh += 360.0; }
+                dh.abs() > 30.0
+            })
+            .unwrap_or(false);
+
+        if clear_due_to_jump {
+            history.entries.remove(&entity);
+            history.smoothed_turn_rates.remove(&entity);
+        }
 
         let ring = history.entries.entry(entity).or_default();
         ring.push_back((now, heading));
@@ -300,7 +391,7 @@ pub fn draw_estimated_track_cones(
         return;
     };
 
-    let Ok((tracker, _quality)) = fusion_tracks.get(link.track_entity) else {
+    let Ok((tracker, quality)) = fusion_tracks.get(link.track_entity) else {
         return;
     };
 
@@ -311,37 +402,50 @@ pub fn draw_estimated_track_cones(
         return;
     }
 
-    let turn_rate = heading_history
+    // Scale prediction confidence based on observation staleness.
+    // Fresh data (<2s): full turn rate. Coasting or stale (>10s): strongly damped toward
+    // straight-line prediction since we have no evidence the current maneuver continues.
+    let staleness_secs = quality.staleness.as_secs_f64();
+    let staleness_damping = (-staleness_secs / 8.0).exp();  // 1.0 at 0s, 0.29 at 10s, 0.08 at 20s
+    let is_coasting = matches!(quality.status, TrackStatus::Coasting);
+
+    let raw_turn_rate = heading_history
         .smoothed_turn_rates
         .get(&link.track_entity)
         .copied()
         .unwrap_or(0.0);
+    let turn_rate = raw_turn_rate * staleness_damping;
 
+    let mode_info = tracker.mode_info();
     let converter = CoordinateConverter::new(&local_origin);
 
-    let samples = sample_predicted_track(tracker, &config, turn_rate);
+    // Snap the tracker's initial position to the aircraft's visual (raw ADS-B) position while
+    // keeping the filter's velocity and covariance intact. This eliminates the gap between
+    // the aircraft icon and the cone's starting point caused by filter-vs-raw position offsets.
+    let aligned_tracker = snap_tracker_to_visual(tracker, aircraft.latitude, aircraft.longitude);
+
+    let samples = sample_predicted_track(&aligned_tracker, &config, turn_rate, mode_info.as_ref());
     if samples.is_empty() {
         return;
     }
 
     let aircraft_pos = converter.latlon_to_world(aircraft.latitude, aircraft.longitude);
-    // In Mercator meters, 1 world unit = 1 meter
-    let wu_per_m = 1.0_f64;
-
-    let center_color_base = Color::srgba(0.0, 0.9, 1.0, 0.7);
-    let boundary_color_base = Color::srgba(1.0, 0.6, 0.1, 0.4);
-    let crossbar_color_base = Color::srgba(1.0, 0.6, 0.1, 0.15);
 
     let mut prev_center = aircraft_pos;
     let mut prev_left = aircraft_pos;
     let mut prev_right = aircraft_pos;
 
+    // Sample interval for time mark detection
+    let sample_dt = config.horizon_seconds / config.sample_count as f32;
+    let mark_tolerance = sample_dt * 0.6;
+
     for (i, sample) in samples.iter().enumerate() {
         let t_frac = sample.time_ahead / config.horizon_seconds;
-        let alpha_fade = 1.0 - t_frac * 0.6;
+        // Quadratic fade: stays bright longer, then falls off toward the end
+        let alpha_fade = (1.0 - t_frac * t_frac * 0.7).max(0.1);
 
         let sample_pos = converter.latlon_to_world(sample.lat, sample.lon);
-        let radius_world = (sample.h_uncertainty_m * wu_per_m) as f32;
+        let radius_world = sample.h_uncertainty_m as f32;
 
         let heading_rad = sample.heading_deg.to_radians();
         let heading_dir = Vec2::new(heading_rad.sin() as f32, heading_rad.cos() as f32);
@@ -355,18 +459,49 @@ pub fn draw_estimated_track_cones(
         let left = sample_pos + perp * radius_world;
         let right = sample_pos - perp * radius_world;
 
-        let center_color = center_color_base.with_alpha(0.7 * alpha_fade);
-        gizmos.line_2d(prev_center, sample_pos, center_color);
+        // During coasting or staleness, shift toward a muted orange to signal
+        // reduced prediction confidence; alpha is also reduced to de-emphasize.
+        let confidence_alpha = if is_coasting { 0.55 } else { 0.75 };
+        let center_color = if is_coasting {
+            Color::srgba(1.0, 0.55, 0.1, confidence_alpha * alpha_fade)
+        } else {
+            prediction_center_color(mode_info.as_ref(), confidence_alpha * alpha_fade)
+        };
+        let boundary_color = if is_coasting {
+            Color::srgba(1.0, 0.4, 0.1, 0.35 * alpha_fade)
+        } else {
+            prediction_boundary_color(mode_info.as_ref(), 0.45 * alpha_fade)
+        };
+        let crossbar_color = if is_coasting {
+            Color::srgba(1.0, 0.4, 0.1, 0.1 * alpha_fade)
+        } else {
+            prediction_boundary_color(mode_info.as_ref(), 0.12 * alpha_fade)
+        };
 
-        let boundary_color = boundary_color_base.with_alpha(0.4 * alpha_fade);
+        gizmos.line_2d(prev_center, sample_pos, center_color);
         gizmos.line_2d(prev_left, left, boundary_color);
         gizmos.line_2d(prev_right, right, boundary_color);
-
-        let crossbar_color = crossbar_color_base.with_alpha(0.15 * alpha_fade);
         gizmos.line_2d(left, right, crossbar_color);
 
+        // Time tick marks at 30s, 60s, 90s - perpendicular lines extending beyond the cone
+        let t = sample.time_ahead;
+        let is_time_mark = (t - 30.0).abs() < mark_tolerance
+            || (t - 60.0).abs() < mark_tolerance
+            || (t - 90.0).abs() < mark_tolerance;
+
+        if is_time_mark && radius_world > 50.0 {
+            let tick_extra = radius_world * 0.35;
+            let tick_left = sample_pos + perp * (radius_world + tick_extra);
+            let tick_right = sample_pos - perp * (radius_world + tick_extra);
+            let tick_color = Color::srgba(1.0, 1.0, 1.0, 0.55 * alpha_fade);
+            gizmos.line_2d(tick_left, tick_right, tick_color);
+        }
+
+        // Terminal endpoint circle at the end of the prediction horizon
         if i == samples.len() - 1 {
-            gizmos.circle_2d(sample_pos, 3.0, center_color);
+            let endpoint_color = prediction_center_color(mode_info.as_ref(), 0.55);
+            let endpoint_radius = radius_world.max(200.0);
+            gizmos.circle_2d(sample_pos, endpoint_radius, endpoint_color);
         }
 
         prev_center = sample_pos;
@@ -375,9 +510,118 @@ pub fn draw_estimated_track_cones(
     }
 }
 
+/// Draw simple straight-line prediction vectors for all non-selected aircraft.
+/// Uses linear ECEF extrapolation - no filter operations, fast for many aircraft.
+pub fn draw_all_aircraft_predictions(
+    mut gizmos: Gizmos,
+    config: Res<EstimatedTrackConfig>,
+    list_state: Res<AircraftListState>,
+    follow_state: Res<CameraFollowState>,
+    local_origin: Res<LocalOrigin>,
+    fusion_tracks: Query<(&TrackerState, &TrackQuality)>,
+    visuals: Query<(&FusionTrackLink, &Aircraft)>,
+) {
+    if !config.enabled || !config.show_all_aircraft {
+        return;
+    }
+
+    let selected_icao = follow_state
+        .following_icao
+        .as_ref()
+        .or(list_state.selected_icao.as_ref());
+
+    let converter = CoordinateConverter::new(&local_origin);
+    let horizon = config.all_aircraft_horizon_seconds as f64;
+
+    for (link, aircraft) in visuals.iter() {
+        // Selected/followed aircraft gets the full cone - skip here
+        if let Some(sel) = selected_icao {
+            if &aircraft.icao == sel {
+                continue;
+            }
+        }
+
+        let Ok((tracker, quality)) = fusion_tracks.get(link.track_entity) else {
+            continue;
+        };
+
+        // Skip coasting tracks - position and velocity are unobserved; a stale
+        // extrapolation would likely point in the wrong direction.
+        if matches!(quality.status, TrackStatus::Coasting) {
+            continue;
+        }
+
+        let vel = tracker.velocity_ecef();
+        let speed_mps = (vel[0].powi(2) + vel[1].powi(2) + vel[2].powi(2)).sqrt();
+        let speed_kts = speed_mps / 0.514444;
+        if speed_kts < config.min_speed_kts {
+            continue;
+        }
+
+        // Project from the visual position using the tracker's velocity, so the line always
+        // starts exactly at the aircraft icon regardless of filter-vs-raw position offset.
+        let (_, _, alt_m) = tracker.position_geodetic();
+        let vis_ecef = airjedi_fusion::coord::geodetic_to_ecef(aircraft.latitude, aircraft.longitude, alt_m);
+        let end_ecef = [
+            vis_ecef[0] + vel[0] * horizon,
+            vis_ecef[1] + vel[1] * horizon,
+            vis_ecef[2] + vel[2] * horizon,
+        ];
+        let (end_lat, end_lon, _) = airjedi_fusion::coord::ecef_to_geodetic(&end_ecef);
+
+        let start_pos = converter.latlon_to_world(aircraft.latitude, aircraft.longitude);
+        let end_pos = converter.latlon_to_world(end_lat, end_lon);
+
+        let mode_info = tracker.mode_info();
+        let line_color = prediction_center_color(mode_info.as_ref(), 0.22);
+        gizmos.line_2d(start_pos, end_pos, line_color);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use airjedi_fusion::ModeInfo;
+
+    #[test]
+    fn test_mode_weighted_turn_rate_cv_damps() {
+        let mode_info = ModeInfo {
+            probabilities: vec![0.9, 0.1],
+            dominant_mode: 0,
+        };
+        let weighted = mode_weighted_turn_rate(3.0, Some(&mode_info), 6.0);
+        // 0.9*0.1 + 0.1*1.0 = 0.19, so 3.0*0.19 = 0.57
+        assert!(weighted < 1.0, "CV dominant should strongly damp turn rate");
+        assert!(weighted > 0.0);
+    }
+
+    #[test]
+    fn test_mode_weighted_turn_rate_maneuver_trusts_not_amplifies() {
+        let mode_info = ModeInfo {
+            probabilities: vec![0.1, 0.9],
+            dominant_mode: 1,
+        };
+        let weighted = mode_weighted_turn_rate(3.0, Some(&mode_info), 6.0);
+        // 0.1*0.1 + 0.9*1.0 = 0.91, so 3.0*0.91 = 2.73
+        assert!(weighted < 3.0, "Maneuver dominant should trust but not amplify");
+        assert!(weighted > 2.0, "Should retain most of the raw turn rate");
+    }
+
+    #[test]
+    fn test_mode_weighted_turn_rate_clamped() {
+        let mode_info = ModeInfo {
+            probabilities: vec![0.0, 1.0],
+            dominant_mode: 1,
+        };
+        let weighted = mode_weighted_turn_rate(5.9, Some(&mode_info), 6.0);
+        assert!(weighted <= 6.0);
+    }
+
+    #[test]
+    fn test_mode_weighted_turn_rate_no_mode() {
+        let weighted = mode_weighted_turn_rate(3.0, None, 6.0);
+        assert!((weighted - 3.0).abs() < 0.001);
+    }
 
     #[test]
     fn test_compute_turn_rate_empty_or_single() {
@@ -471,7 +715,7 @@ mod tests {
 
         let config = EstimatedTrackConfig::default();
         let turn_rate = 3.0;
-        let samples = sample_predicted_track(&tracker, &config, turn_rate);
+        let samples = sample_predicted_track(&tracker, &config, turn_rate, None);
 
         assert_eq!(samples.len(), config.sample_count);
 
@@ -482,23 +726,25 @@ mod tests {
         if heading_delta > 180.0 { heading_delta -= 360.0; }
         if heading_delta < -180.0 { heading_delta += 360.0; }
 
-        let dt = config.horizon_seconds as f64 / config.sample_count as f64;
-        let expected_delta = (config.sample_count - 1) as f64 * turn_rate * dt;
-
         println!(
-            "First heading: {:.1}, Last heading: {:.1}, Delta: {:.1}, Expected: {:.1}",
-            first.heading_deg, last.heading_deg, heading_delta, expected_delta
+            "First heading: {:.1}, Last heading: {:.1}, Delta: {:.1}",
+            first.heading_deg, last.heading_deg, heading_delta
         );
         println!(
             "First pos: ({:.6}, {:.6}), Last pos: ({:.6}, {:.6})",
             first.lat, first.lon, last.lat, last.lon
         );
 
+        // With temporal decay (exp(-3*t/T)), total heading change for a 3 deg/s turn over 45s
+        // is ~40 degrees (not 130), and at the near end the heading is still changing.
+        // Verify: heading changes in the right direction, is bounded by decay, and exceeds a floor.
+        let no_decay_delta = (config.sample_count - 1) as f64 * turn_rate
+            * (config.horizon_seconds as f64 / config.sample_count as f64);
+        assert!(heading_delta > 15.0, "Should turn at least 15 degrees: {:.1}", heading_delta);
         assert!(
-            (heading_delta - expected_delta).abs() < expected_delta * 0.15,
-            "Heading delta {:.1} too far from expected {:.1}",
-            heading_delta,
-            expected_delta
+            heading_delta < no_decay_delta,
+            "Decay must reduce total turn from {:.1} to {:.1}",
+            no_decay_delta, heading_delta
         );
     }
 
@@ -527,7 +773,7 @@ mod tests {
         tracker.variant.initialize_from_state(state, DMatrix::identity(6, 6) * 100.0);
 
         let config = EstimatedTrackConfig::default();
-        let samples = sample_predicted_track(&tracker, &config, 0.0);
+        let samples = sample_predicted_track(&tracker, &config, 0.0, None);
 
         let first = &samples[0];
         let last = samples.last().unwrap();
