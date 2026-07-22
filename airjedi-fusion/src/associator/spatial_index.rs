@@ -76,6 +76,12 @@ impl SpatialIndex {
         self.track_to_item.len()
     }
 
+    #[must_use]
+    pub fn needs_compaction(&self) -> bool {
+        let live = self.track_to_item.len() as u64;
+        live > 0 && self.next_item > live * 3
+    }
+
     pub fn rebuild(&mut self) {
         let mut new_tree = Tree::new();
         let mut new_item_to_track = HashMap::new();
