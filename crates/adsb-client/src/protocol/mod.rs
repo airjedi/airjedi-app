@@ -214,6 +214,61 @@ pub enum MessagePayload {
     },
 }
 
+/// Discriminant index for `MessagePayload` variants, used for counting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(usize)]
+pub enum PayloadKind {
+    Identification = 0,
+    Position = 1,
+    Velocity = 2,
+    Altitude = 3,
+    SelectedAltitude = 4,
+    Meteorological = 5,
+    MeteorologicalHazard = 6,
+}
+
+impl PayloadKind {
+    pub const COUNT: usize = 7;
+
+    pub const ALL: [Self; 7] = [
+        Self::Identification,
+        Self::Position,
+        Self::Velocity,
+        Self::Altitude,
+        Self::SelectedAltitude,
+        Self::Meteorological,
+        Self::MeteorologicalHazard,
+    ];
+
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Identification => "Identification",
+            Self::Position => "Position",
+            Self::Velocity => "Velocity",
+            Self::Altitude => "Altitude",
+            Self::SelectedAltitude => "Selected Alt",
+            Self::Meteorological => "Meteorological",
+            Self::MeteorologicalHazard => "Met Hazard",
+        }
+    }
+}
+
+impl MessagePayload {
+    #[must_use]
+    pub fn kind(&self) -> PayloadKind {
+        match self {
+            Self::Identification { .. } => PayloadKind::Identification,
+            Self::Position { .. } => PayloadKind::Position,
+            Self::Velocity { .. } => PayloadKind::Velocity,
+            Self::Altitude { .. } => PayloadKind::Altitude,
+            Self::SelectedAltitude { .. } => PayloadKind::SelectedAltitude,
+            Self::Meteorological { .. } => PayloadKind::Meteorological,
+            Self::MeteorologicalHazard { .. } => PayloadKind::MeteorologicalHazard,
+        }
+    }
+}
+
 /// Trait for protocol parsers.
 ///
 /// Implement this trait to add support for new ADS-B protocol formats.

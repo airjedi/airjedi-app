@@ -19,6 +19,7 @@ pub struct AdsbAircraftData {
     pub aircraft: Arc<Mutex<Vec<adsb_client::Aircraft>>>,
     pub connection_state: Arc<Mutex<ConnectionState>>,
     pub message_count: Arc<AtomicU64>,
+    pub payload_counts: Arc<Mutex<[u64; adsb_client::PayloadKind::COUNT]>>,
     shutdown: Arc<AtomicBool>,
     pub endpoint_url: String,
 }
@@ -29,6 +30,7 @@ impl AdsbAircraftData {
             aircraft: Arc::new(Mutex::new(Vec::new())),
             connection_state: Arc::new(Mutex::new(ConnectionState::Disconnected)),
             message_count: Arc::new(AtomicU64::new(0)),
+            payload_counts: Arc::new(Mutex::new([0u64; adsb_client::PayloadKind::COUNT])),
             shutdown: Arc::new(AtomicBool::new(false)),
             endpoint_url: endpoint_url.to_string(),
         }
@@ -121,6 +123,18 @@ impl FeedConnectionManager {
             .collect()
     }
 
+    pub fn total_payload_counts(&self) -> [u64; adsb_client::PayloadKind::COUNT] {
+        let mut totals = [0u64; adsb_client::PayloadKind::COUNT];
+        for conn in self.connections.values() {
+            if let Ok(counts) = conn.data.payload_counts.lock() {
+                for (i, &c) in counts.iter().enumerate() {
+                    totals[i] += c;
+                }
+            }
+        }
+        totals
+    }
+
     pub fn all_aircraft(&self) -> Vec<(String, adsb_client::Aircraft)> {
         let mut result = Vec::new();
         for conn in self.connections.values() {
@@ -176,6 +190,7 @@ fn spawn_feed_client(
     let aircraft_data = Arc::clone(&adsb_data.aircraft);
     let connection_state = Arc::clone(&adsb_data.connection_state);
     let msg_count_shared = Arc::clone(&adsb_data.message_count);
+    let payload_counts_shared = Arc::clone(&adsb_data.payload_counts);
     let shutdown = Arc::clone(&adsb_data.shutdown);
     let endpoint = feed.endpoint.clone();
     let feed_name = feed.name.clone();
@@ -212,6 +227,8 @@ fn spawn_feed_client(
                 ..Default::default()
             });
 
+            let client_payload_counts = client.payload_counts();
+
             loop {
                 if shutdown.load(Ordering::Acquire) {
                     info!("[{}] ADS-B client shutting down", feed_name);
@@ -228,6 +245,10 @@ fn spawn_feed_client(
                 }
 
                 msg_count_shared.store(client.messages_processed(), Ordering::Relaxed);
+
+                if let Ok(mut counts) = payload_counts_shared.lock() {
+                    *counts = client_payload_counts.get();
+                }
 
                 if let Ok(mut state) = connection_state.lock() {
                     *state = client.connection_state();

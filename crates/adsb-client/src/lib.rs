@@ -94,7 +94,7 @@ pub use decoder::{BaseStationDecoder, Decoder, NativeDecoder};
 #[cfg(feature = "decoder-rs1090")]
 pub use decoder::Rs1090Decoder;
 pub use framing::{BeastFramer, Frame, FrameType, Framer, LineFramer};
-pub use protocol::{AircraftMessage, Icao, MessagePayload, ParseError};
+pub use protocol::{AircraftMessage, Icao, MessagePayload, ParseError, PayloadKind};
 pub use tcp::{Connection, ConnectionConfig, ConnectionEvent, ConnectionState, FrameMode};
 pub use tracker::{Aircraft, AircraftTracker, PositionPoint, TrackerConfig, TrackerEvent};
 pub use transport::{TcpTransport, Transport, TransportEvent};
@@ -144,6 +144,36 @@ pub struct Client {
     decoder: Box<dyn Decoder>,
     connection_state: Arc<RwLock<ConnectionState>>,
     messages_processed: Arc<AtomicU64>,
+    payload_counts: Arc<PayloadCounters>,
+}
+
+/// Atomic counters for each `MessagePayload` variant.
+pub struct PayloadCounters([AtomicU64; PayloadKind::COUNT]);
+
+impl PayloadCounters {
+    fn new() -> Self {
+        Self(std::array::from_fn(|_| AtomicU64::new(0)))
+    }
+
+    #[must_use]
+    pub fn new_empty() -> Self {
+        Self::new()
+    }
+
+    fn increment(&self, kind: PayloadKind) {
+        self.0[kind as usize].fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[must_use]
+    pub fn get(&self) -> [u64; PayloadKind::COUNT] {
+        std::array::from_fn(|i| self.0[i].load(Ordering::Relaxed))
+    }
+}
+
+impl std::fmt::Debug for PayloadCounters {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("PayloadCounters").field(&self.get()).finish()
+    }
 }
 
 impl std::fmt::Debug for Client {
@@ -216,6 +246,7 @@ impl Client {
             decoder,
             connection_state,
             messages_processed: Arc::new(AtomicU64::new(0)),
+            payload_counts: Arc::new(PayloadCounters::new()),
         }
     }
 
@@ -260,12 +291,19 @@ impl Client {
         true
     }
 
+    /// Get payload counts per message type.
+    #[must_use]
+    pub fn payload_counts(&self) -> Arc<PayloadCounters> {
+        Arc::clone(&self.payload_counts)
+    }
+
     fn process_data(&mut self, data: &[u8]) {
         self.framer.feed(data);
         while let Some(frame) = self.framer.next_frame() {
             let messages = self.decoder.decode(&frame);
             for msg in messages {
                 self.messages_processed.fetch_add(1, Ordering::Relaxed);
+                self.payload_counts.increment(msg.payload.kind());
                 if let Ok(mut tracker) = self.tracker.write() {
                     tracker.process_message(msg);
                 }
