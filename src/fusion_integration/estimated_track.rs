@@ -222,6 +222,23 @@ fn prediction_boundary_color(mode_info: Option<&ModeInfo>, alpha: f32) -> Color 
     Color::srgba(r, g, b, alpha)
 }
 
+/// Return a clone of `tracker` with its position overridden to match the aircraft's visual
+/// lat/lon, keeping the velocity and covariance unchanged. This makes the prediction cone
+/// start exactly at the aircraft icon rather than at the (potentially offset) filter position.
+fn snap_tracker_to_visual(tracker: &TrackerState, lat: f64, lon: f64) -> TrackerState {
+    let mut aligned = tracker.clone();
+    let (_, _, alt_m) = tracker.position_geodetic();
+    let ecef = airjedi_fusion::coord::geodetic_to_ecef(lat, lon, alt_m);
+    let state = aligned.variant.state_vec();
+    let cov = aligned.variant.covariance_mat();
+    let mut new_state = state.clone();
+    new_state[0] = ecef[0];
+    new_state[1] = ecef[1];
+    new_state[2] = ecef[2];
+    aligned.variant.initialize_from_state(new_state, cov);
+    aligned
+}
+
 fn sample_predicted_track(
     tracker: &TrackerState,
     config: &EstimatedTrackConfig,
@@ -376,7 +393,12 @@ pub fn draw_estimated_track_cones(
     let mode_info = tracker.mode_info();
     let converter = CoordinateConverter::new(&local_origin);
 
-    let samples = sample_predicted_track(tracker, &config, turn_rate, mode_info.as_ref());
+    // Snap the tracker's initial position to the aircraft's visual (raw ADS-B) position while
+    // keeping the filter's velocity and covariance intact. This eliminates the gap between
+    // the aircraft icon and the cone's starting point caused by filter-vs-raw position offsets.
+    let aligned_tracker = snap_tracker_to_visual(tracker, aircraft.latitude, aircraft.longitude);
+
+    let samples = sample_predicted_track(&aligned_tracker, &config, turn_rate, mode_info.as_ref());
     if samples.is_empty() {
         return;
     }
@@ -489,12 +511,14 @@ pub fn draw_all_aircraft_predictions(
             continue;
         }
 
-        // Linear ECEF extrapolation - no filter clone, runs every frame
-        let pos = tracker.position_ecef();
+        // Project from the visual position using the tracker's velocity, so the line always
+        // starts exactly at the aircraft icon regardless of filter-vs-raw position offset.
+        let (_, _, alt_m) = tracker.position_geodetic();
+        let vis_ecef = airjedi_fusion::coord::geodetic_to_ecef(aircraft.latitude, aircraft.longitude, alt_m);
         let end_ecef = [
-            pos[0] + vel[0] * horizon,
-            pos[1] + vel[1] * horizon,
-            pos[2] + vel[2] * horizon,
+            vis_ecef[0] + vel[0] * horizon,
+            vis_ecef[1] + vel[1] * horizon,
+            vis_ecef[2] + vel[2] * horizon,
         ];
         let (end_lat, end_lon, _) = airjedi_fusion::coord::ecef_to_geodetic(&end_ecef);
 
