@@ -1,7 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 
 use airjedi_fusion::nalgebra::DMatrix;
-use airjedi_fusion::{ModeInfo, TrackQuality, TrackerState};
+use airjedi_fusion::{ModeInfo, TrackQuality, TrackStatus, TrackerState};
 use bevy::prelude::*;
 use crate::tiles::LocalOrigin;
 
@@ -312,6 +312,24 @@ pub fn update_heading_history(
         let (lat, lon, _) = tracker.position_geodetic();
         let heading = ecef_vel_to_heading_deg(&vel, lat, lon);
 
+        // Detect large heading discontinuities caused by signal gaps. If the aircraft
+        // reappears at a heading more than 30° different from the last known heading,
+        // clear the history so the pre-gap turn rate doesn't corrupt the prediction.
+        let clear_due_to_jump = history.entries.get(&entity)
+            .and_then(|ring| ring.back())
+            .map(|&(_, prev_heading)| {
+                let mut dh = heading - prev_heading;
+                if dh > 180.0 { dh -= 360.0; }
+                if dh < -180.0 { dh += 360.0; }
+                dh.abs() > 30.0
+            })
+            .unwrap_or(false);
+
+        if clear_due_to_jump {
+            history.entries.remove(&entity);
+            history.smoothed_turn_rates.remove(&entity);
+        }
+
         let ring = history.entries.entry(entity).or_default();
         ring.push_back((now, heading));
 
@@ -373,7 +391,7 @@ pub fn draw_estimated_track_cones(
         return;
     };
 
-    let Ok((tracker, _quality)) = fusion_tracks.get(link.track_entity) else {
+    let Ok((tracker, quality)) = fusion_tracks.get(link.track_entity) else {
         return;
     };
 
@@ -384,11 +402,19 @@ pub fn draw_estimated_track_cones(
         return;
     }
 
-    let turn_rate = heading_history
+    // Scale prediction confidence based on observation staleness.
+    // Fresh data (<2s): full turn rate. Coasting or stale (>10s): strongly damped toward
+    // straight-line prediction since we have no evidence the current maneuver continues.
+    let staleness_secs = quality.staleness.as_secs_f64();
+    let staleness_damping = (-staleness_secs / 8.0).exp();  // 1.0 at 0s, 0.29 at 10s, 0.08 at 20s
+    let is_coasting = matches!(quality.status, TrackStatus::Coasting);
+
+    let raw_turn_rate = heading_history
         .smoothed_turn_rates
         .get(&link.track_entity)
         .copied()
         .unwrap_or(0.0);
+    let turn_rate = raw_turn_rate * staleness_damping;
 
     let mode_info = tracker.mode_info();
     let converter = CoordinateConverter::new(&local_origin);
@@ -433,9 +459,24 @@ pub fn draw_estimated_track_cones(
         let left = sample_pos + perp * radius_world;
         let right = sample_pos - perp * radius_world;
 
-        let center_color = prediction_center_color(mode_info.as_ref(), 0.75 * alpha_fade);
-        let boundary_color = prediction_boundary_color(mode_info.as_ref(), 0.45 * alpha_fade);
-        let crossbar_color = prediction_boundary_color(mode_info.as_ref(), 0.12 * alpha_fade);
+        // During coasting or staleness, shift toward a muted orange to signal
+        // reduced prediction confidence; alpha is also reduced to de-emphasize.
+        let confidence_alpha = if is_coasting { 0.55 } else { 0.75 };
+        let center_color = if is_coasting {
+            Color::srgba(1.0, 0.55, 0.1, confidence_alpha * alpha_fade)
+        } else {
+            prediction_center_color(mode_info.as_ref(), confidence_alpha * alpha_fade)
+        };
+        let boundary_color = if is_coasting {
+            Color::srgba(1.0, 0.4, 0.1, 0.35 * alpha_fade)
+        } else {
+            prediction_boundary_color(mode_info.as_ref(), 0.45 * alpha_fade)
+        };
+        let crossbar_color = if is_coasting {
+            Color::srgba(1.0, 0.4, 0.1, 0.1 * alpha_fade)
+        } else {
+            prediction_boundary_color(mode_info.as_ref(), 0.12 * alpha_fade)
+        };
 
         gizmos.line_2d(prev_center, sample_pos, center_color);
         gizmos.line_2d(prev_left, left, boundary_color);
@@ -500,9 +541,15 @@ pub fn draw_all_aircraft_predictions(
             }
         }
 
-        let Ok((tracker, _quality)) = fusion_tracks.get(link.track_entity) else {
+        let Ok((tracker, quality)) = fusion_tracks.get(link.track_entity) else {
             continue;
         };
+
+        // Skip coasting tracks - position and velocity are unobserved; a stale
+        // extrapolation would likely point in the wrong direction.
+        if matches!(quality.status, TrackStatus::Coasting) {
+            continue;
+        }
 
         let vel = tracker.velocity_ecef();
         let speed_mps = (vel[0].powi(2) + vel[1].powi(2) + vel[2].powi(2)).sqrt();
