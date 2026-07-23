@@ -74,11 +74,10 @@ pub fn fusion_update_system(
     let now = Utc::now();
 
     for (mut track, mut tracker, mut quality) in &mut tracks {
-        let dominated = matches!(
-            quality.status,
-            TrackStatus::Coasting | TrackStatus::Lost
-        );
-        if !track.is_on_ground && !dominated {
+        // Always predict, even when coasting or lost. Skipping predict() during coasting
+        // freezes the filter covariance, causing returning observations to exceed the
+        // Mahalanobis gate and be rejected as outliers, preventing reacquisition.
+        if !track.is_on_ground {
             tracker.variant.predict(dt);
         }
 

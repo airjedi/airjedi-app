@@ -84,12 +84,21 @@ pub fn sync_tracks_to_visuals(
         let speed_kts = raw_ac
             .and_then(|ac| ac.velocity)
             .unwrap_or(speed_kts);
-        let lat = raw_ac
-            .and_then(|ac| ac.latitude)
-            .unwrap_or(lat);
-        let lon = raw_ac
-            .and_then(|ac| ac.longitude)
-            .unwrap_or(lon);
+        let is_coasting = quality.status == TrackStatus::Coasting;
+
+        // During coasting, prefer the filter's predicted position (which propagates forward
+        // each frame) over the stale raw position to show smooth dead reckoning. When
+        // confirmed, raw data takes priority as it is the freshest observed position.
+        let lat = if is_coasting {
+            lat
+        } else {
+            raw_ac.and_then(|ac| ac.latitude).unwrap_or(lat)
+        };
+        let lon = if is_coasting {
+            lon
+        } else {
+            raw_ac.and_then(|ac| ac.longitude).unwrap_or(lon)
+        };
         let squawk = raw_ac.and_then(|ac| ac.squawk.clone());
         let is_on_ground = raw_ac
             .and_then(|ac| ac.is_on_ground)
@@ -104,10 +113,9 @@ pub fn sync_tracks_to_visuals(
             .iter()
             .find(|(_, link)| link.track_entity == track_entity);
 
-        if matches!(
-            quality.status,
-            TrackStatus::Coasting | TrackStatus::Lost
-        ) {
+        // Lost tracks have been gone too long to be meaningfully displayed; coasting tracks
+        // still have a valid predicted position and should continue to update.
+        if matches!(quality.status, TrackStatus::Lost) {
             continue;
         }
 
