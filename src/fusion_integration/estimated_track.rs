@@ -225,7 +225,12 @@ fn prediction_boundary_color(mode_info: Option<&ModeInfo>, alpha: f32) -> Color 
 /// Return a clone of `tracker` with its position overridden to match the aircraft's visual
 /// lat/lon, keeping the velocity and covariance unchanged. This makes the prediction cone
 /// start exactly at the aircraft icon rather than at the (potentially offset) filter position.
-fn snap_tracker_to_visual(tracker: &TrackerState, lat: f64, lon: f64) -> TrackerState {
+fn snap_tracker_to_visual(
+    tracker: &TrackerState,
+    lat: f64,
+    lon: f64,
+    observed_heading: Option<f32>,
+) -> TrackerState {
     let mut aligned = tracker.clone();
     let (_, _, alt_m) = tracker.position_geodetic();
     let ecef = airjedi_fusion::coord::geodetic_to_ecef(lat, lon, alt_m);
@@ -235,6 +240,28 @@ fn snap_tracker_to_visual(tracker: &TrackerState, lat: f64, lon: f64) -> Tracker
     new_state[0] = ecef[0];
     new_state[1] = ecef[1];
     new_state[2] = ecef[2];
+
+    // When a raw ADS-B heading is available, rotate the filter's velocity to match.
+    // The filter's constant-velocity model lags during turns; the raw track angle
+    // reflects the aircraft's actual direction of travel.
+    if let Some(hdg) = observed_heading {
+        let vel = [state[3], state[4], state[5]];
+        let speed = (vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2]).sqrt();
+        if speed > 1.0 {
+            let hdg_rad = (hdg as f64).to_radians();
+            let north = speed * hdg_rad.cos();
+            let east = speed * hdg_rad.sin();
+            let vel_down = {
+                let (_, _, up) = ecef_vel_to_enu(&vel, lat, lon);
+                -up
+            };
+            let corrected = enu_to_ecef_vel(east, north, -vel_down, lat, lon);
+            new_state[3] = corrected[0];
+            new_state[4] = corrected[1];
+            new_state[5] = corrected[2];
+        }
+    }
+
     aligned.variant.initialize_from_state(new_state, cov);
     aligned
 }
@@ -422,7 +449,8 @@ pub fn draw_estimated_track_cones(
     // Snap the tracker's initial position to the aircraft's visual (raw ADS-B) position while
     // keeping the filter's velocity and covariance intact. This eliminates the gap between
     // the aircraft icon and the cone's starting point caused by filter-vs-raw position offsets.
-    let aligned_tracker = snap_tracker_to_visual(tracker, aircraft.latitude, aircraft.longitude);
+    let aligned_tracker =
+        snap_tracker_to_visual(tracker, aircraft.latitude, aircraft.longitude, aircraft.heading);
 
     let samples = sample_predicted_track(&aligned_tracker, &config, turn_rate, mode_info.as_ref());
     if samples.is_empty() {
@@ -551,15 +579,26 @@ pub fn draw_all_aircraft_predictions(
             continue;
         }
 
-        let vel = tracker.velocity_ecef();
-        let speed_mps = (vel[0].powi(2) + vel[1].powi(2) + vel[2].powi(2)).sqrt();
+        let filter_vel = tracker.velocity_ecef();
+        let speed_mps = (filter_vel[0].powi(2) + filter_vel[1].powi(2) + filter_vel[2].powi(2)).sqrt();
         let speed_kts = speed_mps / 0.514444;
         if speed_kts < config.min_speed_kts {
             continue;
         }
 
-        // Project from the visual position using the tracker's velocity, so the line always
-        // starts exactly at the aircraft icon regardless of filter-vs-raw position offset.
+        // Use the raw ADS-B heading to set the velocity direction when available.
+        // The filter's constant-velocity model lags during turns; the raw track angle
+        // matches the aircraft's actual direction of travel.
+        let vel = if let Some(hdg) = aircraft.heading {
+            let hdg_rad = (hdg as f64).to_radians();
+            let north = speed_mps * hdg_rad.cos();
+            let east = speed_mps * hdg_rad.sin();
+            let (_, _, up) = ecef_vel_to_enu(&filter_vel, aircraft.latitude, aircraft.longitude);
+            enu_to_ecef_vel(east, north, up, aircraft.latitude, aircraft.longitude)
+        } else {
+            [filter_vel[0], filter_vel[1], filter_vel[2]]
+        };
+
         let (_, _, alt_m) = tracker.position_geodetic();
         let vis_ecef = airjedi_fusion::coord::geodetic_to_ecef(aircraft.latitude, aircraft.longitude, alt_m);
         let end_ecef = [
