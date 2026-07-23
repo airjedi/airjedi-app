@@ -4,20 +4,30 @@ use kiddo::float::kdtree::KdTree;
 use std::collections::HashMap;
 use std::time::Instant;
 
-type Tree = KdTree<f64, u64, 3, 1024, u32>;
+type Tree = KdTree<f64, u64, 2, 1024, u32>;
 
 #[derive(Debug, Resource)]
 pub struct SpatialIndex {
     tree: Tree,
     track_to_item: HashMap<TrackId, u64>,
     item_to_track: HashMap<u64, TrackId>,
-    positions: HashMap<u64, [f64; 3]>,
+    positions: HashMap<u64, [f64; 2]>,
     next_item: u64,
     search_radius_deg: f64,
     last_rebuild: Instant,
+    stale_count: u64,
 }
 
 const MIN_REBUILD_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+const REBUILD_STALE_THRESHOLD: u64 = 200;
+
+fn is_valid_position(lat: f64, lon: f64) -> bool {
+    lat.is_finite()
+        && lon.is_finite()
+        && lat.abs() > 0.01
+        && lat.abs() <= 90.0
+        && lon.abs() <= 180.0
+}
 
 impl SpatialIndex {
     #[must_use]
@@ -30,10 +40,15 @@ impl SpatialIndex {
             next_item: 0,
             search_radius_deg,
             last_rebuild: Instant::now(),
+            stale_count: 0,
         }
     }
 
     pub fn update_track(&mut self, track_id: &TrackId, lat_deg: f64, lon_deg: f64) {
+        if !is_valid_position(lat_deg, lon_deg) {
+            return;
+        }
+
         if let Some(&item_id) = self.track_to_item.get(track_id) {
             if let Some(old_pos) = self.positions.get(&item_id) {
                 let dlat = (old_pos[0] - lat_deg).abs();
@@ -45,12 +60,13 @@ impl SpatialIndex {
             self.item_to_track.remove(&item_id);
             self.positions.remove(&item_id);
             self.track_to_item.remove(track_id);
+            self.stale_count += 1;
         }
 
         let item_id = self.next_item;
         self.next_item += 1;
 
-        let point = [lat_deg, lon_deg, 0.0];
+        let point = [lat_deg, lon_deg];
         self.tree.add(&point, item_id);
         self.track_to_item.insert(track_id.clone(), item_id);
         self.item_to_track.insert(item_id, track_id.clone());
@@ -61,12 +77,13 @@ impl SpatialIndex {
         if let Some(item_id) = self.track_to_item.remove(track_id) {
             self.item_to_track.remove(&item_id);
             self.positions.remove(&item_id);
+            self.stale_count += 1;
         }
     }
 
     #[must_use]
     pub fn nearby_tracks(&self, lat_deg: f64, lon_deg: f64) -> Vec<TrackId> {
-        let query = [lat_deg, lon_deg, 0.0];
+        let query = [lat_deg, lon_deg];
         let radius_sq = self.search_radius_deg * self.search_radius_deg;
 
         self.tree
@@ -83,10 +100,10 @@ impl SpatialIndex {
 
     #[must_use]
     pub fn needs_compaction(&self) -> bool {
+        let dominated_by_stale = self.stale_count > REBUILD_STALE_THRESHOLD;
         let live = self.track_to_item.len() as u64;
-        live > 0
-            && self.next_item > live * 3
-            && self.last_rebuild.elapsed() >= MIN_REBUILD_INTERVAL
+        let bloated = live > 0 && self.next_item > live * 3;
+        (dominated_by_stale || bloated) && self.last_rebuild.elapsed() >= MIN_REBUILD_INTERVAL
     }
 
     pub fn rebuild(&mut self) {
@@ -111,6 +128,7 @@ impl SpatialIndex {
         self.item_to_track = new_item_to_track;
         self.positions = new_positions;
         self.next_item = next;
+        self.stale_count = 0;
         self.last_rebuild = Instant::now();
     }
 }
@@ -189,5 +207,17 @@ mod tests {
         assert_eq!(idx.track_count(), 1);
         let nearby = idx.nearby_tracks(37.1, -97.1);
         assert!(nearby.contains(&t2));
+    }
+
+    #[test]
+    fn rejects_degenerate_positions() {
+        let mut idx = SpatialIndex::new(0.5);
+        let t1 = TrackId::new();
+        let t2 = TrackId::new();
+        let t3 = TrackId::new();
+        idx.update_track(&t1, 0.0, 0.0);
+        idx.update_track(&t2, f64::NAN, -97.0);
+        idx.update_track(&t3, 37.0, f64::INFINITY);
+        assert_eq!(idx.track_count(), 0);
     }
 }

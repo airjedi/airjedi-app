@@ -123,9 +123,6 @@ pub fn update_spatial_index(
             continue;
         }
         let (lat, lon, _) = tracker.position_geodetic();
-        if lat.abs() < 0.001 && lon.abs() < 0.001 {
-            continue;
-        }
         spatial_index.update_track(&track.id, lat, lon);
     }
     if spatial_index.needs_compaction() {
