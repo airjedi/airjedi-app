@@ -449,8 +449,11 @@ pub fn draw_estimated_track_cones(
     // Snap the tracker's initial position to the aircraft's visual (raw ADS-B) position while
     // keeping the filter's velocity and covariance intact. This eliminates the gap between
     // the aircraft icon and the cone's starting point caused by filter-vs-raw position offsets.
+    // During coasting, aircraft.heading is stale (from before the gap) so let the filter's
+    // own predicted velocity determine the direction.
+    let snap_heading = if is_coasting { None } else { aircraft.heading };
     let aligned_tracker =
-        snap_tracker_to_visual(tracker, aircraft.latitude, aircraft.longitude, aircraft.heading);
+        snap_tracker_to_visual(tracker, aircraft.latitude, aircraft.longitude, snap_heading);
 
     let samples = sample_predicted_track(&aligned_tracker, &config, turn_rate, mode_info.as_ref());
     if samples.is_empty() {
