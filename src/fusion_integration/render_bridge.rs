@@ -176,7 +176,15 @@ pub fn sync_tracks_to_visuals(
                     }
                 }
             }
-        } else if is_air_target(classification.category) {
+        } else if is_air_target(classification.category) && !is_coasting {
+            // Don't spawn new visual entities for coasting tracks. A coasting track
+            // with no existing visual means its visual was cleaned up because
+            // aircraft.last_seen exceeded the timeout. Spawning a new one would set
+            // aircraft.last_seen = track.last_update (old), causing cleanup_orphaned_visuals
+            // to immediately despawn it next frame, creating a continuous spawn-despawn cycle.
+            // When the track reacquires (signals return), it will be re-confirmed and a
+            // fresh visual will be spawned then.
+
             let icao = track
                 .cooperative_ids
                 .iter()
