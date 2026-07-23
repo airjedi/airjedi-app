@@ -25,10 +25,18 @@ pub struct TileGrid {
 }
 
 /// Pool of pre-allocated tile entities ready for reuse.
+///
+/// Uses a dedup set alongside the available stack to prevent the same entity
+/// from being returned twice. Multiple systems (cull_offscreen_tiles,
+/// animate_tile_fades) can call release_tile on the same entity within a
+/// single frame because Bevy's command application is deferred - the MapTile
+/// marker removal hasn't happened yet when the second system queries.
 #[derive(Resource)]
 pub struct TilePool {
     /// Entities in the Idle state, available for assignment.
     pub available: Vec<Entity>,
+    /// Tracks which entities are currently in the available stack.
+    in_pool: HashSet<Entity>,
     /// Total entities ever allocated (pool only grows).
     pub capacity: usize,
 }
@@ -37,6 +45,7 @@ impl Default for TilePool {
     fn default() -> Self {
         Self {
             available: Vec::with_capacity(256),
+            in_pool: HashSet::with_capacity(256),
             capacity: 0,
         }
     }
@@ -45,12 +54,17 @@ impl Default for TilePool {
 impl TilePool {
     /// Take an entity from the pool. Returns None if pool is empty.
     pub fn take(&mut self) -> Option<Entity> {
-        self.available.pop()
+        let entity = self.available.pop()?;
+        self.in_pool.remove(&entity);
+        Some(entity)
     }
 
-    /// Return an entity to the pool.
+    /// Return an entity to the pool. Idempotent - silently ignores
+    /// duplicates caused by deferred command application.
     pub fn release(&mut self, entity: Entity) {
-        self.available.push(entity);
+        if self.in_pool.insert(entity) {
+            self.available.push(entity);
+        }
     }
 
     /// Number of entities currently available for reuse.
@@ -82,6 +96,7 @@ pub fn grow_pool(
             ))
             .id();
         pool.available.push(entity);
+        pool.in_pool.insert(entity);
         pool.capacity += 1;
     }
     debug!("Grew tile pool by {} (total capacity: {})", count, pool.capacity);
@@ -100,8 +115,11 @@ pub fn retire_tile(
 }
 
 /// Transition a tile entity from Active/Retiring to Idle.
-/// Removes rendering components and the MapTile marker so idle entities
-/// don't match tile queries (preventing double-release on mode switches).
+/// Removes the MapTile marker so idle entities don't match tile queries
+/// (preventing double-release on mode switches). Keeps Mesh3d and
+/// MeshMaterial3d on the entity - removing them causes use-after-free in
+/// Bevy 0.19's slab allocator when the render world still holds references
+/// to the freed GPU data. activate_tile's insert() safely replaces them.
 pub fn release_tile(
     commands: &mut Commands,
     entity: Entity,
@@ -114,8 +132,6 @@ pub fn release_tile(
     ));
     commands.entity(entity).remove::<(
         super::MapTile,
-        Mesh3d,
-        MeshMaterial3d<StandardMaterial>,
         super::render::TileOriginalImage,
         super::render::TileFadeState,
     )>();
