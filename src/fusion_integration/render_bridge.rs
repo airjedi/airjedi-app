@@ -78,18 +78,35 @@ pub fn sync_tracks_to_visuals(
         let vrate = raw_ac
             .and_then(|ac| ac.vertical_rate)
             .or_else(|| compute_vertical_rate(&vel_ecef, lat, lon));
-        let heading = raw_ac
-            .and_then(|ac| ac.track)
-            .or(heading);
-        let speed_kts = raw_ac
-            .and_then(|ac| ac.velocity)
-            .unwrap_or(speed_kts);
-        let lat = raw_ac
-            .and_then(|ac| ac.latitude)
-            .unwrap_or(lat);
-        let lon = raw_ac
-            .and_then(|ac| ac.longitude)
-            .unwrap_or(lon);
+        let is_coasting = quality.status == TrackStatus::Coasting;
+
+        // During coasting, the raw ADS-B heading and speed are stale (from before the
+        // signal gap). Use the filter's predicted values instead, which propagate forward
+        // each frame via predict().
+        let heading = if is_coasting {
+            heading
+        } else {
+            raw_ac.and_then(|ac| ac.track).or(heading)
+        };
+        let speed_kts = if is_coasting {
+            speed_kts
+        } else {
+            raw_ac.and_then(|ac| ac.velocity).unwrap_or(speed_kts)
+        };
+
+        // During coasting, prefer the filter's predicted position (which propagates forward
+        // each frame) over the stale raw position to show smooth dead reckoning. When
+        // confirmed, raw data takes priority as it is the freshest observed position.
+        let lat = if is_coasting {
+            lat
+        } else {
+            raw_ac.and_then(|ac| ac.latitude).unwrap_or(lat)
+        };
+        let lon = if is_coasting {
+            lon
+        } else {
+            raw_ac.and_then(|ac| ac.longitude).unwrap_or(lon)
+        };
         let squawk = raw_ac.and_then(|ac| ac.squawk.clone());
         let is_on_ground = raw_ac
             .and_then(|ac| ac.is_on_ground)
@@ -104,10 +121,9 @@ pub fn sync_tracks_to_visuals(
             .iter()
             .find(|(_, link)| link.track_entity == track_entity);
 
-        if matches!(
-            quality.status,
-            TrackStatus::Coasting | TrackStatus::Lost
-        ) {
+        // Lost tracks have been gone too long to be meaningfully displayed; coasting tracks
+        // still have a valid predicted position and should continue to update.
+        if matches!(quality.status, TrackStatus::Lost) {
             continue;
         }
 
@@ -168,7 +184,15 @@ pub fn sync_tracks_to_visuals(
                     }
                 }
             }
-        } else if is_air_target(classification.category) {
+        } else if is_air_target(classification.category) && !is_coasting {
+            // Don't spawn new visual entities for coasting tracks. A coasting track
+            // with no existing visual means its visual was cleaned up because
+            // aircraft.last_seen exceeded the timeout. Spawning a new one would set
+            // aircraft.last_seen = track.last_update (old), causing cleanup_orphaned_visuals
+            // to immediately despawn it next frame, creating a continuous spawn-despawn cycle.
+            // When the track reacquires (signals return), it will be re-confirmed and a
+            // fresh visual will be spawned then.
+
             let icao = track
                 .cooperative_ids
                 .iter()

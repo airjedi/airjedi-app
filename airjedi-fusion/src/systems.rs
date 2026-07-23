@@ -74,11 +74,10 @@ pub fn fusion_update_system(
     let now = Utc::now();
 
     for (mut track, mut tracker, mut quality) in &mut tracks {
-        let dominated = matches!(
-            quality.status,
-            TrackStatus::Coasting | TrackStatus::Lost
-        );
-        if !track.is_on_ground && !dominated {
+        // Always predict, even when coasting or lost. Skipping predict() during coasting
+        // freezes the filter covariance, causing returning observations to exceed the
+        // Mahalanobis gate and be rejected as outliers, preventing reacquisition.
+        if !track.is_on_ground {
             tracker.variant.predict(dt);
         }
 
@@ -124,9 +123,6 @@ pub fn update_spatial_index(
             continue;
         }
         let (lat, lon, _) = tracker.position_geodetic();
-        if lat.abs() < 0.001 && lon.abs() < 0.001 {
-            continue;
-        }
         spatial_index.update_track(&track.id, lat, lon);
     }
     if spatial_index.needs_compaction() {
