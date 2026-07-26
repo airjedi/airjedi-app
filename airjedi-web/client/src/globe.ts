@@ -5,9 +5,7 @@ import {
   ImageryLayer,
   SceneMode,
   Cartesian3,
-  Terrain,
 } from "cesium";
-import "cesium/Build/Cesium/Widgets/widgets.css";
 
 export async function initGlobe(
   container: HTMLElement,
@@ -18,18 +16,17 @@ export async function initGlobe(
   }
 
   const viewer = new Viewer(container, {
-    sceneMode: SceneMode.COLUMBUS_VIEW,
+    sceneMode: SceneMode.SCENE3D,
     animation: false,
     timeline: false,
     homeButton: true,
     sceneModePicker: true,
-    baseLayerPicker: false,
+    baseLayerPicker: true,
     navigationHelpButton: false,
     fullscreenButton: false,
     geocoder: false,
     infoBox: false,
     selectionIndicator: false,
-    terrain: ionToken ? Terrain.fromWorldTerrain() : undefined,
   });
 
   const osmProvider = new OpenStreetMapImageryProvider({

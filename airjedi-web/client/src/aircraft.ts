@@ -12,6 +12,8 @@ import {
   ScreenSpaceEventType,
   defined,
   LabelStyle,
+  ConstantPositionProperty,
+  ConstantProperty,
 } from "cesium";
 import { Aircraft } from "./types";
 import { AircraftStore, AppState } from "./store";
@@ -55,6 +57,7 @@ export class AircraftManager {
 
   private syncEntities(): void {
     const aircraft = this.store.getAll();
+    let created = 0;
     for (const [icao, ac] of aircraft) {
       if (ac.latitude === null || ac.longitude === null) continue;
 
@@ -62,8 +65,16 @@ export class AircraftManager {
       if (existing) {
         this.updateEntity(existing, ac);
       } else {
-        this.createEntity(ac);
+        try {
+          this.createEntity(ac);
+          created++;
+        } catch (e) {
+          console.error(`Failed to create entity for ${icao}:`, e);
+        }
       }
+    }
+    if (created > 0) {
+      console.log(`Created ${created} new aircraft entities (total: ${this.entities.size})`);
     }
   }
 
@@ -109,19 +120,19 @@ export class AircraftManager {
     if (ac.latitude === null || ac.longitude === null) return;
 
     const altMeters = ac.altitude ? feetToMeters(ac.altitude) : 0;
-    (entity as any).position = Cartesian3.fromDegrees(
-      ac.longitude,
-      ac.latitude,
-      altMeters
+    entity.position = new ConstantPositionProperty(
+      Cartesian3.fromDegrees(ac.longitude, ac.latitude, altMeters)
     );
 
     if (entity.point) {
-      (entity.point.color as any) = altitudeColor(ac.altitude);
+      entity.point.color = new ConstantProperty(altitudeColor(ac.altitude));
     }
 
     if (entity.label) {
       const label = ac.callsign || ac.icao;
-      (entity.label.text as any) = `${label}\n${formatAltitude(ac.altitude)}`;
+      entity.label.text = new ConstantProperty(
+        `${label}\n${formatAltitude(ac.altitude)}`
+      );
     }
 
     if (ac.trail.length > 1) {
@@ -154,7 +165,7 @@ export class AircraftManager {
 
     if (trailEntity) {
       if (trailEntity.polyline) {
-        (trailEntity.polyline.positions as any) = positions;
+        trailEntity.polyline.positions = new ConstantProperty(positions);
       }
     } else {
       this.viewer.entities.add({
@@ -188,7 +199,7 @@ export class AircraftManager {
 
   private setupPicking(): void {
     const handler = new ScreenSpaceEventHandler(this.viewer.scene.canvas);
-    handler.setInputAction((event: ScreenSpaceEventHandler.PositionedEvent) => {
+    handler.setInputAction((event: { position: Cartesian2 }) => {
       const picked = this.viewer.scene.pick(event.position);
       if (defined(picked) && picked.id?.id?.startsWith("aircraft-")) {
         const icao = picked.id.id.replace("aircraft-", "");

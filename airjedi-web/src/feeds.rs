@@ -40,7 +40,10 @@ impl FeedManager {
                 address: config.address.clone(),
                 ..Default::default()
             },
-            tracker: TrackerConfig::default(),
+            tracker: TrackerConfig {
+                center: Some((37.6872, -97.3301)),
+                ..Default::default()
+            },
             protocol,
             ..Default::default()
         });
