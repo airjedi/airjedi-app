@@ -1,4 +1,5 @@
 import { AircraftStore, AppState } from "../store";
+import { escapeHtml } from "../util";
 
 export class AircraftDetailPanel {
   private container: HTMLElement;
@@ -52,18 +53,18 @@ export class AircraftDetailPanel {
 
     this.container.innerHTML = `
       <div class="panel-header">
-        ${ac.callsign || ac.icao}
+        ${escapeHtml(ac.callsign || ac.icao)}
         <button class="close-btn" id="detail-close">x</button>
       </div>
       <div class="panel-body" style="padding: 4px 0;">
-        <div class="detail-row"><span class="detail-label">ICAO</span><span class="detail-value">${ac.icao}</span></div>
-        <div class="detail-row"><span class="detail-label">Callsign</span><span class="detail-value">${ac.callsign || "---"}</span></div>
+        <div class="detail-row"><span class="detail-label">ICAO</span><span class="detail-value">${escapeHtml(ac.icao)}</span></div>
+        <div class="detail-row"><span class="detail-label">Callsign</span><span class="detail-value">${escapeHtml(ac.callsign || "---")}</span></div>
         <div class="detail-row"><span class="detail-label">Altitude</span><span class="detail-value">${alt}</span></div>
         <div class="detail-row"><span class="detail-label">Speed</span><span class="detail-value">${spd}</span></div>
         <div class="detail-row"><span class="detail-label">Heading</span><span class="detail-value">${heading}</span></div>
         <div class="detail-row"><span class="detail-label">V/Rate</span><span class="detail-value">${vrate}</span></div>
         <div class="detail-row"><span class="detail-label">Position</span><span class="detail-value">${lat}, ${lon}</span></div>
-        <div class="detail-row"><span class="detail-label">Squawk</span><span class="detail-value">${ac.squawk || "---"}</span></div>
+        <div class="detail-row"><span class="detail-label">Squawk</span><span class="detail-value">${escapeHtml(ac.squawk || "---")}</span></div>
         <div class="detail-row"><span class="detail-label">On Ground</span><span class="detail-value">${ac.on_ground ?? "---"}</span></div>
         <div class="detail-row"><span class="detail-label">Trail Points</span><span class="detail-value">${ac.trail.length}</span></div>
       </div>

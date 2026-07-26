@@ -57,7 +57,7 @@ export class AircraftManager {
 
   private syncEntities(): void {
     const aircraft = this.store.getAll();
-    let created = 0;
+
     for (const [icao, ac] of aircraft) {
       if (ac.latitude === null || ac.longitude === null) continue;
 
@@ -65,16 +65,18 @@ export class AircraftManager {
       if (existing) {
         this.updateEntity(existing, ac);
       } else {
-        try {
-          this.createEntity(ac);
-          created++;
-        } catch (e) {
-          console.error(`Failed to create entity for ${icao}:`, e);
-        }
+        this.createEntity(ac);
       }
     }
-    if (created > 0) {
-      console.log(`Created ${created} new aircraft entities (total: ${this.entities.size})`);
+
+    const stale: string[] = [];
+    for (const icao of this.entities.keys()) {
+      if (!aircraft.has(icao)) {
+        stale.push(icao);
+      }
+    }
+    if (stale.length > 0) {
+      this.removeEntities(stale);
     }
   }
 

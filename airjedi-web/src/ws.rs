@@ -2,6 +2,7 @@ use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
 use axum::response::IntoResponse;
 use futures_util::{SinkExt, StreamExt};
+use tokio::sync::broadcast;
 use uuid::Uuid;
 
 use crate::config::FeedConfig;
@@ -31,18 +32,26 @@ async fn handle_socket(socket: WebSocket, state: SharedState) {
 
     let mut broadcast_rx = state.broadcast_tx.subscribe();
 
-    let send_task = tokio::spawn(async move {
-        while let Ok(msg) = broadcast_rx.recv().await {
-            if let Ok(json) = serde_json::to_string(&msg) {
-                if sender.send(Message::Text(json.into())).await.is_err() {
-                    break;
+    let mut send_task = tokio::spawn(async move {
+        loop {
+            match broadcast_rx.recv().await {
+                Ok(msg) => {
+                    if let Ok(json) = serde_json::to_string(&msg) {
+                        if sender.send(Message::Text(json.into())).await.is_err() {
+                            break;
+                        }
+                    }
                 }
+                Err(broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::warn!("WebSocket client lagged by {n} messages");
+                }
+                Err(broadcast::error::RecvError::Closed) => break,
             }
         }
     });
 
     let state_clone = state.clone();
-    let recv_task = tokio::spawn(async move {
+    let mut recv_task = tokio::spawn(async move {
         while let Some(Ok(msg)) = receiver.next().await {
             if let Message::Text(text) = msg {
                 if let Ok(cmd) = serde_json::from_str::<ClientMessage>(&text) {
@@ -53,8 +62,8 @@ async fn handle_socket(socket: WebSocket, state: SharedState) {
     });
 
     tokio::select! {
-        _ = send_task => {},
-        _ = recv_task => {},
+        _ = &mut send_task => { recv_task.abort(); },
+        _ = &mut recv_task => { send_task.abort(); },
     }
 }
 

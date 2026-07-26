@@ -1,5 +1,6 @@
 import { Aircraft } from "../types";
 import { AircraftStore, AppState } from "../store";
+import { escapeHtml } from "../util";
 
 export class AircraftListPanel {
   private container: HTMLElement;
@@ -93,9 +94,9 @@ export class AircraftListPanel {
           ac.altitude !== null ? ac.altitude.toLocaleString() : "---";
         const spd =
           ac.ground_speed !== null ? Math.round(ac.ground_speed) : "---";
-        return `<tr class="${selected}" data-icao="${ac.icao}">
-        <td>${ac.callsign || ac.icao}</td>
-        <td>${ac.squawk || "---"}</td>
+        return `<tr class="${selected}" data-icao="${escapeHtml(ac.icao)}">
+        <td>${escapeHtml(ac.callsign || ac.icao)}</td>
+        <td>${escapeHtml(ac.squawk || "---")}</td>
         <td>${alt}</td>
         <td>${spd}</td>
       </tr>`;

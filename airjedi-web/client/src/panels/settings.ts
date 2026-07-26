@@ -1,5 +1,6 @@
 import { Viewer } from "cesium";
 import { WebSocketClient } from "../websocket";
+import { escapeHtml } from "../util";
 
 interface FeedConfig {
   id: string;
@@ -52,8 +53,8 @@ export class SettingsPanel {
             .map(
               (f) => `
             <div class="detail-row" style="align-items: center;">
-              <span class="detail-value" style="font-size: 12px;">${f.address} (${f.protocol})</span>
-              <button class="close-btn remove-feed" data-id="${f.id}">x</button>
+              <span class="detail-value" style="font-size: 12px;">${escapeHtml(f.address)} (${escapeHtml(f.protocol)})</span>
+              <button class="close-btn remove-feed" data-id="${escapeHtml(f.id)}">x</button>
             </div>
           `
             )

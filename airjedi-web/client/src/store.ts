@@ -18,16 +18,7 @@ export class AircraftStore {
 
   applyUpdate(list: Aircraft[]): void {
     for (const ac of list) {
-      const existing = this.aircraft.get(ac.icao);
-      if (existing && ac.trail.length > 0) {
-        existing.trail.push(...ac.trail);
-        if (existing.trail.length > 200) {
-          existing.trail = existing.trail.slice(-200);
-        }
-        Object.assign(existing, { ...ac, trail: existing.trail });
-      } else {
-        this.aircraft.set(ac.icao, ac);
-      }
+      this.aircraft.set(ac.icao, ac);
     }
     this.notifyChange();
   }

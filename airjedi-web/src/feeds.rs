@@ -50,7 +50,7 @@ impl FeedManager {
 
         let aircraft: Arc<RwLock<Vec<Aircraft>>> = Arc::new(RwLock::new(Vec::new()));
         let conn_state: Arc<RwLock<ConnectionState>> = Arc::new(RwLock::new(ConnectionState::Disconnected));
-        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
 
         let ac_writer = Arc::clone(&aircraft);
         let cs_writer = Arc::clone(&conn_state);
@@ -58,24 +58,27 @@ impl FeedManager {
         tokio::spawn(async move {
             let mut last_snapshot = std::time::Instant::now();
             loop {
-                if *shutdown_rx.borrow() {
-                    client.shutdown();
-                    break;
-                }
-
-                if !client.process_next().await {
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                    continue;
-                }
-
-                if last_snapshot.elapsed() >= std::time::Duration::from_millis(200) {
-                    if let Ok(mut ac) = ac_writer.write() {
-                        *ac = client.get_aircraft();
+                tokio::select! {
+                    _ = shutdown_rx.changed() => {
+                        client.shutdown();
+                        break;
                     }
-                    if let Ok(mut cs) = cs_writer.write() {
-                        *cs = client.connection_state();
+                    result = client.process_next() => {
+                        if !result {
+                            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                            continue;
+                        }
+
+                        if last_snapshot.elapsed() >= std::time::Duration::from_millis(200) {
+                            if let Ok(mut ac) = ac_writer.write() {
+                                *ac = client.get_aircraft();
+                            }
+                            if let Ok(mut cs) = cs_writer.write() {
+                                *cs = client.connection_state();
+                            }
+                            last_snapshot = std::time::Instant::now();
+                        }
                     }
-                    last_snapshot = std::time::Instant::now();
                 }
             }
         });
