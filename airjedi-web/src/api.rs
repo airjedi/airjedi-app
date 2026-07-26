@@ -44,9 +44,11 @@ pub async fn delete_feed(
 
 pub async fn get_status(State(state): State<SharedState>) -> Json<StatusResponse> {
     let feeds = state.feeds.lock().await;
+    let aircraft = feeds.get_all_aircraft();
+    let statuses = feeds.feed_statuses();
     Json(StatusResponse {
-        aircraft_count: feeds.get_all_aircraft().len(),
-        feeds: feeds.feed_statuses(),
+        aircraft_count: aircraft.len(),
+        feeds: statuses,
     })
 }
 

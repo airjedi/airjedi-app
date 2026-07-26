@@ -51,7 +51,7 @@ pub struct FeedConfig {
 }
 
 fn default_protocol() -> String {
-    "basestation".to_string()
+    "beast".to_string()
 }
 
 impl Config {

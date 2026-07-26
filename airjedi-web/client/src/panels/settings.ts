@@ -62,8 +62,8 @@ export class SettingsPanel {
         <div style="margin-top: 8px; display: flex; gap: 4px;">
           <input type="text" id="new-feed-addr" class="search-input" style="margin: 0; flex: 1;" placeholder="host:port" />
           <select id="new-feed-proto" style="background: rgba(40,40,60,0.8); color: #e0e0e0; border: 1px solid rgba(80,80,120,0.3); border-radius: 4px; padding: 4px; font-size: 12px;">
-            <option value="basestation">SBS-1</option>
             <option value="beast">BEAST</option>
+            <option value="basestation">SBS-1</option>
           </select>
           <button id="add-feed-btn" style="background: rgba(60,60,100,0.6); color: #e0e0e0; border: 1px solid rgba(80,80,120,0.3); border-radius: 4px; padding: 4px 10px; cursor: pointer; font-size: 12px;">Add</button>
         </div>

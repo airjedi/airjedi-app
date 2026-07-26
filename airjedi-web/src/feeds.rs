@@ -1,7 +1,8 @@
 use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 use uuid::Uuid;
 
-use adsb_client::{Client, ClientConfig, ConnectionConfig, ProtocolType, TrackerConfig};
+use adsb_client::{Aircraft, Client, ClientConfig, ConnectionConfig, ConnectionState, ProtocolType, TrackerConfig};
 
 use crate::config::FeedConfig;
 use crate::dto::{AircraftDto, FeedStatusDto};
@@ -10,7 +11,9 @@ struct ManagedFeed {
     id: Uuid,
     address: String,
     protocol: String,
-    client: Client,
+    aircraft: Arc<RwLock<Vec<Aircraft>>>,
+    connection_state: Arc<RwLock<ConnectionState>>,
+    shutdown: tokio::sync::watch::Sender<bool>,
 }
 
 pub struct FeedManager {
@@ -28,11 +31,11 @@ impl FeedManager {
 
     pub fn add_feed(&mut self, config: FeedConfig) {
         let protocol = match config.protocol.to_lowercase().as_str() {
-            "beast" => ProtocolType::Beast,
-            _ => ProtocolType::BaseStation,
+            "basestation" | "sbs" | "sbs1" => ProtocolType::BaseStation,
+            _ => ProtocolType::Beast,
         };
 
-        let client = Client::spawn(ClientConfig {
+        let mut client = Client::spawn(ClientConfig {
             connection: ConnectionConfig {
                 address: config.address.clone(),
                 ..Default::default()
@@ -40,6 +43,38 @@ impl FeedManager {
             tracker: TrackerConfig::default(),
             protocol,
             ..Default::default()
+        });
+
+        let aircraft: Arc<RwLock<Vec<Aircraft>>> = Arc::new(RwLock::new(Vec::new()));
+        let conn_state: Arc<RwLock<ConnectionState>> = Arc::new(RwLock::new(ConnectionState::Disconnected));
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
+        let ac_writer = Arc::clone(&aircraft);
+        let cs_writer = Arc::clone(&conn_state);
+
+        tokio::spawn(async move {
+            let mut last_snapshot = std::time::Instant::now();
+            loop {
+                if *shutdown_rx.borrow() {
+                    client.shutdown();
+                    break;
+                }
+
+                if !client.process_next().await {
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    continue;
+                }
+
+                if last_snapshot.elapsed() >= std::time::Duration::from_millis(200) {
+                    if let Ok(mut ac) = ac_writer.write() {
+                        *ac = client.get_aircraft();
+                    }
+                    if let Ok(mut cs) = cs_writer.write() {
+                        *cs = client.connection_state();
+                    }
+                    last_snapshot = std::time::Instant::now();
+                }
+            }
         });
 
         tracing::info!("added feed {}: {}", config.id, config.address);
@@ -50,14 +85,16 @@ impl FeedManager {
                 id: config.id,
                 address: config.address,
                 protocol: config.protocol,
-                client,
+                aircraft,
+                connection_state: conn_state,
+                shutdown: shutdown_tx,
             },
         );
     }
 
     pub fn remove_feed(&mut self, id: Uuid) {
         if let Some(feed) = self.feeds.remove(&id) {
-            feed.client.shutdown();
+            let _ = feed.shutdown.send(true);
             tracing::info!("removed feed {}: {}", id, feed.address);
         }
     }
@@ -66,8 +103,9 @@ impl FeedManager {
         let mut merged: HashMap<String, AircraftDto> = HashMap::new();
 
         for feed in self.feeds.values() {
-            for ac in feed.client.get_aircraft() {
-                let dto = AircraftDto::from_aircraft(&ac, self.max_trail_points);
+            let aircraft = feed.aircraft.read().unwrap_or_else(|e| e.into_inner());
+            for ac in aircraft.iter() {
+                let dto = AircraftDto::from_aircraft(ac, self.max_trail_points);
                 merged
                     .entry(dto.icao.clone())
                     .and_modify(|existing| {
@@ -85,10 +123,15 @@ impl FeedManager {
     pub fn feed_statuses(&self) -> Vec<FeedStatusDto> {
         self.feeds
             .values()
-            .map(|f| FeedStatusDto {
-                id: f.id,
-                address: f.address.clone(),
-                state: format!("{:?}", f.client.connection_state()),
+            .map(|f| {
+                let state = f.connection_state.read()
+                    .map(|s| format!("{:?}", *s))
+                    .unwrap_or_else(|_| "Unknown".to_string());
+                FeedStatusDto {
+                    id: f.id,
+                    address: f.address.clone(),
+                    state,
+                }
             })
             .collect()
     }
