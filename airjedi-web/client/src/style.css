@@ -1,73 +1,70 @@
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
+:root {
+  --bg-primary: #272a2e;
+  --bg-secondary: #1c1e22;
+  --bg-triage: #141518;
+  --bg-auxiliary: #32353a;
+  --bg-contrast: #3e4147;
+  --accent: #cc6622;
+  --accent2: #e09440;
+  --text: #d0d2d6;
+  --text-dim: #808590;
+  --overlay: #4a4d54;
+  --success: #7dba6a;
+  --warn: #e0b050;
+  --error: #d45050;
+  --metrics: rgb(170, 170, 170);
+  --range: rgb(100, 200, 255);
+  --radius: 6px;
 }
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
 
 html, body {
   width: 100%;
   height: 100%;
   overflow: hidden;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  background: #1a1a2e;
-  color: #e0e0e0;
+  background: var(--bg-primary);
+  color: var(--text);
 }
 
-#cesium-container {
-  width: 100%;
-  height: 100%;
-}
+#cesium-container { width: 100%; height: 100%; }
+
+/* ── Panels ────────────────────────────────────── */
 
 .panel {
   position: absolute;
-  background: rgba(20, 20, 40, 0.92);
-  border: 1px solid rgba(100, 100, 140, 0.3);
-  border-radius: 6px;
-  backdrop-filter: blur(8px);
+  background: rgba(28, 30, 34, 0.94);
+  border: 1px solid var(--bg-contrast);
+  border-radius: var(--radius);
+  backdrop-filter: blur(10px);
   z-index: 10;
   overflow: hidden;
 }
 
 #aircraft-list-panel {
   top: 10px;
-  left: 10px;
-  width: 360px;
-  max-height: calc(100vh - 80px);
+  right: 10px;
+  width: 380px;
+  max-height: calc(100vh - 50px);
   display: flex;
   flex-direction: column;
+  transition: transform 0.2s ease;
 }
 
-#aircraft-detail-panel {
-  top: 10px;
-  right: 10px;
-  width: 300px;
-  display: none;
-}
-
-#status-bar {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 32px;
-  background: rgba(20, 20, 40, 0.95);
-  border-top: 1px solid rgba(100, 100, 140, 0.3);
-  display: flex;
-  align-items: center;
-  padding: 0 12px;
-  font-size: 12px;
-  gap: 16px;
-  z-index: 10;
+#aircraft-list-panel.hidden {
+  transform: translateX(calc(100% + 12px));
 }
 
 .panel-header {
   padding: 8px 12px;
   font-size: 13px;
   font-weight: 600;
-  border-bottom: 1px solid rgba(100, 100, 140, 0.2);
+  border-bottom: 1px solid var(--bg-auxiliary);
   display: flex;
   justify-content: space-between;
   align-items: center;
+  color: var(--text);
 }
 
 .panel-body {
@@ -75,86 +72,244 @@ html, body {
   flex: 1;
 }
 
-.aircraft-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-}
-
-.aircraft-table th {
-  position: sticky;
-  top: 0;
-  background: rgba(30, 30, 50, 0.98);
+.panel-toolbar {
   padding: 6px 8px;
-  text-align: left;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  border-bottom: 1px solid var(--bg-auxiliary);
+}
+
+/* ── Search ────────────────────────────────────── */
+
+.search-input {
+  padding: 5px 8px;
+  background: var(--bg-auxiliary);
+  border: 1px solid var(--bg-contrast);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+  flex: 1;
+}
+
+.search-input:focus { border-color: var(--accent); }
+
+/* ── Sort controls ─────────────────────────────── */
+
+.sort-select {
+  background: var(--bg-auxiliary);
+  color: var(--text-dim);
+  border: 1px solid var(--bg-contrast);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-size: 11px;
+  outline: none;
+}
+
+.sort-btn {
+  background: var(--bg-auxiliary);
+  border: 1px solid var(--bg-contrast);
+  border-radius: 4px;
+  color: var(--text-dim);
   cursor: pointer;
-  user-select: none;
-  font-weight: 500;
-  color: #a0a0c0;
+  font-size: 12px;
+  padding: 3px 6px;
+  line-height: 1;
 }
 
-.aircraft-table td {
-  padding: 4px 8px;
-  border-bottom: 1px solid rgba(60, 60, 80, 0.3);
-}
+.sort-btn:hover { border-color: var(--accent); color: var(--text); }
 
-.aircraft-table tr:hover {
-  background: rgba(60, 60, 100, 0.3);
+/* ── Aircraft Cards ────────────────────────────── */
+
+.aircraft-card {
+  margin: 6px 6px;
+  background: var(--bg-primary);
+  border: 1px solid var(--bg-contrast);
+  border-radius: 8px;
   cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 
-.aircraft-table tr.selected {
-  background: rgba(80, 80, 160, 0.4);
+.aircraft-card:hover {
+  border-color: var(--overlay);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.aircraft-card.selected {
+  border-color: var(--accent);
+}
+
+.card-header {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 8px 8px 0 0;
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--bg-contrast);
+}
+
+.card-body {
+  padding: 6px 10px 8px;
+}
+
+.card-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  line-height: 1.8;
+}
+
+/* ── Badges ────────────────────────────────────── */
+
+.badge {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 3px;
+  letter-spacing: 0.5px;
+  line-height: 1.3;
+}
+
+.badge-gnd { background: rgba(180, 140, 80, 0.3); color: rgb(180, 140, 80); }
+.badge-emer { background: rgba(212, 80, 80, 0.3); color: var(--error); }
+
+.status-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-dot.connected { background: var(--success); }
+.status-dot.disconnected { background: var(--error); }
+
+/* ── Inline card detail ────────────────────────── */
+
+.card-detail {
+  overflow: hidden;
+  max-height: 0;
+  opacity: 0;
+  border-top: 1px solid var(--bg-auxiliary);
+  background: var(--bg-secondary);
+  transition: max-height 0.25s ease-out, opacity 0.2s ease-out;
+}
+
+.card-detail.open {
+  max-height: 500px;
+  opacity: 1;
+  padding: 2px 0 4px;
+  transition: max-height 0.3s ease-in, opacity 0.2s ease-in;
+}
+
+/* ── Detail sections ───────────────────────────── */
+
+.detail-section { padding: 6px 0; }
+
+.detail-section-title {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  padding: 4px 12px 2px;
+  border-bottom: 1px solid var(--bg-auxiliary);
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
 }
 
 .detail-row {
   display: flex;
   justify-content: space-between;
-  padding: 4px 12px;
-  font-size: 12px;
+  padding: 3px 12px;
+  font-size: 11px;
 }
 
-.detail-label {
-  color: #8888aa;
-}
+.detail-label { color: var(--text-dim); }
+.detail-value { font-weight: 500; font-family: ui-monospace, "SF Mono", monospace; }
 
-.detail-value {
-  font-weight: 500;
-}
-
-.status-dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  margin-right: 4px;
-}
-
-.status-dot.connected { background: #4caf50; }
-.status-dot.disconnected { background: #f44336; }
-
-.search-input {
-  width: 100%;
-  padding: 6px 10px;
-  background: rgba(40, 40, 60, 0.8);
-  border: 1px solid rgba(80, 80, 120, 0.3);
+.emergency-banner {
+  background: rgba(212, 80, 80, 0.2);
+  border: 1px solid var(--error);
   border-radius: 4px;
-  color: #e0e0e0;
-  font-size: 12px;
-  outline: none;
-  margin: 6px;
-  width: calc(100% - 12px);
+  padding: 4px 10px;
+  margin: 6px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--error);
+  text-align: center;
 }
+
+/* ── Status bar ────────────────────────────────── */
+
+#status-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 28px;
+  background: var(--bg-triage);
+  border-top: 1px solid var(--bg-auxiliary);
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  font-size: 11px;
+  gap: 16px;
+  z-index: 10;
+  color: var(--text-dim);
+}
+
+#status-bar .status-dot { margin-right: 4px; }
+
+/* ── Settings panel ────────────────────────────── */
+
+.settings-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  margin: 12px 0 6px;
+}
+
+.settings-section-title:first-child { margin-top: 0; }
 
 .close-btn {
   background: none;
   border: none;
-  color: #a0a0c0;
+  color: var(--text-dim);
   cursor: pointer;
   font-size: 16px;
   padding: 0 4px;
 }
 
-.close-btn:hover {
-  color: #ffffff;
+.close-btn:hover { color: var(--text); }
+
+.btn {
+  background: var(--bg-auxiliary);
+  color: var(--text);
+  border: 1px solid var(--bg-contrast);
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.btn:hover { border-color: var(--accent); }
+
+#toolbar {
+  position: absolute;
+  top: 10px;
+  right: 400px;
+  z-index: 10;
+  display: flex;
+  gap: 4px;
 }

@@ -18,6 +18,19 @@ export interface Aircraft {
   on_ground: boolean | null;
   last_seen: string;
   trail: TrailPoint[];
+  emergency: boolean | null;
+  alert: boolean | null;
+  category: number | null;
+  airspeed: number | null;
+  roll_angle: number | null;
+  track_angle_rate: number | null;
+  selected_altitude: number | null;
+  barometric_setting: number | null;
+  wind_speed: number | null;
+  wind_direction: number | null;
+  temperature: number | null;
+  signal_level: number | null;
+  distance_nm: number | null;
 }
 
 export interface FeedStatus {

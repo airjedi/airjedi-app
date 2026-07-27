@@ -3,7 +3,6 @@ import { WebSocketClient } from "./websocket";
 import { AircraftStore, AppState } from "./store";
 import { AircraftManager } from "./aircraft";
 import { AircraftListPanel } from "./panels/aircraft-list";
-import { AircraftDetailPanel } from "./panels/aircraft-detail";
 import { StatusBar } from "./panels/status-bar";
 import { SettingsPanel } from "./panels/settings";
 import "./style.css";
@@ -43,17 +42,26 @@ async function main() {
   new AircraftManager(viewer, store, appState);
 
   const listPanel = document.getElementById("aircraft-list-panel")!;
-  const detailPanel = document.getElementById("aircraft-detail-panel")!;
   const statusBar = document.getElementById("status-bar")!;
 
   new AircraftListPanel(listPanel, store, appState);
-  new AircraftDetailPanel(detailPanel, store, appState);
   new StatusBar(statusBar, store, wsClient, viewer);
 
   const settingsContainer = document.getElementById("settings-panel")!;
   const settingsPanel = new SettingsPanel(settingsContainer, wsClient, viewer);
   document.getElementById("settings-btn")!.addEventListener("click", () => {
     settingsPanel.toggle();
+  });
+
+  document.getElementById("list-toggle-btn")!.addEventListener("click", () => {
+    listPanel.classList.toggle("hidden");
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+    if (e.key === "l" || e.key === "L") {
+      listPanel.classList.toggle("hidden");
+    }
   });
 }
 

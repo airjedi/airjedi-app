@@ -16,14 +16,36 @@ pub struct Config {
 pub struct ServerConfig {
     #[serde(default = "default_listen")]
     pub listen: String,
+    #[serde(default = "default_center_lat")]
+    pub center_lat: Option<f64>,
+    #[serde(default = "default_center_lon")]
+    pub center_lon: Option<f64>,
 }
 
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             listen: default_listen(),
+            center_lat: Some(37.6872),
+            center_lon: Some(-97.3301),
         }
     }
+}
+
+impl ServerConfig {
+    pub fn center_lat(&self) -> f64 {
+        self.center_lat.unwrap_or(37.6872)
+    }
+    pub fn center_lon(&self) -> f64 {
+        self.center_lon.unwrap_or(-97.3301)
+    }
+}
+
+fn default_center_lat() -> Option<f64> {
+    Some(37.6872)
+}
+fn default_center_lon() -> Option<f64> {
+    Some(-97.3301)
 }
 
 fn default_listen() -> String {

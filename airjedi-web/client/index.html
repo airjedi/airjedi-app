@@ -7,11 +7,13 @@
 </head>
 <body>
   <div id="cesium-container"></div>
+  <div id="toolbar">
+    <button id="list-toggle-btn" class="btn" title="Toggle aircraft list (L)">Aircraft</button>
+    <button id="settings-btn" class="btn" title="Settings">Settings</button>
+  </div>
   <div id="aircraft-list-panel" class="panel"></div>
-  <div id="aircraft-detail-panel" class="panel"></div>
   <div id="status-bar"></div>
-  <div id="settings-panel" class="panel" style="top: 10px; right: 10px; width: 340px;"></div>
-  <button id="settings-btn" style="position: absolute; top: 10px; right: 360px; z-index: 10; background: rgba(20,20,40,0.9); border: 1px solid rgba(100,100,140,0.3); border-radius: 4px; color: #e0e0e0; padding: 6px 10px; cursor: pointer; font-size: 13px;">Settings</button>
+  <div id="settings-panel" class="panel" style="top: 10px; left: 10px; width: 340px;"></div>
   <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

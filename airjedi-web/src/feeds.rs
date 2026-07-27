@@ -19,12 +19,14 @@ struct ManagedFeed {
 pub struct FeedManager {
     feeds: HashMap<Uuid, ManagedFeed>,
     max_trail_points: usize,
+    center: Option<(f64, f64)>,
 }
 
 impl FeedManager {
-    pub fn new() -> Self {
+    pub fn new(center: Option<(f64, f64)>) -> Self {
         Self {
             feeds: HashMap::new(),
+            center,
             max_trail_points: 100,
         }
     }
@@ -111,7 +113,7 @@ impl FeedManager {
         for feed in self.feeds.values() {
             let aircraft = feed.aircraft.read().unwrap_or_else(|e| e.into_inner());
             for ac in aircraft.iter() {
-                let dto = AircraftDto::from_aircraft(ac, self.max_trail_points);
+                let dto = AircraftDto::from_aircraft(ac, self.max_trail_points, self.center);
                 merged
                     .entry(dto.icao.clone())
                     .and_modify(|existing| {

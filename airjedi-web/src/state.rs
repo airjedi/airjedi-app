@@ -17,7 +17,10 @@ impl AppState {
     pub fn new(config: Config) -> Self {
         let (broadcast_tx, _) = broadcast::channel(64);
         Self {
-            feeds: Mutex::new(FeedManager::new()),
+            feeds: Mutex::new(FeedManager::new(Some((
+                config.server.center_lat(),
+                config.server.center_lon(),
+            )))),
             broadcast_tx,
             config,
         }

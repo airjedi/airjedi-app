@@ -16,6 +16,8 @@ pub struct StatusResponse {
 #[derive(Serialize)]
 pub struct ClientConfig {
     pub cesium_ion_token: Option<String>,
+    pub center_lat: f64,
+    pub center_lon: f64,
 }
 
 pub async fn get_feeds(State(state): State<SharedState>) -> Json<Vec<FeedConfig>> {
@@ -55,5 +57,7 @@ pub async fn get_status(State(state): State<SharedState>) -> Json<StatusResponse
 pub async fn get_config(State(state): State<SharedState>) -> Json<ClientConfig> {
     Json(ClientConfig {
         cesium_ion_token: state.config.cesium_ion_token(),
+        center_lat: state.config.server.center_lat(),
+        center_lon: state.config.server.center_lon(),
     })
 }

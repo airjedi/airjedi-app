@@ -17,15 +17,14 @@ import {
 } from "cesium";
 import { Aircraft } from "./types";
 import { AircraftStore, AppState } from "./store";
+import { formatAlt } from "./theme";
 
 function altitudeColor(altFeet: number | null): Color {
-  if (altFeet === null) return Color.GRAY;
-  if (altFeet < 1000) return Color.fromCssColorString("#2196F3");
-  if (altFeet < 5000) return Color.fromCssColorString("#4CAF50");
-  if (altFeet < 15000) return Color.fromCssColorString("#8BC34A");
-  if (altFeet < 25000) return Color.fromCssColorString("#FFEB3B");
-  if (altFeet < 35000) return Color.fromCssColorString("#FF9800");
-  return Color.fromCssColorString("#F44336");
+  if (altFeet === null) return Color.fromCssColorString("#646464");
+  if (altFeet >= 30000) return Color.fromCssColorString("#c864ff");
+  if (altFeet >= 20000) return Color.fromCssColorString("#ff9632");
+  if (altFeet >= 10000) return Color.fromCssColorString("#c8c864");
+  return Color.fromCssColorString("#64c8c8");
 }
 
 function feetToMeters(feet: number): number {
@@ -33,9 +32,7 @@ function feetToMeters(feet: number): number {
 }
 
 function formatAltitude(alt: number | null): string {
-  if (alt === null) return "---";
-  if (alt >= 18000) return `FL${Math.round(alt / 100)}`;
-  return `${alt.toLocaleString()}ft`;
+  return formatAlt(alt);
 }
 
 export class AircraftManager {
