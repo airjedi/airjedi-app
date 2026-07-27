@@ -31,6 +31,20 @@ and PR review. Run them via OpenShell sandboxes or locally from Claude Code.
 **Commit style:** Plain imperative (e.g., "Fix altimeter QNH transition").
 No conventional commit prefixes, no emojis.
 
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in GitHub Issues on `airjedi/airjedi-app`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five-label vocabulary. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout: one `CONTEXT.md` at the repo root, ADRs in `docs/adr/`. See `docs/agents/domain.md`.
+
 ## Project Overview
 
 AirJedi is an aircraft map tracker built with the Bevy 0.19 game engine and an integrated tile rendering system. The application displays aircraft positions on an interactive slippy map (OpenStreetMap-based) with pan, zoom, 2D/3D view modes, and real-time position tracking capabilities.
