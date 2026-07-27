@@ -1,5 +1,5 @@
 [workspace]
-members = ["airjedi-fusion", "crates/adsb-client"]
+members = ["airjedi-fusion", "crates/adsb-client", "airjedi-web"]
 resolver = "2"
 
 [package]

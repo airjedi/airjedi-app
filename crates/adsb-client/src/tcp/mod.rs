@@ -271,8 +271,10 @@ async fn connect_and_process_lines(
             line_result = lines.next_line() => {
                 match line_result {
                     Ok(Some(line)) => {
+                        let mut bytes = line.into_bytes();
+                        bytes.push(b'\n');
                         if event_tx
-                            .send(ConnectionEvent::DataReceived(line.into_bytes()))
+                            .send(ConnectionEvent::DataReceived(bytes))
                             .await
                             .is_err()
                         {
