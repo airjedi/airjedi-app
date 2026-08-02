@@ -79,8 +79,14 @@ Note: The project uses custom optimization profiles in Cargo.toml - dev mode has
 # Generate app icon from SVG (requires: brew install librsvg)
 cd macos && make icons
 
-# Build AirJedi.app bundle (release mode)
+# Build AirJedi.app universal bundle (arm64+x86_64, release mode)
 cd macos && make app
+
+# Build native-arch-only (faster, skips cross-compilation)
+cd macos && make app UNIVERSAL=false
+
+# Build and install to /Applications
+cd macos && make install
 
 # Build and launch
 cd macos && make run

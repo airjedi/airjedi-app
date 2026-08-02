@@ -26,17 +26,41 @@ VERSION=$(grep '^version' "$ROOT_DIR/Cargo.toml" | head -1 | sed 's/.*"\(.*\)".*
 
 echo "Building $APP_NAME v$VERSION..."
 
+UNIVERSAL="${UNIVERSAL:-true}"
+
 # Step 1: Build binary
 echo "Step 1: Building $BUILD_MODE binary..."
 if [ "$BUILD_MODE" = "release" ]; then
-    (cd "$ROOT_DIR" && cargo build --release --no-default-features)
+    CARGO_FLAGS="--release --no-default-features"
 else
-    (cd "$ROOT_DIR" && cargo build)
+    CARGO_FLAGS=""
 fi
 
-if [ ! -f "$BINARY_PATH" ]; then
-    echo "Error: Binary not found at $BINARY_PATH"
-    exit 1
+if [ "$UNIVERSAL" = "true" ]; then
+    echo "  Building universal binary (arm64 + x86_64)..."
+    (cd "$ROOT_DIR" && cargo build $CARGO_FLAGS --target aarch64-apple-darwin)
+    (cd "$ROOT_DIR" && cargo build $CARGO_FLAGS --target x86_64-apple-darwin)
+
+    ARM_BINARY="$ROOT_DIR/target/aarch64-apple-darwin/$BUILD_MODE/$BINARY_NAME"
+    X86_BINARY="$ROOT_DIR/target/x86_64-apple-darwin/$BUILD_MODE/$BINARY_NAME"
+
+    if [ ! -f "$ARM_BINARY" ] || [ ! -f "$X86_BINARY" ]; then
+        echo "Error: One or both arch binaries not found"
+        echo "  arm64: $ARM_BINARY ($([ -f "$ARM_BINARY" ] && echo found || echo missing))"
+        echo "  x86_64: $X86_BINARY ($([ -f "$X86_BINARY" ] && echo found || echo missing))"
+        exit 1
+    fi
+
+    mkdir -p "$(dirname "$BINARY_PATH")"
+    lipo -create "$ARM_BINARY" "$X86_BINARY" -output "$BINARY_PATH"
+    echo "  Universal binary created ($(lipo -archs "$BINARY_PATH"))"
+else
+    (cd "$ROOT_DIR" && cargo build $CARGO_FLAGS)
+
+    if [ ! -f "$BINARY_PATH" ]; then
+        echo "Error: Binary not found at $BINARY_PATH"
+        exit 1
+    fi
 fi
 
 # Step 2: Create .app directory structure
@@ -76,6 +100,11 @@ if [ -f "$ICNS_FILE" ]; then
 else
     echo "Warning: Icon file not found at $ICNS_FILE. Run 'make icons' first."
 fi
+
+# Step 7: Ad-hoc code sign
+echo "Step 7: Code signing..."
+codesign --sign - --force --deep "$APP_DIR"
+chmod +x "$MACOS_BIN_DIR/$BINARY_NAME"
 
 echo ""
 echo "Application bundle created: $APP_DIR"

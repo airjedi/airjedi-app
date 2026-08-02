@@ -1,12 +1,15 @@
 # AirJedi macOS Application Bundle
 # Usage:
 #   make icons  - Generate .icns from SVG
-#   make app    - Build release binary and assemble .app bundle
-#   make app BUILD_MODE=debug - Build debug binary and assemble .app bundle
+#   make app    - Build universal (arm64+x86_64) release .app bundle
+#   make app UNIVERSAL=false        - Build native-arch-only bundle
+#   make app BUILD_MODE=debug       - Build debug bundle
 #   make run    - Build and launch the .app
+#   make install - Build and install to /Applications
 #   make clean  - Remove build/ directory
 #
 # BUILD_MODE: release (default) or debug
+# UNIVERSAL: true (default) or false
 
 .PHONY: icons app install run clean
 
@@ -22,10 +25,11 @@ icons:
 	@echo "Icons generated at $(ICNS_FILE)"
 
 BUILD_MODE ?= release
+UNIVERSAL ?= true
 
 app: icons
-	@echo "Building application bundle ($(BUILD_MODE))..."
-	BUILD_MODE=$(BUILD_MODE) bash scripts/build-app.sh
+	@echo "Building application bundle ($(BUILD_MODE), universal=$(UNIVERSAL))..."
+	BUILD_MODE=$(BUILD_MODE) UNIVERSAL=$(UNIVERSAL) bash scripts/build-app.sh
 	@echo "Application bundle created at $(BUILD_DIR)/$(APP_NAME).app"
 
 install: app

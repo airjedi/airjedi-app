@@ -310,10 +310,9 @@ pub fn render_data_sources_tab(
 
     ui.separator();
 
-    // Clone feeds to avoid triggering Bevy change detection on every frame.
-    // Only write back to app_config when something actually changes.
     let mut feeds = app_config.feeds.clone();
     let mut changed = false;
+    let mut save = false;
     let mut remove_idx = None;
 
     for (idx, feed) in feeds.iter_mut().enumerate() {
@@ -343,6 +342,7 @@ pub fn render_data_sources_tab(
         ui.horizontal(|ui| {
             if ui.checkbox(&mut feed.enabled, "").changed() {
                 changed = true;
+                save = true;
             }
             ui.colored_label(status_color, "\u{25CF}");
             ui.strong(&feed.name);
@@ -359,41 +359,46 @@ pub fn render_data_sources_tab(
             });
         });
 
-        ui.add_enabled_ui(true, |ui| {
-            ui.indent(format!("feed_{}", idx), |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("Name:");
-                    let resp = ui.text_edit_singleline(&mut feed.name);
-                    if resp.lost_focus() {
-                        changed = true;
-                    }
-                });
+        ui.indent(format!("feed_{}", idx), |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Name:");
+                let resp = ui.text_edit_singleline(&mut feed.name);
+                if resp.changed() {
+                    changed = true;
+                }
+                if resp.lost_focus() && changed {
+                    save = true;
+                }
+            });
 
-                ui.horizontal(|ui| {
-                    ui.label("Protocol:");
-                    let combo_id = format!("protocol_{}", idx);
-                    egui::ComboBox::from_id_salt(&combo_id)
-                        .selected_text(feed.protocol.display_name())
-                        .show_ui(ui, |ui| {
-                            for &proto in FeedProtocol::ALL {
-                                if ui
-                                    .selectable_label(feed.protocol == proto, proto.display_name())
-                                    .clicked()
-                                {
-                                    feed.protocol = proto;
-                                    changed = true;
-                                }
+            ui.horizontal(|ui| {
+                ui.label("Protocol:");
+                let combo_id = format!("protocol_{}", idx);
+                egui::ComboBox::from_id_salt(&combo_id)
+                    .selected_text(feed.protocol.display_name())
+                    .show_ui(ui, |ui| {
+                        for &proto in FeedProtocol::ALL {
+                            if ui
+                                .selectable_label(feed.protocol == proto, proto.display_name())
+                                .clicked()
+                            {
+                                feed.protocol = proto;
+                                changed = true;
+                                save = true;
                             }
-                        });
-                });
+                        }
+                    });
+            });
 
-                ui.horizontal(|ui| {
-                    ui.label("Endpoint:");
-                    let resp = ui.text_edit_singleline(&mut feed.endpoint);
-                    if resp.lost_focus() {
-                        changed = true;
-                    }
-                });
+            ui.horizontal(|ui| {
+                ui.label("Endpoint:");
+                let resp = ui.text_edit_singleline(&mut feed.endpoint);
+                if resp.changed() {
+                    changed = true;
+                }
+                if resp.lost_focus() && changed {
+                    save = true;
+                }
             });
         });
 
@@ -403,6 +408,7 @@ pub fn render_data_sources_tab(
     if let Some(idx) = remove_idx {
         feeds.remove(idx);
         changed = true;
+        save = true;
     }
 
     ui.separator();
@@ -417,14 +423,14 @@ pub fn render_data_sources_tab(
             enabled: false,
         });
         changed = true;
+        save = true;
     }
 
-    // Only write back when something actually changed
     if changed {
         app_config.feeds = feeds;
     }
 
-    if changed {
+    if save {
         crate::config::save_config(app_config);
     }
 }
