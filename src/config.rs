@@ -233,15 +233,22 @@ pub enum FeedProtocol {
     Sbs1,
     /// BEAST binary format (typically port 30005)
     Beast,
+    /// Direct SDR reception (RTL-SDR or other supported hardware)
+    RtlSdr,
 }
 
 impl FeedProtocol {
-    pub const ALL: &'static [FeedProtocol] = &[FeedProtocol::Sbs1, FeedProtocol::Beast];
+    pub const ALL: &'static [FeedProtocol] = &[
+        FeedProtocol::Sbs1,
+        FeedProtocol::Beast,
+        FeedProtocol::RtlSdr,
+    ];
 
     pub fn display_name(self) -> &'static str {
         match self {
             Self::Sbs1 => "SBS-1 (BaseStation)",
             Self::Beast => "BEAST (Binary)",
+            Self::RtlSdr => "RTL-SDR (Direct)",
         }
     }
 
@@ -249,7 +256,12 @@ impl FeedProtocol {
         match self {
             Self::Sbs1 => 30003,
             Self::Beast => 30005,
+            Self::RtlSdr => 0,
         }
+    }
+
+    pub fn uses_endpoint(self) -> bool {
+        !matches!(self, Self::RtlSdr)
     }
 }
 
@@ -273,14 +285,23 @@ pub struct FeedSourceConfig {
     pub id: String,
     /// User-friendly name for this feed.
     pub name: String,
-    /// Connection endpoint in host:port format.
+    /// Connection endpoint in host:port format (ignored for SDR protocols).
     pub endpoint: String,
-    /// Protocol type (SBS-1 or BEAST).
+    /// Protocol type (SBS-1, BEAST, or RTL-SDR).
     #[serde(default)]
     pub protocol: FeedProtocol,
     /// Whether this feed is active.
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// SDR device index (RTL-SDR only, default 0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_index: Option<usize>,
+    /// SDR gain setting: "auto" or a dB value like "49.6" (RTL-SDR only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gain: Option<String>,
+    /// SDR sample rate in Hz (RTL-SDR only, default 2400000).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample_rate: Option<u32>,
 }
 
 pub fn new_feed_id() -> String {
@@ -308,6 +329,9 @@ fn default_feeds() -> Vec<FeedSourceConfig> {
         endpoint: "192.168.1.10:30003".to_string(),
         protocol: FeedProtocol::Sbs1,
         enabled: true,
+        device_index: None,
+        gain: None,
+        sample_rate: None,
     }]
 }
 

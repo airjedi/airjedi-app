@@ -1,8 +1,12 @@
 mod tcp;
+#[cfg(feature = "sdr")]
+mod sdr;
 
 use bytes::Bytes;
 
 pub use tcp::TcpTransport;
+#[cfg(feature = "sdr")]
+pub use sdr::{SdrConfig, SdrGain, SdrTransport};
 
 /// Events from a transport source.
 #[derive(Debug, Clone)]

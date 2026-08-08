@@ -390,16 +390,44 @@ pub fn render_data_sources_tab(
                     });
             });
 
-            ui.horizontal(|ui| {
-                ui.label("Endpoint:");
-                let resp = ui.text_edit_singleline(&mut feed.endpoint);
-                if resp.changed() {
-                    changed = true;
-                }
-                if resp.lost_focus() && changed {
-                    save = true;
-                }
-            });
+            if feed.protocol.uses_endpoint() {
+                ui.horizontal(|ui| {
+                    ui.label("Endpoint:");
+                    let resp = ui.text_edit_singleline(&mut feed.endpoint);
+                    if resp.changed() {
+                        changed = true;
+                    }
+                    if resp.lost_focus() && changed {
+                        save = true;
+                    }
+                });
+            } else {
+                ui.horizontal(|ui| {
+                    ui.label("Device:");
+                    let mut dev = feed.device_index.unwrap_or(0);
+                    if ui
+                        .add(egui::DragValue::new(&mut dev).range(0..=7))
+                        .changed()
+                    {
+                        feed.device_index = Some(dev);
+                        changed = true;
+                        save = true;
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Gain:");
+                    let mut gain_str =
+                        feed.gain.clone().unwrap_or_else(|| "auto".to_string());
+                    let resp = ui.text_edit_singleline(&mut gain_str);
+                    if resp.changed() {
+                        feed.gain = Some(gain_str);
+                        changed = true;
+                    }
+                    if resp.lost_focus() && changed {
+                        save = true;
+                    }
+                });
+            }
         });
 
         ui.add_space(6.0);
@@ -421,6 +449,9 @@ pub fn render_data_sources_tab(
             endpoint: String::new(),
             protocol: FeedProtocol::Sbs1,
             enabled: false,
+            device_index: None,
+            gain: None,
+            sample_rate: None,
         });
         changed = true;
         save = true;

@@ -1,11 +1,15 @@
 mod beast;
 pub(crate) mod beast_frame;
 mod line;
+#[cfg(feature = "sdr")]
+mod sdr;
 
 use bytes::Bytes;
 
 pub use beast::BeastFramer;
 pub use line::LineFramer;
+#[cfg(feature = "sdr")]
+pub use sdr::SdrFramer;
 
 /// The type of a protocol frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

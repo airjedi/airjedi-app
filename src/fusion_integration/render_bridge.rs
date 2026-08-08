@@ -48,9 +48,21 @@ pub fn sync_tracks_to_visuals(
         return;
     };
 
-    let raw_aircraft: Option<Vec<adsb_client::Aircraft>> = feed_mgr.as_ref().map(|mgr| {
-        mgr.all_aircraft().into_iter().map(|(_, ac)| ac).collect()
-    });
+    let raw_aircraft: Option<std::collections::HashMap<adsb_client::Icao, adsb_client::Aircraft>> =
+        feed_mgr.as_ref().map(|mgr| {
+            let mut best: std::collections::HashMap<adsb_client::Icao, adsb_client::Aircraft> =
+                std::collections::HashMap::new();
+            for (_, ac) in mgr.all_aircraft() {
+                best.entry(ac.icao)
+                    .and_modify(|existing| {
+                        if ac.last_seen > existing.last_seen {
+                            *existing = ac.clone();
+                        }
+                    })
+                    .or_insert(ac);
+            }
+            best
+        });
 
     for (track_entity, track, tracker, quality, classification) in &fusion_tracks {
         let (lat, lon, alt_m) = tracker.position_geodetic();
@@ -70,7 +82,7 @@ pub fn sync_tracks_to_visuals(
         let raw_ac = track_icao.and_then(|icao| {
             raw_aircraft
                 .as_ref()
-                .and_then(|list| list.iter().find(|ac| ac.icao == icao))
+                .and_then(|map| map.get(&icao))
         });
         let alt_ft = raw_ac
             .and_then(|ac| ac.altitude)

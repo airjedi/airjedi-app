@@ -96,10 +96,14 @@ pub use decoder::NativeDecoder;
 #[cfg(feature = "decoder-rs1090")]
 pub use decoder::Rs1090Decoder;
 pub use framing::{BeastFramer, Frame, FrameType, Framer, LineFramer};
+#[cfg(feature = "sdr")]
+pub use framing::SdrFramer;
 pub use protocol::{AircraftMessage, Icao, MessagePayload, ParseError, PayloadKind};
 pub use tcp::{Connection, ConnectionConfig, ConnectionEvent, ConnectionState, FrameMode};
 pub use tracker::{Aircraft, AircraftTracker, PositionPoint, TrackerConfig, TrackerEvent};
 pub use transport::{TcpTransport, Transport, TransportEvent};
+#[cfg(feature = "sdr")]
+pub use transport::{SdrConfig, SdrGain, SdrTransport};
 
 /// Protocol type for the client.
 #[derive(Debug, Clone, Copy, Default)]
@@ -109,12 +113,15 @@ pub enum ProtocolType {
     BaseStation,
     /// BEAST binary protocol (port 30005).
     Beast,
+    /// Direct SDR reception via RTL-SDR or other supported hardware.
+    #[cfg(feature = "sdr")]
+    RtlSdr,
 }
 
 /// Configuration for the full-stack client.
 #[derive(Debug, Clone)]
 pub struct ClientConfig {
-    /// Connection configuration.
+    /// Connection configuration (used by BaseStation and Beast protocols).
     pub connection: ConnectionConfig,
     /// Tracker configuration.
     pub tracker: TrackerConfig,
@@ -122,6 +129,9 @@ pub struct ClientConfig {
     pub protocol: ProtocolType,
     /// Cleanup interval for stale aircraft.
     pub cleanup_interval: Duration,
+    /// SDR device configuration (used when protocol is RtlSdr).
+    #[cfg(feature = "sdr")]
+    pub sdr: SdrConfig,
 }
 
 impl Default for ClientConfig {
@@ -131,6 +141,8 @@ impl Default for ClientConfig {
             tracker: TrackerConfig::default(),
             protocol: ProtocolType::default(),
             cleanup_interval: Duration::from_secs(30),
+            #[cfg(feature = "sdr")]
+            sdr: SdrConfig::default(),
         }
     }
 }
@@ -221,6 +233,24 @@ impl Client {
                     (
                         Box::new(TcpTransport::new(conn_config)),
                         Box::new(BeastFramer::new()),
+                        Box::new(dec),
+                    )
+                }
+                #[cfg(feature = "sdr")]
+                ProtocolType::RtlSdr => {
+                    #[cfg(feature = "decoder-rs1090")]
+                    let mut dec = Rs1090Decoder::new();
+                    #[cfg(all(not(feature = "decoder-rs1090"), feature = "decoder-native"))]
+                    let mut dec = NativeDecoder::new();
+                    #[cfg(all(not(feature = "decoder-rs1090"), not(feature = "decoder-native")))]
+                    compile_error!("RTL-SDR protocol requires either decoder-rs1090 or decoder-native feature");
+
+                    if let Some((lat, lon)) = config.tracker.center {
+                        dec.set_reference_position(lat, lon);
+                    }
+                    (
+                        Box::new(SdrTransport::new(config.sdr.clone())),
+                        Box::new(SdrFramer::new()),
                         Box::new(dec),
                     )
                 }

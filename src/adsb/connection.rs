@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use adsb_client::{
     Client as AdsbClient, ClientConfig, ConnectionConfig, ConnectionState, ProtocolType,
-    TrackerConfig,
+    SdrConfig, SdrGain, TrackerConfig,
 };
 
 use crate::config::{self, FeedProtocol, FeedSourceConfig};
@@ -195,9 +195,25 @@ fn spawn_feed_client(
     let endpoint = feed.endpoint.clone();
     let feed_name = feed.name.clone();
 
-    let protocol = match feed.protocol {
-        FeedProtocol::Sbs1 => ProtocolType::BaseStation,
-        FeedProtocol::Beast => ProtocolType::Beast,
+    let (protocol, sdr_config) = match feed.protocol {
+        FeedProtocol::Sbs1 => (ProtocolType::BaseStation, SdrConfig::default()),
+        FeedProtocol::Beast => (ProtocolType::Beast, SdrConfig::default()),
+        FeedProtocol::RtlSdr => {
+            let gain = match feed.gain.as_deref() {
+                None | Some("auto") | Some("") => SdrGain::Auto,
+                Some(v) => v
+                    .parse::<f64>()
+                    .map(SdrGain::Manual)
+                    .unwrap_or(SdrGain::Auto),
+            };
+            let sdr = SdrConfig {
+                device_index: feed.device_index.unwrap_or(0),
+                sample_rate: feed.sample_rate.unwrap_or(2_400_000),
+                gain,
+                ..SdrConfig::default()
+            };
+            (ProtocolType::RtlSdr, sdr)
+        }
     };
 
     std::thread::spawn(move || {
@@ -208,8 +224,8 @@ fn spawn_feed_client(
 
         rt.block_on(async move {
             info!(
-                "[{}] Starting ADS-B client, connecting to {} ({:?})",
-                feed_name, endpoint, protocol
+                "[{}] Starting ADS-B client ({:?})",
+                feed_name, protocol
             );
 
             let mut client = AdsbClient::spawn(ClientConfig {
@@ -224,6 +240,7 @@ fn spawn_feed_client(
                     ..Default::default()
                 },
                 protocol,
+                sdr: sdr_config,
                 ..Default::default()
             });
 

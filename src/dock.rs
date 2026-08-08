@@ -92,7 +92,6 @@ pub struct DockTreeState {
 /// Panes grouped in the bottom tab container.
 const BOTTOM_PANES: &[DockPane] = &[
     DockPane::Coverage,
-    DockPane::DataSources,
     DockPane::Export,
     DockPane::Recording,
 ];
@@ -103,6 +102,7 @@ const RIGHT_PANES: &[DockPane] = &[
     DockPane::AircraftDetail,
     DockPane::Airspace,
     DockPane::Bookmarks,
+    DockPane::DataSources,
     DockPane::Stats,
     DockPane::Settings,
     DockPane::Ingest,
@@ -140,20 +140,20 @@ impl Default for DockTreeState {
             pane_tile_ids.insert(pane, id);
         }
 
-        // Bottom tabs: Coverage, DataSources, Export, Recording
+        // Bottom tabs: Coverage, Export, Recording
         let bottom_tabs_id = tiles.insert_tab_tile(vec![
             pane_tile_ids[&DockPane::Coverage],
-            pane_tile_ids[&DockPane::DataSources],
             pane_tile_ids[&DockPane::Export],
             pane_tile_ids[&DockPane::Recording],
         ]);
 
-        // Right tabs: AircraftList, AircraftDetail, Airspace, Bookmarks, Stats, Settings, Ingest, View3D, Debug, Inspector
+        // Right tabs: AircraftList, AircraftDetail, Airspace, Bookmarks, DataSources, Stats, Settings, Ingest, View3D, Debug, Inspector
         let right_tabs_id = tiles.insert_tab_tile(vec![
             pane_tile_ids[&DockPane::AircraftList],
             pane_tile_ids[&DockPane::AircraftDetail],
             pane_tile_ids[&DockPane::Airspace],
             pane_tile_ids[&DockPane::Bookmarks],
+            pane_tile_ids[&DockPane::DataSources],
             pane_tile_ids[&DockPane::Stats],
             pane_tile_ids[&DockPane::Settings],
             pane_tile_ids[&DockPane::Ingest],

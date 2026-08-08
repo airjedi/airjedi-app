@@ -35,10 +35,15 @@ missing_panics_doc = "allow"
 module_name_repetitions = "allow"
 
 [features]
-default = ["decoder-rs1090"]
+default = ["decoder-rs1090", "rtlsdr"]
 decoder-rs1090 = ["dep:rs1090"]
 decoder-native = []
 tracker-jump-detection = []
+sdr = ["dep:rs1090", "rs1090/sdr", "dep:desperado"]
+rtlsdr = ["sdr", "desperado/rtlsdr"]
+airspy = ["sdr", "desperado/airspy"]
+hackrf = ["sdr", "desperado/hackrf"]
+soapy = ["sdr", "desperado/soapy"]
 
 [dependencies]
 async-trait = "0.1"
@@ -49,6 +54,7 @@ chrono = { version = "0.4", features = ["serde"] }
 log = "0.4"
 thiserror = "1"
 rs1090 = { version = "0.6", optional = true }
+desperado = { version = "0.4", optional = true }
 
 [[example]]
 name = "bds_diag"
