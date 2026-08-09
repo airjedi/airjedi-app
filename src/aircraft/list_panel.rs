@@ -6,7 +6,7 @@ use super::typeinfo::AircraftTypeInfo;
 use super::{CameraFollowState, DetailPanelState, SessionClock, TrailHistory};
 use crate::geo::{haversine_distance_nm, CoordinateConverter};
 use crate::theme::{to_egui_color32, to_egui_color32_alpha, AppTheme};
-use crate::widgets::{ArcGauge, Card, DataStrip, WidgetTheme};
+use crate::widgets::{Card, DataStrip, MiniPfd, PfdData, WidgetTheme};
 use crate::MapState;
 
 /// Sort criteria for aircraft list
@@ -1168,221 +1168,190 @@ fn render_inline_detail(
         |ui| {
             ui.set_clip_rect(ui.clip_rect().intersect(ui.max_rect()));
 
-            // Position data strip
-            DataStrip::new(&wt)
-                .accent_left(wt.accent, 3.0)
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new("Pos").color(wt.text_dim).size(10.0));
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "{:.4}, {:.4}",
-                                aircraft.latitude, aircraft.longitude
-                            ))
-                            .color(wt.text)
-                            .size(10.0)
-                            .monospace(),
-                        );
-                    });
-                });
+            ui.horizontal(|ui| {
+                let total_width = ui.available_width();
+                let left_width = total_width * 0.50;
 
-            ui.add_space(2.0);
-
-            // Key metrics as data strips
-            let mut pairs: Vec<(&str, String, egui::Color32)> = Vec::new();
-            pairs.push(("Dist", format!("{:.1}nm", distance_nm), wt.accent));
-
-            if let Some(ti) = type_info {
-                if let Some(ref reg) = ti.registration {
-                    pairs.push(("Reg", reg.clone(), wt.text));
-                }
-                if let Some(ref tc) = ti.type_code {
-                    pairs.push(("Type", tc.clone(), wt.text));
-                }
-                if let Some(ref op) = ti.operator {
-                    pairs.push(("Oper", op.clone(), wt.text));
-                }
-            }
-
-            pairs.push(("Trk", format!("{}", trail.points.len()), wt.text));
-
-            let dur_text = oldest_point_age
-                .map(|secs| format!("{}:{:02}", secs / 60, secs % 60))
-                .unwrap_or_else(|| "---".to_string());
-            pairs.push(("Dur", dur_text, wt.text));
-
-            // Render pairs as data strips, 2 per row
-            for chunk in pairs.chunks(2) {
-                DataStrip::new(&wt)
-                    .accent_left(wt.border, 2.0)
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new(chunk[0].0)
-                                    .color(wt.text_dim)
-                                    .size(10.0),
-                            );
-                            ui.label(
-                                egui::RichText::new(&chunk[0].1)
-                                    .color(chunk[0].2)
-                                    .size(10.0)
-                                    .monospace(),
-                            );
-                            if let Some(pair) = chunk.get(1) {
-                                ui.add_space(12.0);
-                                ui.label(egui::RichText::new(pair.0).color(wt.text_dim).size(10.0));
-                                ui.label(
-                                    egui::RichText::new(&pair.1)
-                                        .color(pair.2)
-                                        .size(10.0)
-                                        .monospace(),
-                                );
-                            }
-                        });
-                    });
-                ui.add_space(1.0);
-            }
-
-            if let Some(diag) = fusion_diag {
-                ui.add_space(2.0);
-                DataStrip::new(&wt)
-                    .accent_left(wt.border, 2.0)
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new("Filter").color(wt.text_dim).size(10.0));
-                            ui.label(
-                                egui::RichText::new(diag.filter_type)
-                                    .color(wt.accent)
-                                    .size(10.0)
-                                    .monospace(),
-                            );
-                            if let (Some(probs), Some(dominant)) = (&diag.mode_probabilities, diag.dominant_mode) {
-                                ui.add_space(8.0);
-                                let mode_label = match dominant {
-                                    0 => "CV",
-                                    1 => "MNV",
-                                    _ => "?",
-                                };
-                                let dominant_pct = probs.get(dominant).copied().unwrap_or(0.0) * 100.0;
-                                ui.label(
-                                    egui::RichText::new(format!("{} {:.0}%", mode_label, dominant_pct))
+                // Left column: text data strips
+                ui.allocate_ui_with_layout(
+                    egui::vec2(left_width, ui.available_height()),
+                    egui::Layout::top_down(egui::Align::LEFT),
+                    |ui| {
+                        // Position data strip
+                        DataStrip::new(&wt)
+                            .accent_left(wt.accent, 3.0)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(egui::RichText::new("Pos").color(wt.text_dim).size(10.0));
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "{:.4}, {:.4}",
+                                            aircraft.latitude, aircraft.longitude
+                                        ))
                                         .color(wt.text)
                                         .size(10.0)
                                         .monospace(),
-                                );
+                                    );
+                                });
+                            });
+
+                        ui.add_space(2.0);
+
+                        // Key metrics as data strips
+                        let mut pairs: Vec<(&str, String, egui::Color32)> = Vec::new();
+                        pairs.push(("Dist", format!("{:.1}nm", distance_nm), wt.accent));
+
+                        if let Some(ti) = type_info {
+                            if let Some(ref reg) = ti.registration {
+                                pairs.push(("Reg", reg.clone(), wt.text));
                             }
-                            ui.add_space(8.0);
-                            ui.label(egui::RichText::new("Obs").color(wt.text_dim).size(10.0));
-                            ui.label(
-                                egui::RichText::new(format!("{}", diag.observation_count))
-                                    .color(wt.text)
-                                    .size(10.0)
-                                    .monospace(),
-                            );
+                            if let Some(ref tc) = ti.type_code {
+                                pairs.push(("Type", tc.clone(), wt.text));
+                            }
+                            if let Some(ref op) = ti.operator {
+                                pairs.push(("Oper", op.clone(), wt.text));
+                            }
+                        }
+
+                        pairs.push(("Trk", format!("{}", trail.points.len()), wt.text));
+
+                        let dur_text = oldest_point_age
+                            .map(|secs| format!("{}:{:02}", secs / 60, secs % 60))
+                            .unwrap_or_else(|| "---".to_string());
+                        pairs.push(("Dur", dur_text, wt.text));
+
+                        for chunk in pairs.chunks(2) {
+                            DataStrip::new(&wt)
+                                .accent_left(wt.border, 2.0)
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label(
+                                            egui::RichText::new(chunk[0].0)
+                                                .color(wt.text_dim)
+                                                .size(10.0),
+                                        );
+                                        ui.label(
+                                            egui::RichText::new(&chunk[0].1)
+                                                .color(chunk[0].2)
+                                                .size(10.0)
+                                                .monospace(),
+                                        );
+                                        if let Some(pair) = chunk.get(1) {
+                                            ui.add_space(12.0);
+                                            ui.label(egui::RichText::new(pair.0).color(wt.text_dim).size(10.0));
+                                            ui.label(
+                                                egui::RichText::new(&pair.1)
+                                                    .color(pair.2)
+                                                    .size(10.0)
+                                                    .monospace(),
+                                            );
+                                        }
+                                    });
+                                });
+                            ui.add_space(1.0);
+                        }
+
+                        if let Some(diag) = fusion_diag {
+                            ui.add_space(2.0);
+                            DataStrip::new(&wt)
+                                .accent_left(wt.border, 2.0)
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label(egui::RichText::new("Filter").color(wt.text_dim).size(10.0));
+                                        ui.label(
+                                            egui::RichText::new(diag.filter_type)
+                                                .color(wt.accent)
+                                                .size(10.0)
+                                                .monospace(),
+                                        );
+                                        if let (Some(probs), Some(dominant)) = (&diag.mode_probabilities, diag.dominant_mode) {
+                                            ui.add_space(8.0);
+                                            let mode_label = match dominant {
+                                                0 => "CV",
+                                                1 => "MNV",
+                                                _ => "?",
+                                            };
+                                            let dominant_pct = probs.get(dominant).copied().unwrap_or(0.0) * 100.0;
+                                            ui.label(
+                                                egui::RichText::new(format!("{} {:.0}%", mode_label, dominant_pct))
+                                                    .color(wt.text)
+                                                    .size(10.0)
+                                                    .monospace(),
+                                            );
+                                        }
+                                        ui.add_space(8.0);
+                                        ui.label(egui::RichText::new("Obs").color(wt.text_dim).size(10.0));
+                                        ui.label(
+                                            egui::RichText::new(format!("{}", diag.observation_count))
+                                                .color(wt.text)
+                                                .size(10.0)
+                                                .monospace(),
+                                        );
+                                    });
+                                });
+                        }
+
+                        if let Some(tar) = aircraft.track_angle_rate {
+                            ui.add_space(2.0);
+                            ui.horizontal(|ui| {
+                                let dir = if tar > 0.1 { "\u{21BB}" } else if tar < -0.1 { "\u{21BA}" } else { "-" };
+                                ui.label(
+                                    egui::RichText::new(format!("Turn: {:.1}\u{00B0}/s {}", tar.abs(), dir))
+                                        .color(wt.text_dim)
+                                        .size(10.0),
+                                );
+                            });
+                        }
+
+                        ui.add_space(2.0);
+
+                        // Follow/Unfollow button
+                        ui.horizontal(|ui| {
+                            let is_following = follow_state.following_icao.as_deref() == Some(selected_icao);
+                            let follow_text = if is_following { "Unfollow" } else { "Follow" };
+                            let follow_color = if is_following {
+                                egui::Color32::from_rgb(255, 100, 100)
+                            } else {
+                                wt.accent
+                            };
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        egui::RichText::new(follow_text)
+                                            .color(follow_color)
+                                            .size(10.0),
+                                    )
+                                    .small(),
+                                )
+                                .clicked()
+                            {
+                                if is_following {
+                                    follow_state.following_icao = None;
+                                } else {
+                                    follow_state.following_icao = Some(selected_icao.to_string());
+                                }
+                            }
                         });
-                    });
-            }
+                    },
+                );
 
-            ui.add_space(2.0);
-
-            // Gauges row for key flight metrics
-            ui.horizontal(|ui| {
-                if let Some(alt) = aircraft.altitude {
-                    let alt_norm = (alt as f32 / 45000.0).clamp(0.0, 1.0);
+                // Right column: PFD widget
+                ui.vertical(|ui| {
+                    let pfd_data = PfdData {
+                        airspeed_kts: aircraft.velocity,
+                        altitude_ft: aircraft.altitude,
+                        heading_deg: aircraft.heading,
+                        vertical_rate_fpm: aircraft.vertical_rate,
+                        roll_deg: aircraft.roll_angle,
+                        is_on_ground: aircraft.is_on_ground.unwrap_or(false),
+                    };
+                    let pfd_width = ui.available_width().min(160.0);
+                    let pfd_height = (pfd_width * 1.33).min(200.0);
                     ui.add(
-                        ArcGauge::themed(alt_norm, &wt)
-                            .size(60.0)
-                            .label("ALT")
-                            .value_text(&format_altitude(Some(alt)))
-                            .tick_count(5)
-                            .track_width(4.0)
-                            .fill_width(4.0),
-                    );
-                }
-
-                if let Some(speed) = aircraft.velocity {
-                    let spd_norm = (speed as f32 / 600.0).clamp(0.0, 1.0);
-                    ui.add(
-                        ArcGauge::themed(spd_norm, &wt)
-                            .size(60.0)
-                            .label("SPD")
-                            .value_text(&format!("{:.0} kt", speed))
-                            .fill_color(egui::Color32::from_rgb(100, 220, 150))
-                            .tick_count(5)
-                            .track_width(4.0)
-                            .fill_width(4.0),
-                    );
-                }
-
-                if let Some(hdg) = aircraft.heading {
-                    let hdg_norm = hdg / 360.0;
-                    ui.add(
-                        ArcGauge::themed(hdg_norm, &wt)
-                            .size(60.0)
-                            .label("HDG")
-                            .value_text(&format!("{:.0}\u{00B0}", hdg))
-                            .fill_color(egui::Color32::from_rgb(220, 180, 100))
-                            .sweep(360.0)
-                            .tick_count(8)
-                            .track_width(4.0)
-                            .fill_width(4.0),
-                    );
-                }
-
-                if let Some(roll) = aircraft.roll_angle {
-                    let roll_norm = ((roll + 90.0) / 180.0).clamp(0.0, 1.0);
-                    ui.add(
-                        ArcGauge::themed(roll_norm, &wt)
-                            .size(60.0)
-                            .label("ROLL")
-                            .value_text(&format!("{:.1}\u{00B0}", roll))
-                            .fill_color(egui::Color32::from_rgb(180, 130, 220))
-                            .tick_count(5)
-                            .track_width(4.0)
-                            .fill_width(4.0),
-                    );
-                }
-            });
-
-            if let Some(tar) = aircraft.track_angle_rate {
-                ui.horizontal(|ui| {
-                    let dir = if tar > 0.1 { "\u{21BB}" } else if tar < -0.1 { "\u{21BA}" } else { "-" };
-                    ui.label(
-                        egui::RichText::new(format!("Turn: {:.1}\u{00B0}/s {}", tar.abs(), dir))
-                            .color(wt.text_dim)
-                            .size(10.0),
+                        MiniPfd::themed(&pfd_data, &wt)
+                            .size(egui::vec2(pfd_width, pfd_height)),
                     );
                 });
-            }
-
-            ui.add_space(2.0);
-
-            // Follow/Unfollow button
-            ui.horizontal(|ui| {
-                let is_following = follow_state.following_icao.as_deref() == Some(selected_icao);
-                let follow_text = if is_following { "Unfollow" } else { "Follow" };
-                let follow_color = if is_following {
-                    egui::Color32::from_rgb(255, 100, 100)
-                } else {
-                    wt.accent
-                };
-                if ui
-                    .add(
-                        egui::Button::new(
-                            egui::RichText::new(follow_text)
-                                .color(follow_color)
-                                .size(10.0),
-                        )
-                        .small(),
-                    )
-                    .clicked()
-                {
-                    if is_following {
-                        follow_state.following_icao = None;
-                    } else {
-                        follow_state.following_icao = Some(selected_icao.to_string());
-                    }
-                }
             });
         },
     );

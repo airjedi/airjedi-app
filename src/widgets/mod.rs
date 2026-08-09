@@ -3,6 +3,7 @@ pub mod data_strip;
 pub mod effects;
 pub mod gauge;
 pub mod gradient_panel;
+pub mod pfd;
 pub mod shadow_frame;
 pub mod sparkline;
 
@@ -17,4 +18,5 @@ pub use card::Card;
 pub use data_strip::DataStrip;
 pub use gauge::ArcGauge;
 pub use gradient_panel::GradientPanel;
+pub use pfd::{MiniPfd, PfdData};
 pub use shadow_frame::{ShadowFrame, ShadowPreset};
