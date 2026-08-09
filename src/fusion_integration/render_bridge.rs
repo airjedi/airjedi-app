@@ -156,6 +156,9 @@ pub fn sync_tracks_to_visuals(
                 aircraft.spi = spi;
                 aircraft.roll_angle = roll_angle;
                 aircraft.track_angle_rate = track_angle_rate;
+                if roll_angle.is_some() || track_angle_rate.is_some() {
+                    aircraft.roll_last_seen = Some(track.last_update);
+                }
                 aircraft.last_seen = track.last_update;
                 if squawk.is_some() {
                     aircraft.squawk = squawk.clone();
@@ -252,6 +255,7 @@ pub fn sync_tracks_to_visuals(
                     vertical_rate: vrate,
                     roll_angle,
                     track_angle_rate,
+                    roll_last_seen: if roll_angle.is_some() || track_angle_rate.is_some() { Some(track.last_update) } else { None },
                     squawk,
                     is_on_ground,
                     alert,

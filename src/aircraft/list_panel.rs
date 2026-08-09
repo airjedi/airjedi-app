@@ -109,6 +109,7 @@ pub struct AircraftDisplayData {
     pub vertical_rate: Option<i32>,
     pub roll_angle: Option<f32>,
     pub track_angle_rate: Option<f32>,
+    pub has_recent_roll: bool,
     pub distance: f64,
     pub squawk: Option<String>,
     pub type_code: Option<String>,
@@ -202,6 +203,10 @@ pub fn update_aircraft_display_list(
                 }
             }
 
+            let has_recent_roll = a.roll_last_seen
+                .map(|t| (chrono::Utc::now() - t).num_seconds() < 30)
+                .unwrap_or(false);
+
             Some(AircraftDisplayData {
                 icao: a.icao.clone(),
                 callsign: a.callsign.clone(),
@@ -211,6 +216,7 @@ pub fn update_aircraft_display_list(
                 vertical_rate: a.vertical_rate,
                 roll_angle: a.roll_angle,
                 track_angle_rate: a.track_angle_rate,
+                has_recent_roll,
                 distance,
                 squawk: a.squawk.clone(),
                 type_code: type_info.and_then(|ti| ti.type_code.clone()),
@@ -963,6 +969,14 @@ pub fn render_aircraft_list_pane_content(
                                     .color(egui::Color32::from_rgb(180, 140, 80))
                                     .size(10.0)
                                     .strong(),
+                            );
+                        }
+
+                        if aircraft.has_recent_roll {
+                            ui.label(
+                                egui::RichText::new("\u{2708}")
+                                    .color(egui::Color32::from_rgb(180, 130, 220))
+                                    .size(12.0),
                             );
                         }
 

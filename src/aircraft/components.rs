@@ -25,6 +25,9 @@ pub struct Aircraft {
     pub roll_angle: Option<f32>,
     /// Track angle rate in degrees/second (from BEAST BDS 5,0). Positive = turning right.
     pub track_angle_rate: Option<f32>,
+    /// Timestamp of the last BDS 5,0 roll/turn update
+    #[reflect(ignore)]
+    pub roll_last_seen: Option<DateTime<Utc>>,
     /// Squawk code (transponder code)
     pub squawk: Option<String>,
     /// Whether the aircraft is on the ground
