@@ -72,31 +72,49 @@ AirJedi includes a built-in Mode-S/ADS-B decoder (the `adsb-client` crate) suppo
 | 0x33 | Mode-S Long (112-bit) | Supported (DF 16-21) |
 | 0x34 | Status | Skipped (receiver-specific) |
 
-## Requirements
+## Install
 
-- Rust (stable toolchain)
-- macOS, Linux, or Windows
-- An ADS-B data source (e.g., [readsb](https://github.com/wiedehopf/readsb) or [dump1090](https://github.com/flightaware/dump1090) with SBS-1 or BEAST output)
+### Homebrew (macOS)
 
-## Building and Running
+```bash
+brew tap airjedi/tap
+brew install --cask airjedi
+```
+
+To upgrade: `brew upgrade --cask airjedi`
+
+### From Source
+
+Requires Rust (stable toolchain) and an ADS-B data source (e.g., [readsb](https://github.com/wiedehopf/readsb) or [dump1090](https://github.com/flightaware/dump1090) with SBS-1 or BEAST output).
 
 ```bash
 # Debug build (faster compile, slower runtime)
-cargo build
 cargo run
 
 # Release build (slower compile, faster runtime)
-cargo build --release
 cargo run --release
 ```
 
-## macOS App Bundle
+### macOS App Bundle
 
 ```bash
 cd macos
-make app    # Build AirJedi.app
-make run    # Build and launch
+make app      # Build AirJedi.app (universal arm64+x86_64)
+make install  # Build and install to /Applications
+make run      # Build and launch
 ```
+
+## Releasing
+
+Bump the version in `Cargo.toml`, commit, then run:
+
+```bash
+cd macos && make release
+```
+
+This builds the universal .app bundle, zips it, creates a GitHub release with auto-generated notes, and updates the [Homebrew tap](https://github.com/airjedi/homebrew-tap) cask.
+
+Use `make release-dry-run` to preview without side effects.
 
 ## Configuration
 
