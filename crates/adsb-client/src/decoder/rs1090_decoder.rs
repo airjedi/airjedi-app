@@ -201,7 +201,8 @@ impl Rs1090Decoder {
                 }]
             }
             DF::CommBAltitudeReply { ac, bds, fs, .. } => {
-                let mut msgs = self.decode_commb_bds(bds, icao, signal_level);
+                let raw_mb = if data.len() >= 11 { &data[4..11] } else { &[] };
+                let mut msgs = self.decode_commb_bds(bds, icao, signal_level, raw_mb);
                 if msgs.is_empty() {
                     msgs.push(AircraftMessage {
                         icao,
@@ -219,7 +220,8 @@ impl Rs1090Decoder {
                 msgs
             }
             DF::CommBIdentityReply { id, bds, fs, .. } => {
-                let mut msgs = self.decode_commb_bds(bds, icao, signal_level);
+                let raw_mb = if data.len() >= 11 { &data[4..11] } else { &[] };
+                let mut msgs = self.decode_commb_bds(bds, icao, signal_level, raw_mb);
                 if msgs.is_empty() {
                     msgs.push(AircraftMessage {
                         icao,
@@ -438,6 +440,7 @@ impl Rs1090Decoder {
         bds: &T,
         icao: Icao,
         signal_level: Option<f32>,
+        raw_mb: &[u8],
     ) -> Vec<AircraftMessage> {
         let mut msgs = Vec::new();
 
@@ -464,6 +467,14 @@ impl Rs1090Decoder {
                         payload,
                     });
                 }
+            }
+        }
+
+        // Fall back to native BDS heuristic when rs1090 found nothing beyond callsign
+        let has_velocity = msgs.iter().any(|m| matches!(m.payload, MessagePayload::Velocity { .. }));
+        if !has_velocity && raw_mb.len() >= 7 {
+            if let Some(msg) = crate::protocol::beast::modes::decode_bds(raw_mb, icao, signal_level) {
+                msgs.push(msg);
             }
         }
 
