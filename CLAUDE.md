@@ -91,9 +91,30 @@ cd macos && make install
 # Build and launch
 cd macos && make run
 
+# Create GitHub release and update Homebrew tap
+cd macos && make release
+
+# Dry run (show what release would do)
+cd macos && make release-dry-run
+
 # Clean build artifacts
 cd macos && make clean
 ```
+
+### Homebrew Distribution
+
+AirJedi is distributed via a Homebrew cask tap at `airjedi/homebrew-tap`.
+
+```bash
+# Users install with:
+brew tap airjedi/tap
+brew install --cask airjedi
+
+# Users upgrade with:
+brew upgrade --cask airjedi
+```
+
+To cut a release: bump the version in `Cargo.toml`, commit, then run `cd macos && make release`. The release script builds the universal bundle, zips it, creates a GitHub release with auto-generated notes, and updates the Homebrew tap cask with the new version and SHA256.
 
 The `macos/` directory contains all macOS-specific build files. Assets are copied into `Contents/MacOS/assets/` inside the bundle (where Bevy's AssetPlugin looks). Tile cache uses `~/Library/Caches/airjedi/tiles/` in both development and bundle modes. The `src/paths.rs` module handles bundle-aware path resolution.
 

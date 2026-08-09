@@ -6,12 +6,14 @@
 #   make app BUILD_MODE=debug       - Build debug bundle
 #   make run    - Build and launch the .app
 #   make install - Build and install to /Applications
+#   make release - Build, create GitHub release, update Homebrew tap
+#   make release-dry-run - Show what release would do
 #   make clean  - Remove build/ directory
 #
 # BUILD_MODE: release (default) or debug
 # UNIVERSAL: true (default) or false
 
-.PHONY: icons app install run clean
+.PHONY: icons app install run release release-dry-run clean
 
 ROOT_DIR := $(shell cd .. && pwd)
 BUILD_DIR := build
@@ -45,6 +47,12 @@ install: app
 run: app
 	@echo "Launching $(APP_NAME)..."
 	open $(BUILD_DIR)/$(APP_NAME).app
+
+release:
+	bash scripts/release.sh
+
+release-dry-run:
+	bash scripts/release.sh --dry-run
 
 clean:
 	@echo "Cleaning build directory..."
