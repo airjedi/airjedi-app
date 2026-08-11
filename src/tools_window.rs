@@ -64,6 +64,7 @@ pub fn render_tools_window(
     ingest_status: Option<Res<crate::data_ingest::IngestStatus>>,
     mut ingest_ui: Option<ResMut<crate::data_ingest::IngestUiState>>,
     mut grid_overlay: Option<ResMut<GridOverlay>>,
+    mut location_ui: ResMut<crate::location::FeedLocationUiState>,
 ) {
     if !tools_state.open {
         return;
@@ -146,7 +147,7 @@ pub fn render_tools_window(
                     ToolsTab::Airspace => {
                         render_airspace_tab(ui, &mut airspace_display, &mut airspace_data)
                     }
-                    ToolsTab::DataSources => render_data_sources_tab(ui, feed_mgr.as_deref(), &mut app_config),
+                    ToolsTab::DataSources => render_data_sources_tab(ui, feed_mgr.as_deref(), &mut app_config, &mut location_ui),
                     ToolsTab::Export => render_export_tab(ui, &mut export_state),
                     ToolsTab::Recording => render_recording_tab(ui, &mut recording, &mut playback),
                     ToolsTab::View3D => render_view3d_tab(
@@ -235,6 +236,11 @@ pub fn render_coverage_tab(ui: &mut egui::Ui, coverage: &mut CoverageState) {
             coverage.receiver_location.0, coverage.receiver_location.1
         ));
     });
+    ui.label(
+        egui::RichText::new("Set receiver location in the Sources tab")
+            .size(10.0)
+            .color(egui::Color32::GRAY),
+    );
 }
 
 pub fn render_airspace_tab(
@@ -296,8 +302,10 @@ pub fn render_data_sources_tab(
     ui: &mut egui::Ui,
     feed_mgr: Option<&FeedConnectionManager>,
     app_config: &mut crate::config::AppConfig,
+    location_ui: &mut crate::location::FeedLocationUiState,
 ) {
     use adsb_client::ConnectionState;
+    location_ui.sync_buffers_from_config(app_config);
 
     let total_feeds = app_config.feeds.len();
     let connected = feed_mgr.map(|m| m.connected_count()).unwrap_or(0);
@@ -430,6 +438,79 @@ pub fn render_data_sources_tab(
             }
         });
 
+        // Receiver location
+        let is_fetching = location_ui.is_fetching(&feed.id);
+        let status_msg = location_ui.status.get(&feed.id).cloned();
+        let mut request_location_now = false;
+
+        ui.indent(format!("feed_loc_{}", idx), |ui| {
+            ui.label("Receiver Location:");
+            let buffers = location_ui
+                .buffers
+                .entry(feed.id.clone())
+                .or_insert_with(|| match feed.receiver_location {
+                    Some((lat, lon)) => (format!("{:.6}", lat), format!("{:.6}", lon)),
+                    None => (String::new(), String::new()),
+                });
+
+            ui.horizontal(|ui| {
+                ui.label("Lat:");
+                let lat_resp = ui.add(
+                    egui::TextEdit::singleline(&mut buffers.0)
+                        .desired_width(80.0)
+                        .hint_text("e.g. 37.6872"),
+                );
+                ui.label("Lon:");
+                let lon_resp = ui.add(
+                    egui::TextEdit::singleline(&mut buffers.1)
+                        .desired_width(90.0)
+                        .hint_text("e.g. -97.3301"),
+                );
+                if lat_resp.lost_focus() || lon_resp.lost_focus() {
+                    let lat = buffers.0.trim().parse::<f64>().ok().filter(|&v| v.abs() <= 90.0);
+                    let lon = buffers.1.trim().parse::<f64>().ok().filter(|&v| v.abs() <= 180.0);
+                    let new_loc = match (lat, lon) {
+                        (Some(la), Some(lo)) => Some((la, lo)),
+                        _ if buffers.0.trim().is_empty() && buffers.1.trim().is_empty() => None,
+                        _ => feed.receiver_location,
+                    };
+                    if new_loc != feed.receiver_location {
+                        feed.receiver_location = new_loc;
+                        changed = true;
+                        save = true;
+                    }
+                }
+            });
+
+            ui.horizontal(|ui| {
+                if is_fetching {
+                    ui.add_enabled(false, egui::Button::new("Fetching..."));
+                    ui.spinner();
+                } else if ui
+                    .button("Current Location")
+                    .on_hover_text(
+                        "Get approximate location via IP geolocation (city-level accuracy).\n\
+                         Works well when this machine is co-located with the receiver.",
+                    )
+                    .clicked()
+                {
+                    request_location_now = true;
+                }
+            });
+
+            if let Some(ref msg) = status_msg {
+                ui.label(
+                    egui::RichText::new(msg.as_str())
+                        .size(10.0)
+                        .color(egui::Color32::GRAY),
+                );
+            }
+        });
+
+        if request_location_now {
+            crate::location::request_ip_location(feed.id.clone(), location_ui);
+        }
+
         ui.add_space(6.0);
     }
 
@@ -452,6 +533,7 @@ pub fn render_data_sources_tab(
             device_index: None,
             gain: None,
             sample_rate: None,
+            receiver_location: None,
         });
         changed = true;
         save = true;

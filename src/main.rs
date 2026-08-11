@@ -32,6 +32,7 @@ mod hud;
 mod input;
 mod inspector;
 mod keyboard;
+mod location;
 mod map;
 mod paths;
 mod recording;
@@ -262,6 +263,7 @@ fn main() {
         terrain::TerrainPlugin,
         input::InputPlugin,
         camera::CameraPlugin,
+        location::LocationPlugin,
     ))
     .add_systems(
         Startup,

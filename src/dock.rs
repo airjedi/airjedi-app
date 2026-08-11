@@ -469,9 +469,10 @@ impl<'a> Behavior<DockPane> for DockBehavior<'a> {
                     let mut state = SystemState::<(
                         Option<ResMut<FeedConnectionManager>>,
                         ResMut<AppConfig>,
+                        ResMut<crate::location::FeedLocationUiState>,
                     )>::new(world);
-                    let (feed_mgr, mut app_config) = state.get_mut(world).unwrap();
-                    tools_window::render_data_sources_tab(ui, feed_mgr.as_deref(), &mut app_config);
+                    let (feed_mgr, mut app_config, mut location_ui) = state.get_mut(world).unwrap();
+                    tools_window::render_data_sources_tab(ui, feed_mgr.as_deref(), &mut app_config, &mut location_ui);
                 });
             }
 

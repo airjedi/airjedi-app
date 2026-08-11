@@ -302,6 +302,10 @@ pub struct FeedSourceConfig {
     /// SDR sample rate in Hz (RTL-SDR only, default 2400000).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sample_rate: Option<u32>,
+    /// Geographic location of this receiver (latitude, longitude).
+    /// Used for coverage calculations and distance filtering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receiver_location: Option<(f64, f64)>,
 }
 
 pub fn new_feed_id() -> String {
@@ -332,6 +336,7 @@ fn default_feeds() -> Vec<FeedSourceConfig> {
         device_index: None,
         gain: None,
         sample_rate: None,
+        receiver_location: None,
     }]
 }
 
