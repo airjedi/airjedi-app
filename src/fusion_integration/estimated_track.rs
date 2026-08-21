@@ -6,7 +6,8 @@ use bevy::prelude::*;
 use crate::tiles::LocalOrigin;
 
 use crate::aircraft::components::FusionTrackLink;
-use crate::aircraft::{Aircraft, AircraftListState, CameraFollowState};
+use crate::aircraft::{Aircraft, AircraftListState, CameraFollowState, InterpolationState};
+use crate::config::AppConfig;
 use crate::geo::CoordinateConverter;
 
 
@@ -266,6 +267,24 @@ fn snap_tracker_to_visual(
     aligned
 }
 
+/// Resolve the lat/lon/heading actually shown on screen for an aircraft this frame -
+/// the smoothly interpolated/dead-reckoned display position when interpolation is on,
+/// falling back to the raw last-reported position otherwise. Prediction graphics must
+/// anchor here rather than to `Aircraft.latitude/longitude` (which only updates once per
+/// ADS-B report) so the cone tracks the moving icon instead of snapping between reports.
+fn visual_position(
+    aircraft: &Aircraft,
+    interp: Option<&InterpolationState>,
+    interpolation_enabled: bool,
+) -> (f64, f64, Option<f32>) {
+    if interpolation_enabled {
+        if let Some(interp) = interp {
+            return (interp.display_lat, interp.display_lon, interp.display_heading);
+        }
+    }
+    (aircraft.latitude, aircraft.longitude, aircraft.heading)
+}
+
 fn sample_predicted_track(
     tracker: &TrackerState,
     config: &EstimatedTrackConfig,
@@ -394,12 +413,13 @@ pub fn update_heading_history(
 pub fn draw_estimated_track_cones(
     mut gizmos: Gizmos,
     config: Res<EstimatedTrackConfig>,
+    app_config: Res<AppConfig>,
     list_state: Res<AircraftListState>,
     follow_state: Res<CameraFollowState>,
     local_origin: Res<LocalOrigin>,
     heading_history: Res<HeadingHistory>,
     fusion_tracks: Query<(&TrackerState, &TrackQuality)>,
-    visuals: Query<(&FusionTrackLink, &Aircraft)>,
+    visuals: Query<(&FusionTrackLink, &Aircraft, Option<&InterpolationState>)>,
 ) {
     if !config.enabled {
         return;
@@ -414,9 +434,12 @@ pub fn draw_estimated_track_cones(
         return;
     };
 
-    let Some((link, aircraft)) = visuals.iter().find(|(_, a)| &a.icao == target_icao) else {
+    let Some((link, aircraft, interp)) = visuals.iter().find(|(_, a, _)| &a.icao == target_icao)
+    else {
         return;
     };
+    let (vis_lat, vis_lon, vis_heading) =
+        visual_position(aircraft, interp, app_config.interpolation_enabled);
 
     let Ok((tracker, quality)) = fusion_tracks.get(link.track_entity) else {
         return;
@@ -451,16 +474,15 @@ pub fn draw_estimated_track_cones(
     // the aircraft icon and the cone's starting point caused by filter-vs-raw position offsets.
     // During coasting, aircraft.heading is stale (from before the gap) so let the filter's
     // own predicted velocity determine the direction.
-    let snap_heading = if is_coasting { None } else { aircraft.heading };
-    let aligned_tracker =
-        snap_tracker_to_visual(tracker, aircraft.latitude, aircraft.longitude, snap_heading);
+    let snap_heading = if is_coasting { None } else { vis_heading };
+    let aligned_tracker = snap_tracker_to_visual(tracker, vis_lat, vis_lon, snap_heading);
 
     let samples = sample_predicted_track(&aligned_tracker, &config, turn_rate, mode_info.as_ref());
     if samples.is_empty() {
         return;
     }
 
-    let aircraft_pos = converter.latlon_to_world(aircraft.latitude, aircraft.longitude);
+    let aircraft_pos = converter.latlon_to_world(vis_lat, vis_lon);
 
     let mut prev_center = aircraft_pos;
     let mut prev_left = aircraft_pos;
@@ -546,11 +568,12 @@ pub fn draw_estimated_track_cones(
 pub fn draw_all_aircraft_predictions(
     mut gizmos: Gizmos,
     config: Res<EstimatedTrackConfig>,
+    app_config: Res<AppConfig>,
     list_state: Res<AircraftListState>,
     follow_state: Res<CameraFollowState>,
     local_origin: Res<LocalOrigin>,
     fusion_tracks: Query<(&TrackerState, &TrackQuality)>,
-    visuals: Query<(&FusionTrackLink, &Aircraft)>,
+    visuals: Query<(&FusionTrackLink, &Aircraft, Option<&InterpolationState>)>,
 ) {
     if !config.enabled || !config.show_all_aircraft {
         return;
@@ -564,7 +587,7 @@ pub fn draw_all_aircraft_predictions(
     let converter = CoordinateConverter::new(&local_origin);
     let horizon = config.all_aircraft_horizon_seconds as f64;
 
-    for (link, aircraft) in visuals.iter() {
+    for (link, aircraft, interp) in visuals.iter() {
         // Selected/followed aircraft gets the full cone - skip here
         if let Some(sel) = selected_icao {
             if &aircraft.icao == sel {
@@ -589,21 +612,24 @@ pub fn draw_all_aircraft_predictions(
             continue;
         }
 
+        let (vis_lat, vis_lon, vis_heading) =
+            visual_position(aircraft, interp, app_config.interpolation_enabled);
+
         // Use the raw ADS-B heading to set the velocity direction when available.
         // The filter's constant-velocity model lags during turns; the raw track angle
         // matches the aircraft's actual direction of travel.
-        let vel = if let Some(hdg) = aircraft.heading {
+        let vel = if let Some(hdg) = vis_heading {
             let hdg_rad = (hdg as f64).to_radians();
             let north = speed_mps * hdg_rad.cos();
             let east = speed_mps * hdg_rad.sin();
-            let (_, _, up) = ecef_vel_to_enu(&filter_vel, aircraft.latitude, aircraft.longitude);
-            enu_to_ecef_vel(east, north, up, aircraft.latitude, aircraft.longitude)
+            let (_, _, up) = ecef_vel_to_enu(&filter_vel, vis_lat, vis_lon);
+            enu_to_ecef_vel(east, north, up, vis_lat, vis_lon)
         } else {
             [filter_vel[0], filter_vel[1], filter_vel[2]]
         };
 
         let (_, _, alt_m) = tracker.position_geodetic();
-        let vis_ecef = airjedi_fusion::coord::geodetic_to_ecef(aircraft.latitude, aircraft.longitude, alt_m);
+        let vis_ecef = airjedi_fusion::coord::geodetic_to_ecef(vis_lat, vis_lon, alt_m);
         let end_ecef = [
             vis_ecef[0] + vel[0] * horizon,
             vis_ecef[1] + vel[1] * horizon,
@@ -611,7 +637,7 @@ pub fn draw_all_aircraft_predictions(
         ];
         let (end_lat, end_lon, _) = airjedi_fusion::coord::ecef_to_geodetic(&end_ecef);
 
-        let start_pos = converter.latlon_to_world(aircraft.latitude, aircraft.longitude);
+        let start_pos = converter.latlon_to_world(vis_lat, vis_lon);
         let end_pos = converter.latlon_to_world(end_lat, end_lon);
 
         let mode_info = tracker.mode_info();
