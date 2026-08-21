@@ -62,6 +62,17 @@ pub fn association_system(
     }
 }
 
+/// How long a track can go without a fused observation before a gate-rejected
+/// observation is treated as a post-gap reacquisition rather than an outlier.
+/// A constant-velocity filter's predicted velocity still points the pre-gap
+/// direction, so a target that maneuvered during the gap returns a velocity
+/// (and position) innovation that blows the Mahalanobis gate. For cooperative
+/// ID-matched targets there is no association ambiguity, so once a gap has
+/// opened we trust the fresh report and re-seed the filter instead of
+/// discarding it forever (which strands the track until it is cleaned up and
+/// re-initiated far away).
+const REACQUIRE_GAP: std::time::Duration = std::time::Duration::from_secs(3);
+
 pub fn fusion_update_system(
     store: Res<TimelineStore>,
     mut tracks: Query<(&mut Track, &mut TrackerState, &mut TrackQuality)>,
@@ -94,7 +105,23 @@ pub fn fusion_update_system(
                     quality.reacquire();
                     track.last_update = now;
                 }
-                FilterResult::OutlierRejected { .. } => {}
+                FilterResult::OutlierRejected { .. } => {
+                    // A gate rejection after a signal gap is almost always a coasted
+                    // constant-velocity prediction that diverged from a maneuvering
+                    // target, not a genuinely spurious report. When the track has gone
+                    // stale (gap opened) or already lost lock, re-seed the filter from
+                    // the fresh observation and reacquire rather than stranding the
+                    // track. Healthy, continuously-tracked targets have staleness ~0 and
+                    // keep full outlier protection.
+                    let gap_reacquire = quality.staleness >= REACQUIRE_GAP
+                        || matches!(quality.status, TrackStatus::Coasting | TrackStatus::Lost);
+                    if gap_reacquire {
+                        tracker.variant.initialize(&stored_obs.observation);
+                        quality.observation_count += 1;
+                        quality.reacquire();
+                        track.last_update = now;
+                    }
+                }
                 FilterResult::DivergenceDetected => {
                     tracker.variant.initialize(&stored_obs.observation);
                     quality.reacquire();

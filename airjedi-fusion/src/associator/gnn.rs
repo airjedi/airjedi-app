@@ -146,7 +146,6 @@ fn optimal_assignment(
 
     // Build dense cost matrix for Hungarian algorithm using i64 (pathfinding requires integer weights)
     let scale = 1_000_000i64;
-    let big_cost = i64::MAX / 2;
 
     let forced_obs: HashSet<usize> = forced.iter().map(|a| a.observation_idx).collect();
     let forced_tracks: HashSet<usize> = forced.iter().map(|a| a.track_idx).collect();
@@ -159,6 +158,14 @@ fn optimal_assignment(
     }
 
     let dim = free_obs.len().max(free_tracks.len());
+
+    // Sentinel cost for cells with no gated candidate. It must dwarf any real gated
+    // cost (max ~= scale * sqrt(gate) ~= 4e6) so the solver never prefers a non-match,
+    // yet stay small enough that kuhn_munkres summing/labeling `dim` of them cannot
+    // overflow i64. Using i64::MAX / 2 panics in debug (and silently wraps in release,
+    // corrupting associations) as soon as two sentinels are summed - the cause of the
+    // "attempt to add with overflow" crash in busy airspace.
+    let big_cost = (i64::MAX / 4) / dim as i64;
     let mut matrix = pathfinding::matrix::Matrix::new(dim, dim, big_cost);
 
     // Map original indices to dense matrix indices
@@ -353,6 +360,48 @@ mod tests {
         let config = AssociatorConfig::default();
         let result = GnnAssociator::associate(&[], &[], &spatial, &config);
         assert!(result.assignments.is_empty());
+    }
+
+    #[test]
+    fn large_sparse_matrix_does_not_overflow() {
+        // Regression: with several observations/tracks and only a few gated pairs,
+        // the Hungarian cost matrix is dominated by "no match" sentinel cells. A
+        // fixed i64::MAX/2 sentinel overflows when kuhn_munkres sums them across the
+        // assignment (panic in debug, silent wrap corrupting associations in release)
+        // - the "attempt to add with overflow" crash seen in busy airspace.
+        let mut spatial = SpatialIndex::new(0.5);
+        let config = AssociatorConfig::default();
+
+        // One gated pair so we enter the Hungarian assignment path.
+        let obs0 = make_obs_at(37.0, -97.0, None);
+        let (track0, tracker0, class0) = make_track_at(37.0, -97.0, None);
+        spatial.update_track(&track0.id, 37.0, -97.0);
+
+        // Many far-apart, non-matching obs/tracks -> matrix dominated by sentinels.
+        let mut extra_obs = Vec::new();
+        let mut extra_tracks = Vec::new();
+        for k in 0..5 {
+            let lat = 10.0 + f64::from(k) * 5.0;
+            extra_obs.push(make_obs_at(lat, 20.0, None));
+            let (t, tr, c) = make_track_at(-lat, 120.0, None);
+            spatial.update_track(&t.id, -lat, 120.0);
+            extra_tracks.push((t, tr, c));
+        }
+
+        let mut obs_refs: Vec<&StoredObservation> = vec![&obs0];
+        obs_refs.extend(extra_obs.iter());
+
+        let mut track_refs: Vec<(&Track, &TrackerState, &TargetClassification)> =
+            vec![(&track0, &tracker0, &class0)];
+        for (t, tr, c) in &extra_tracks {
+            track_refs.push((t, tr, c));
+        }
+
+        // Must not panic; only the single gated pair should associate.
+        let result = GnnAssociator::associate(&obs_refs, &track_refs, &spatial, &config);
+        assert_eq!(result.assignments.len(), 1);
+        assert_eq!(result.assignments[0].observation_idx, 0);
+        assert_eq!(result.assignments[0].track_idx, 0);
     }
 
     #[test]

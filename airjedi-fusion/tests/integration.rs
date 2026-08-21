@@ -145,6 +145,80 @@ fn track_has_classification() {
 }
 
 #[test]
+fn coasting_track_reacquires_after_maneuver_gap() {
+    // Regression: an aircraft that maneuvers while its signal is lost must
+    // reacquire when it reappears. The constant-velocity filter dead-reckons
+    // straight during the gap, so the returning (turned) observation fails the
+    // Mahalanobis gate on both position and velocity. Before the fix this
+    // observation was silently discarded, stranding the track in Coasting until
+    // it was cleaned up and re-initiated far away. It must now re-seed instead.
+    let mut app = build_test_app();
+
+    // Establish a confirmed track flying north.
+    for _ in 0..5 {
+        app.world_mut()
+            .resource_mut::<ObservationBuffer>()
+            .observations
+            .push(make_adsb_obs(37.0, -97.0, 10000.0, "TURN01"));
+        app.update();
+    }
+
+    // Simulate a long signal gap through a turn: force the track into Coasting
+    // and let the CV filter dead-reckon ~30s north so its predicted state is far
+    // from where the aircraft actually is.
+    {
+        let mut q = app
+            .world_mut()
+            .query::<(&mut TrackQuality, &mut TrackerState)>();
+        for (mut quality, mut tracker) in q.iter_mut(app.world_mut()) {
+            quality.status = TrackStatus::Coasting;
+            quality.staleness = std::time::Duration::from_secs(20);
+            for _ in 0..30 {
+                tracker.variant.predict(1.0);
+            }
+        }
+    }
+
+    // The aircraft reappears well off the dead-reckoned path, now heading east.
+    // This observation fails the gate against the coasted state.
+    let mut turned = make_adsb_obs(37.0, -96.9, 10000.0, "TURN01");
+    if let Measurement::PositionVelocity3D {
+        vel_north_mps,
+        vel_east_mps,
+        ..
+    } = &mut turned.measurement
+    {
+        *vel_north_mps = Some(0.0);
+        *vel_east_mps = Some(200.0);
+    }
+    app.world_mut()
+        .resource_mut::<ObservationBuffer>()
+        .observations
+        .push(turned);
+
+    app.update();
+
+    let mut query = app.world_mut().query::<(&TrackerState, &TrackQuality)>();
+    let (tracker, quality) = query.iter(app.world()).next().expect("track exists");
+    let (lat, lon, _) = tracker.position_geodetic();
+    let status = quality.status;
+
+    assert!(
+        (lat - 37.0).abs() < 0.05,
+        "latitude should snap to reacquired observation, got {lat}"
+    );
+    assert!(
+        (lon - (-96.9)).abs() < 0.05,
+        "longitude should snap to reacquired observation, got {lon}"
+    );
+    assert_eq!(
+        status,
+        TrackStatus::Confirmed,
+        "track must reacquire after a maneuvering gap, not stay coasting"
+    );
+}
+
+#[test]
 fn observation_buffer_drains() {
     let mut app = build_test_app();
 
