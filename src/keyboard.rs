@@ -194,6 +194,9 @@ pub fn toggle_overlays_keyboard(
     mut estimated_track_config: Option<
         ResMut<crate::fusion_integration::estimated_track::EstimatedTrackConfig>,
     >,
+    mut multi_sensor_debug_config: Option<
+        ResMut<crate::fusion_integration::multi_sensor_debug::MultiSensorDebugConfig>,
+    >,
     mut contexts: EguiContexts,
 ) {
     // Check if egui wants keyboard input
@@ -222,6 +225,13 @@ pub fn toggle_overlays_keyboard(
     // P - Toggle estimated track prediction cone
     if keyboard.just_pressed(KeyCode::KeyP) {
         if let Some(ref mut config) = estimated_track_config {
+            config.enabled = !config.enabled;
+        }
+    }
+
+    // K - Toggle multi-sensor source debug overlay
+    if keyboard.just_pressed(KeyCode::KeyK) {
+        if let Some(ref mut config) = multi_sensor_debug_config {
             config.enabled = !config.enabled;
         }
     }
@@ -375,6 +385,7 @@ R     Reset view
 A     Toggle airports
 T     Toggle trails
 P     Toggle estimated track cone
+K     Toggle sensor sources (fusion debug)
 W     Toggle weather overlay
 
 Shift+ Modifiers:

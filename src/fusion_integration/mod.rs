@@ -4,6 +4,7 @@ pub(crate) mod estimated_track;
 pub(crate) mod fusion_ui;
 mod interpolation;
 mod landing_detection;
+pub(crate) mod multi_sensor_debug;
 mod render_bridge;
 mod uncertainty_viz;
 
@@ -25,6 +26,8 @@ impl Plugin for FusionIntegrationPlugin {
             .register_type::<estimated_track::EstimatedTrackConfig>()
             .init_resource::<estimated_track::EstimatedTrackConfig>()
             .init_resource::<estimated_track::HeadingHistory>()
+            .register_type::<multi_sensor_debug::MultiSensorDebugConfig>()
+            .init_resource::<multi_sensor_debug::MultiSensorDebugConfig>()
             .add_systems(
                 Update,
                 adsb_adapter::adsb_to_fusion_system.before(FusionSet::Drain),
@@ -54,6 +57,9 @@ impl Plugin for FusionIntegrationPlugin {
                     landing_detection::detect_landings.after(render_bridge::sync_tracks_to_visuals),
                     landing_detection::cleanup_landed_aircraft
                         .after(landing_detection::detect_landings),
+                    multi_sensor_debug::draw_multi_sensor_sources
+                        .after(render_bridge::sync_tracks_to_visuals)
+                        .after(crate::ZoomSet::Change),
                 ),
             );
     }
