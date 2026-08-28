@@ -1,0 +1,65 @@
+# AirNav RadarBox feeder (rbfeeder), using
+# ghcr.io/sdr-enthusiasts/docker-airnavradar (formerly docker-radarbox).
+# Pure network client — no USB access needed. Pulls Beast data from the
+# readsb pod and writes its own MLAT-computed positions back into readsb's
+# second Beast-in port (30104), so those positions flow out through the same
+# Beast port (30005) AirJedi already connects to.
+#
+# hostNetwork + colocating on the same node lets this reach the readsb pod
+# over 127.0.0.1 without needing a Kubernetes Service.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: airnavradar
+  namespace: feeders
+  labels:
+    app: airnavradar
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: airnavradar
+  template:
+    metadata:
+      labels:
+        app: airnavradar
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      nodeSelector:
+        kubernetes.io/hostname: airjedi
+      containers:
+        - name: airnavradar
+          image: ghcr.io/sdr-enthusiasts/docker-airnavradar:latest
+          env:
+            - name: BEASTHOST
+              value: "127.0.0.1"
+            - name: MLAT_RESULTS_BEASTHOST
+              value: "127.0.0.1"
+            - name: MLAT_RESULTS_BEASTPORT
+              value: "30104"
+            - name: LAT
+              valueFrom:
+                configMapKeyRef:
+                  name: feeder-config
+                  key: FEEDER_LAT
+            - name: LONG
+              valueFrom:
+                configMapKeyRef:
+                  name: feeder-config
+                  key: FEEDER_LONG
+            - name: ALT
+              valueFrom:
+                configMapKeyRef:
+                  name: feeder-config
+                  key: FEEDER_ALT
+            - name: TZ
+              valueFrom:
+                configMapKeyRef:
+                  name: feeder-config
+                  key: FEEDER_TZ
+            - name: SHARING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: feeder-secrets
+                  key: RADARBOX_SHARING_KEY

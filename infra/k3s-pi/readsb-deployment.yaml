@@ -1,0 +1,68 @@
+# Replaces the systemd readsb.service on airjedi.custine.com. Uses
+# ghcr.io/sdr-enthusiasts/docker-adsb-ultrafeeder, which bundles readsb +
+# mlat-client + multi-aggregator feeding, all env-var configured.
+#
+# hostNetwork is required so ports 30001-30005/30104 stay identical to today
+# — no router/port-forward changes needed, and AirJedi's desktop app config
+# doesn't need to change either.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: readsb
+  namespace: feeders
+  labels:
+    app: readsb
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate # only one pod may hold the USB device at a time
+  selector:
+    matchLabels:
+      app: readsb
+  template:
+    metadata:
+      labels:
+        app: readsb
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      nodeSelector:
+        kubernetes.io/hostname: airjedi # the node with the RTL-SDR attached
+      containers:
+        - name: readsb
+          image: ghcr.io/sdr-enthusiasts/docker-adsb-ultrafeeder:latest
+          securityContext:
+            privileged: true # required for raw USB access to the RTL-SDR
+          envFrom:
+            - configMapRef:
+                name: feeder-config
+            - secretRef:
+                name: feeder-secrets
+          env:
+            - name: READSB_LAT
+              valueFrom:
+                configMapKeyRef:
+                  name: feeder-config
+                  key: FEEDER_LAT
+            - name: READSB_LON
+              valueFrom:
+                configMapKeyRef:
+                  name: feeder-config
+                  key: FEEDER_LONG
+            - name: READSB_ALT
+              valueFrom:
+                configMapKeyRef:
+                  name: feeder-config
+                  key: FEEDER_ALT
+            - name: TZ
+              valueFrom:
+                configMapKeyRef:
+                  name: feeder-config
+                  key: FEEDER_TZ
+          volumeMounts:
+            - name: usb
+              mountPath: /dev/bus/usb
+      volumes:
+        - name: usb
+          hostPath:
+            path: /dev/bus/usb
