@@ -7,9 +7,10 @@ use bevy_egui::{egui, EguiContext, PrimaryEguiContext};
 use egui_tiles::{Behavior, SimplificationOptions, TabState, TileId, Tiles, UiResponse};
 
 use crate::aircraft::{
-    list_panel::render_aircraft_list_pane_content, stats_panel::render_stats_pane_content,
-    AircraftDisplayList, AircraftListState, AircraftTypeInfo, CameraFollowState, DetailPanelState,
-    SessionClock, StatsPanelState, TrailHistory,
+    components::FusionDiagnostics, list_panel::render_aircraft_list_pane_content,
+    stats_panel::render_stats_pane_content, AircraftDisplayList, AircraftListState,
+    AircraftTypeInfo, CameraFollowState, DetailPanelState, SessionClock, StatsPanelState,
+    TrailHistory,
 };
 use crate::airspace::{AirspaceData, AirspaceDisplayState};
 use crate::bookmarks::{self, BookmarksPanelState};
@@ -407,11 +408,12 @@ impl<'a> Behavior<DockPane> for DockBehavior<'a> {
                 render_pane_with_bg(bg, ui, |ui| {
                     let mut state = SystemState::<(
                         Res<StatsPanelState>,
-                        Query<&'static Aircraft>,
+                        Query<(&'static Aircraft, Option<&'static FusionDiagnostics>)>,
+                        Option<Res<FeedConnectionManager>>,
                         Res<AppTheme>,
                     )>::new(world);
-                    let (stats, query, theme) = state.get_mut(world).unwrap();
-                    render_stats_pane_content(ui, &stats, &query, &theme);
+                    let (stats, query, feed_mgr, theme) = state.get_mut(world).unwrap();
+                    render_stats_pane_content(ui, &stats, &query, feed_mgr.as_deref(), &theme);
                 });
             }
 

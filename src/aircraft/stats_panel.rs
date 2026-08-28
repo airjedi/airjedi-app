@@ -2,6 +2,9 @@ use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 use std::time::Instant;
 
+use crate::adsb::connection::FeedConnectionManager;
+use crate::adsb::enrichment::PositionSource;
+use crate::aircraft::components::FusionDiagnostics;
 use crate::theme::{to_egui_color32, to_egui_color32_alpha, AppTheme};
 use crate::Aircraft;
 
@@ -67,12 +70,164 @@ impl AltitudeBandStats {
     }
 }
 
+/// Statistics about aircraft by position source (ADS-B, MLAT, etc.)
+#[derive(Default)]
+pub struct PositionSourceStats {
+    pub adsb: usize,
+    pub mlat: usize,
+    /// TIS-B, ADS-R, and ADS-C combined (rebroadcast/uplinked sources).
+    pub relayed: usize,
+    pub other: usize,
+    /// No enrichment source configured, or none has classified this
+    /// aircraft yet.
+    pub unconfirmed: usize,
+}
+
+impl PositionSourceStats {
+    pub fn from_diagnostics<'a>(
+        diagnostics: impl Iterator<Item = Option<&'a FusionDiagnostics>>,
+    ) -> Self {
+        let mut stats = Self::default();
+        for diag in diagnostics {
+            match diag.and_then(|d| d.last_position_source) {
+                Some(PositionSource::AdsbIcao) | Some(PositionSource::AdsbIcaoNt) => {
+                    stats.adsb += 1;
+                }
+                Some(PositionSource::Mlat) => stats.mlat += 1,
+                Some(PositionSource::TisbIcao)
+                | Some(PositionSource::AdsrIcao)
+                | Some(PositionSource::Adsc) => stats.relayed += 1,
+                Some(PositionSource::Other) => stats.other += 1,
+                Some(PositionSource::Unknown) | None => stats.unconfirmed += 1,
+            }
+        }
+        stats
+    }
+}
+
 /// Format duration as HH:MM:SS
 fn format_duration(secs: u64) -> String {
     let hours = secs / 3600;
     let mins = (secs % 3600) / 60;
     let secs = secs % 60;
     format!("{:02}:{:02}:{:02}", hours, mins, secs)
+}
+
+/// Renders the "By Source" (ADS-B/MLAT/etc. aircraft counts) and "Messages
+/// by Type" (payload-kind counts) sections shared by both the windowed and
+/// docked stats panel variants.
+fn render_source_and_message_stats(
+    ui: &mut egui::Ui,
+    theme: &AppTheme,
+    source_stats: &PositionSourceStats,
+    feed_mgr: Option<&FeedConnectionManager>,
+) {
+    let label_color = to_egui_color32(theme.text_dim());
+    let value_color = to_egui_color32(theme.text_primary());
+    let adsb_color = to_egui_color32(theme.text_success());
+    let mlat_color = egui::Color32::from_rgb(255, 170, 60);
+    let relayed_color = egui::Color32::from_rgb(150, 150, 220);
+    let other_color = egui::Color32::from_rgb(150, 150, 150);
+
+    ui.label(
+        egui::RichText::new("By Source")
+            .color(label_color)
+            .size(10.0),
+    );
+
+    egui::Grid::new("position_source_grid")
+        .num_columns(2)
+        .spacing([20.0, 2.0])
+        .show(ui, |ui| {
+            ui.label(egui::RichText::new("ADS-B").color(adsb_color).size(9.0));
+            ui.label(
+                egui::RichText::new(format!("{}", source_stats.adsb))
+                    .color(value_color)
+                    .size(10.0)
+                    .monospace(),
+            );
+            ui.end_row();
+
+            ui.label(egui::RichText::new("MLAT").color(mlat_color).size(9.0));
+            ui.label(
+                egui::RichText::new(format!("{}", source_stats.mlat))
+                    .color(value_color)
+                    .size(10.0)
+                    .monospace(),
+            );
+            ui.end_row();
+
+            if source_stats.relayed > 0 {
+                ui.label(
+                    egui::RichText::new("TIS-B / ADS-R / ADS-C")
+                        .color(relayed_color)
+                        .size(9.0),
+                );
+                ui.label(
+                    egui::RichText::new(format!("{}", source_stats.relayed))
+                        .color(value_color)
+                        .size(10.0)
+                        .monospace(),
+                );
+                ui.end_row();
+            }
+
+            if source_stats.other > 0 {
+                ui.label(egui::RichText::new("Other").color(other_color).size(9.0));
+                ui.label(
+                    egui::RichText::new(format!("{}", source_stats.other))
+                        .color(value_color)
+                        .size(10.0)
+                        .monospace(),
+                );
+                ui.end_row();
+            }
+
+            ui.label(
+                egui::RichText::new("Unconfirmed")
+                    .color(label_color)
+                    .size(9.0),
+            );
+            ui.label(
+                egui::RichText::new(format!("{}", source_stats.unconfirmed))
+                    .color(value_color)
+                    .size(10.0)
+                    .monospace(),
+            );
+            ui.end_row();
+        });
+
+    if let Some(mgr) = feed_mgr {
+        let counts = mgr.total_payload_counts();
+        if counts.iter().any(|&c| c > 0) {
+            ui.add_space(8.0);
+            ui.label(
+                egui::RichText::new("Messages by Type")
+                    .color(label_color)
+                    .size(10.0),
+            );
+
+            egui::Grid::new("payload_kind_grid")
+                .num_columns(2)
+                .spacing([20.0, 2.0])
+                .show(ui, |ui| {
+                    for kind in adsb_client::PayloadKind::ALL {
+                        let count = counts[kind as usize];
+                        if count == 0 {
+                            continue;
+                        }
+                        ui.label(egui::RichText::new(kind.label()).color(label_color).size(9.0));
+                        ui.label(
+                            egui::RichText::new(format!("{}", count))
+                                .color(value_color)
+                                .size(10.0)
+                                .monospace(),
+                        );
+                        ui.end_row();
+                    }
+                });
+        }
+    }
 }
 
 /// Component to mark the stats panel toggle button
@@ -83,7 +238,8 @@ pub struct StatsPanelButton;
 pub fn render_stats_panel(
     mut contexts: EguiContexts,
     mut stats_state: ResMut<StatsPanelState>,
-    aircraft_query: Query<&Aircraft>,
+    aircraft_query: Query<(&Aircraft, Option<&FusionDiagnostics>)>,
+    feed_mgr: Option<Res<FeedConnectionManager>>,
     theme: Res<AppTheme>,
 ) {
     if !stats_state.expanded {
@@ -96,7 +252,9 @@ pub fn render_stats_panel(
 
     // Calculate statistics
     let total_aircraft = aircraft_query.iter().count();
-    let altitude_stats = AltitudeBandStats::from_aircraft(aircraft_query.iter());
+    let altitude_stats = AltitudeBandStats::from_aircraft(aircraft_query.iter().map(|(a, _)| a));
+    let source_stats =
+        PositionSourceStats::from_diagnostics(aircraft_query.iter().map(|(_, d)| d));
     let session_duration = stats_state.session_start.elapsed().as_secs();
 
     // Connection status is shown elsewhere in UI already
@@ -227,6 +385,9 @@ pub fn render_stats_panel(
                 });
 
             ui.add_space(8.0);
+            render_source_and_message_stats(ui, &theme, &source_stats, feed_mgr.as_deref());
+
+            ui.add_space(8.0);
             ui.separator();
             ui.add_space(6.0);
 
@@ -273,11 +434,14 @@ pub fn render_stats_panel(
 pub fn render_stats_pane_content(
     ui: &mut egui::Ui,
     stats_state: &StatsPanelState,
-    aircraft_query: &Query<&Aircraft>,
+    aircraft_query: &Query<(&Aircraft, Option<&FusionDiagnostics>)>,
+    feed_mgr: Option<&FeedConnectionManager>,
     theme: &AppTheme,
 ) {
     let total_aircraft = aircraft_query.iter().count();
-    let altitude_stats = AltitudeBandStats::from_aircraft(aircraft_query.iter());
+    let altitude_stats = AltitudeBandStats::from_aircraft(aircraft_query.iter().map(|(a, _)| a));
+    let source_stats =
+        PositionSourceStats::from_diagnostics(aircraft_query.iter().map(|(_, d)| d));
     let session_duration = stats_state.session_start.elapsed().as_secs();
     let connection_status = "See status bar".to_string();
 
@@ -384,6 +548,9 @@ pub fn render_stats_pane_content(
                 ui.end_row();
             }
         });
+
+    ui.add_space(8.0);
+    render_source_and_message_stats(ui, theme, &source_stats, feed_mgr);
 
     ui.add_space(8.0);
     ui.separator();
