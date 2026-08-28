@@ -12,6 +12,8 @@ pub struct Card<'a> {
     shadow_preset: Option<ShadowPreset>,
     corner_radius: u8,
     glow_color: Option<egui::Color32>,
+    fill_override: Option<egui::Color32>,
+    body_margin: f32,
 }
 
 impl<'a> Card<'a> {
@@ -23,7 +25,22 @@ impl<'a> Card<'a> {
             shadow_preset: Some(ShadowPreset::Subtle),
             corner_radius: 8,
             glow_color: None,
+            fill_override: None,
+            body_margin: 10.0,
         }
+    }
+
+    /// Override the card's background fill (header and body). Defaults to
+    /// the theme's opaque background when not set.
+    pub fn fill(mut self, color: egui::Color32) -> Self {
+        self.fill_override = Some(color);
+        self
+    }
+
+    /// Override the body content's inner margin (default 10.0).
+    pub fn body_margin(mut self, margin: f32) -> Self {
+        self.body_margin = margin;
+        self
     }
 
     /// Set the card header text.
@@ -69,6 +86,10 @@ impl<'a> Card<'a> {
             .stroke(egui::Stroke::new(1.0, self.theme.border))
             .inner_margin(0.0);
 
+        if let Some(fill) = self.fill_override {
+            frame = frame.fill(fill);
+        }
+
         if let Some(preset) = self.shadow_preset {
             frame = frame.shadow(preset);
         }
@@ -105,7 +126,7 @@ impl<'a> Card<'a> {
                     ui.painter().rect_filled(
                         fill_rect,
                         top_radius,
-                        self.theme.bg_secondary,
+                        self.fill_override.unwrap_or(self.theme.bg_secondary),
                     );
                 }
 
@@ -125,7 +146,7 @@ impl<'a> Card<'a> {
             }
 
             // Body content with margin
-            egui::Frame::new().inner_margin(10.0).show(ui, |ui| {
+            egui::Frame::new().inner_margin(self.body_margin).show(ui, |ui| {
                 add_contents(ui);
             });
         })

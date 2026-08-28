@@ -54,7 +54,7 @@ mod zoom;
 
 // Re-export core types so crate::Aircraft, crate::MapState, crate::ZoomState
 // continue to resolve throughout the codebase.
-pub(crate) use aircraft::components::{Aircraft, AircraftLabel};
+pub(crate) use aircraft::components::Aircraft;
 use bevy_egui::{EguiGlobalSettings, PrimaryEguiContext};
 pub(crate) use camera::{AircraftCamera, MapCamera};
 use config::ConfigPlugin;
@@ -109,15 +109,12 @@ pub(crate) mod constants {
     pub const PAN_TILE_REQUEST_THRESHOLD: f64 = 0.001;
 
     // UI and rendering
-    pub const BASE_FONT_SIZE: f32 = 14.0;
     pub const AIRCRAFT_MARKER_RADIUS: f32 = 8.0;
-    pub const LABEL_SCREEN_OFFSET: f32 = 25.0;
     pub const BUTTON_FONT_SIZE: f32 = 16.0;
 
     // Z-layers
     pub const TILE_Z_LAYER: f32 = 0.0;
     pub const AIRCRAFT_Z_LAYER: f32 = 10.0;
-    pub const LABEL_Z_LAYER: f32 = 11.0;
 
     // 3D model scale: model is ~4 units across, target is 32 world units (AIRCRAFT_MARKER_RADIUS * 4)
     pub const AIRCRAFT_MODEL_SCALE: f32 = 8.0;

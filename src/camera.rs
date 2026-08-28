@@ -5,7 +5,7 @@ use crate::constants;
 use crate::geo;
 use crate::map::{MapState, ZoomState};
 use crate::view3d;
-use crate::{clamp_latitude, clamp_longitude, Aircraft, AircraftLabel, ZoomDebugLogger, ZoomSet};
+use crate::{clamp_latitude, clamp_longitude, Aircraft, ZoomDebugLogger, ZoomSet};
 
 // =============================================================================
 // Constants
@@ -74,13 +74,8 @@ impl Plugin for CameraPlugin {
         )
         .add_systems(
             Update,
-            update_aircraft_labels.after(update_aircraft_positions),
-        )
-        .add_systems(
-            Update,
             cull_offscreen_aircraft
                 .after(update_aircraft_positions)
-                .after(update_aircraft_labels)
                 .after(crate::view3d::update_aircraft_3d_transform),
         );
     }
@@ -187,7 +182,7 @@ fn sync_aircraft_camera(
 // Aircraft Rendering Systems
 // =============================================================================
 
-/// Keep aircraft and labels at constant screen size despite zoom changes.
+/// Keep aircraft at constant screen size despite zoom changes.
 /// In 2D mode, scale inversely with camera zoom for constant screen size.
 /// In 3D perspective mode, use a fixed world-space scale and let perspective
 /// projection handle apparent size (closer = bigger, farther = smaller).
@@ -195,8 +190,7 @@ fn scale_aircraft_and_labels(
     zoom_state: Res<ZoomState>,
     map_state: Res<MapState>,
     view3d_state: Res<crate::view3d::View3DState>,
-    mut aircraft_query: Query<&mut Transform, (With<Aircraft>, Without<AircraftLabel>)>,
-    mut label_query: Query<(&mut Transform, &mut TextFont), With<AircraftLabel>>,
+    mut aircraft_query: Query<&mut Transform, With<Aircraft>>,
     new_aircraft: Query<(), Added<Aircraft>>,
 ) {
     if !zoom_state.is_changed() && !view3d_state.is_changed() && new_aircraft.is_empty() {
@@ -224,12 +218,6 @@ fn scale_aircraft_and_labels(
     let scale = scale_2d + (scale_3d - scale_2d) * t_3d;
     for mut transform in aircraft_query.iter_mut() {
         transform.scale = Vec3::splat(scale);
-    }
-
-    let label_scale = meters_per_tile_pixel / zoom_state.camera_zoom;
-    for (mut transform, mut text_font) in label_query.iter_mut() {
-        transform.scale = Vec3::splat(label_scale);
-        text_font.font_size = FontSize::Px(constants::BASE_FONT_SIZE);
     }
 }
 
@@ -277,25 +265,6 @@ pub(crate) fn update_aircraft_positions(
     }
 }
 
-fn update_aircraft_labels(
-    zoom_state: Res<ZoomState>,
-    aircraft_query: Query<&Transform, With<Aircraft>>,
-    mut label_query: Query<(&AircraftLabel, &mut Transform, &mut Visibility), Without<Aircraft>>,
-) {
-    let world_space_offset = constants::LABEL_SCREEN_OFFSET / zoom_state.camera_zoom;
-
-    for (label, mut label_transform, mut visibility) in label_query.iter_mut() {
-        if let Ok(aircraft_transform) = aircraft_query.get(label.aircraft_entity) {
-            label_transform.translation.x = aircraft_transform.translation.x + world_space_offset;
-            label_transform.translation.y = aircraft_transform.translation.y + world_space_offset;
-
-            if *visibility == Visibility::Hidden {
-                *visibility = Visibility::Inherited;
-            }
-        }
-    }
-}
-
 /// Hide aircraft (and their entire scene hierarchy) when they are outside
 /// the camera viewport. Setting Visibility::Hidden on the root entity
 /// causes Bevy to skip rendering all child mesh/material entities,
@@ -303,10 +272,6 @@ fn update_aircraft_labels(
 fn cull_offscreen_aircraft(
     camera_query: Query<(&Transform, &Projection), With<MapCamera>>,
     mut aircraft_query: Query<(&Transform, &mut Visibility), (With<Aircraft>, Without<MapCamera>)>,
-    mut label_query: Query<
-        (&AircraftLabel, &mut Visibility),
-        (Without<Aircraft>, Without<MapCamera>),
-    >,
     window_query: Query<&Window>,
     view3d_state: Res<view3d::View3DState>,
 ) {
@@ -347,22 +312,6 @@ fn cull_offscreen_aircraft(
         };
         if *visibility != target {
             *visibility = target;
-        }
-    }
-
-    for (label, mut visibility) in label_query.iter_mut() {
-        if let Ok((ac_tf, _)) = aircraft_query.get(label.aircraft_entity) {
-            let dx = (ac_tf.translation.x - cam_x).abs();
-            let dy = (ac_tf.translation.y - cam_y).abs();
-            let in_view = dx < half_w && dy < half_h;
-            let target = if in_view {
-                Visibility::Inherited
-            } else {
-                Visibility::Hidden
-            };
-            if *visibility != target {
-                *visibility = target;
-            }
         }
     }
 }

@@ -1,4 +1,4 @@
-use crate::aircraft::components::{AircraftLabel, FusionTrackLink};
+use crate::aircraft::components::FusionTrackLink;
 use crate::aviation::loader::{AviationData, LoadingState};
 use crate::geo::haversine_distance_nm;
 use airjedi_fusion::{Track, TrackQuality, TrackStatus, TrackerState};
@@ -103,7 +103,6 @@ pub fn cleanup_landed_aircraft(
     mut commands: Commands,
     landed_query: Query<(Entity, &LandedAircraft, &FusionTrackLink)>,
     fusion_tracks: Query<&TrackQuality>,
-    label_query: Query<(Entity, &AircraftLabel)>,
 ) {
     let now = Utc::now();
 
@@ -117,12 +116,6 @@ pub fn cleanup_landed_aircraft(
         };
 
         if age > LANDED_CLEANUP_SECS && is_stale {
-            for (label_entity, label) in label_query.iter() {
-                if label.aircraft_entity == entity {
-                    commands.entity(label_entity).despawn();
-                    break;
-                }
-            }
             commands.entity(entity).despawn();
         }
     }

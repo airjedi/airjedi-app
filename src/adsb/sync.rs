@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use std::collections::HashMap;
 
-use crate::{Aircraft, AircraftLabel};
+use crate::Aircraft;
 
 /// Type codes that should use the B737 model
 const B737_TYPES: &[&str] = &[
@@ -153,35 +153,3 @@ pub fn make_aircraft_unlit(
     }
 }
 
-/// Update aircraft labels with current data.
-/// Update aircraft labels. Display priority: callsign > registration > ICAO hex.
-pub fn update_aircraft_label_text(
-    aircraft_query: Query<&Aircraft>,
-    mut label_query: Query<(&AircraftLabel, &mut Text2d)>,
-    type_db: Option<Res<crate::aircraft::AircraftTypeDatabase>>,
-) {
-    for (label, mut text) in label_query.iter_mut() {
-        if let Ok(aircraft) = aircraft_query.get(label.aircraft_entity) {
-            let type_info = type_db.as_ref().and_then(|db| db.lookup(&aircraft.icao));
-
-            let registration = type_info.as_ref().and_then(|i| i.registration.clone());
-            let is_military = type_info.as_ref().map(|i| i.is_military).unwrap_or(false);
-
-            let display_name = aircraft
-                .callsign
-                .as_deref()
-                .filter(|s| !s.trim().is_empty())
-                .or(registration.as_deref())
-                .unwrap_or(&aircraft.icao);
-
-            let alt_display = aircraft
-                .altitude
-                .map(|a| format!("{} ft", a))
-                .unwrap_or_default();
-
-            let mil = if is_military { "MIL " } else { "" };
-            let gnd = if aircraft.is_on_ground == Some(true) { "GND " } else { "" };
-            **text = format!("{}{}{}\n{}", gnd, mil, display_name, alt_display);
-        }
-    }
-}

@@ -2,6 +2,7 @@ pub mod altitude;
 pub mod components;
 pub mod detail_panel;
 pub mod emergency;
+pub mod hover_popup;
 pub mod interpolation;
 pub mod list_panel;
 pub mod mesh_trails;
@@ -14,7 +15,7 @@ pub mod trails;
 pub mod typeinfo;
 pub mod typeloader;
 
-pub use components::{Aircraft, AircraftLabel};
+pub use components::Aircraft;
 pub use detail_panel::{CameraFollowState, DetailPanelState};
 pub use emergency::EmergencyAlertState;
 pub use interpolation::InterpolationState;

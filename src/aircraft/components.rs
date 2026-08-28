@@ -45,12 +45,6 @@ pub struct Aircraft {
     pub last_seen: DateTime<Utc>,
 }
 
-/// Component to link aircraft labels to their aircraft
-#[derive(Component)]
-pub struct AircraftLabel {
-    pub aircraft_entity: Entity,
-}
-
 /// Links a visual Aircraft entity to its fusion track entity
 #[derive(Component, Debug)]
 pub struct FusionTrackLink {

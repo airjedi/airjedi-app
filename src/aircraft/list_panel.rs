@@ -307,7 +307,9 @@ pub fn update_aircraft_display_list(
 
 /// Position-source badge label/color, shown only for non-standard sources
 /// (i.e. not shown for the common `AdsbIcao` case, to avoid badge noise).
-fn position_source_badge(source: Option<PositionSource>) -> Option<(&'static str, egui::Color32)> {
+pub(crate) fn position_source_badge(
+    source: Option<PositionSource>,
+) -> Option<(&'static str, egui::Color32)> {
     match source? {
         PositionSource::Mlat => Some(("MLAT", egui::Color32::from_rgb(255, 170, 60))),
         PositionSource::TisbIcao => Some(("TIS-B", egui::Color32::from_rgb(150, 150, 220))),
@@ -318,8 +320,18 @@ fn position_source_badge(source: Option<PositionSource>) -> Option<(&'static str
     }
 }
 
+/// Like `position_source_badge`, but always returns a label (falling back to
+/// "ADS-B" for the common/unknown case) — for contexts like the map hover
+/// popup where showing the source is itself the point, not just an
+/// exception flag.
+pub(crate) fn full_position_source_label(
+    source: Option<PositionSource>,
+) -> (&'static str, egui::Color32) {
+    position_source_badge(source).unwrap_or(("ADS-B", egui::Color32::from_rgb(110, 200, 140)))
+}
+
 /// Helper function to get altitude color based on altitude value
-fn get_altitude_color(altitude: Option<i32>) -> (egui::Color32, &'static str) {
+pub(crate) fn get_altitude_color(altitude: Option<i32>) -> (egui::Color32, &'static str) {
     match altitude {
         Some(alt) if alt >= 30000 => (egui::Color32::from_rgb(200, 100, 255), "▲"), // High - purple
         Some(alt) if alt >= 20000 => (egui::Color32::from_rgb(255, 150, 50), "▲"), // Medium-high - orange

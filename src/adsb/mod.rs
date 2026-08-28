@@ -23,7 +23,6 @@ impl Plugin for AdsbPlugin {
         app.add_systems(
             Update,
             (
-                update_aircraft_label_text,
                 apply_model_corrections,
                 make_aircraft_unlit.after(apply_model_corrections),
             ),

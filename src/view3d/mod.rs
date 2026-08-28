@@ -831,15 +831,11 @@ pub fn update_tile_elevation(
 pub fn update_aircraft_3d_transform(
     state: Res<View3DState>,
     config: Res<crate::config::AppConfig>,
-    mut aircraft_query: Query<
-        (
-            &crate::Aircraft,
-            Option<&crate::aircraft::InterpolationState>,
-            &mut Transform,
-        ),
-        Without<crate::AircraftLabel>,
-    >,
-    mut label_query: Query<(&crate::AircraftLabel, &mut Visibility)>,
+    mut aircraft_query: Query<(
+        &crate::Aircraft,
+        Option<&crate::aircraft::InterpolationState>,
+        &mut Transform,
+    )>,
 ) {
     if state.is_3d_active() {
         let ground_y = state.altitude_to_z(state.ground_elevation_ft);
@@ -873,17 +869,9 @@ pub fn update_aircraft_3d_transform(
                 transform.rotation = base_rot;
             }
         }
-        for (_label, mut vis) in label_query.iter_mut() {
-            *vis = Visibility::Hidden;
-        }
     } else if !state.is_transitioning() {
         for (_aircraft, _interp, mut transform) in aircraft_query.iter_mut() {
             transform.translation.z = crate::constants::AIRCRAFT_Z_LAYER;
-        }
-        for (_label, mut vis) in label_query.iter_mut() {
-            if *vis == Visibility::Hidden {
-                *vis = Visibility::Inherited;
-            }
         }
     }
 }

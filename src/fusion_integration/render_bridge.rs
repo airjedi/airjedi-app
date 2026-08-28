@@ -1,18 +1,15 @@
 use crate::adsb::connection::FeedConnectionManager;
 use crate::adsb::enrichment::{EnrichmentConnectionManager, PositionSource};
 use crate::adsb::sync::AircraftModelRegistry;
-use crate::aircraft::components::{Aircraft, AircraftLabel, FusionDiagnostics, FusionTrackLink};
+use crate::aircraft::components::{Aircraft, FusionDiagnostics, FusionTrackLink};
 use crate::aircraft::picking::{on_aircraft_click, on_aircraft_hover, on_aircraft_out};
 use crate::aircraft::{InterpolationState, TrailHistory};
 use crate::constants;
 use crate::geo;
 use crate::map::MapState;
-use crate::theme::AppTheme;
 use crate::view3d;
-use crate::RenderCategory;
 use airjedi_fusion::types::{IdentifierType, TargetCategory};
 use airjedi_fusion::{TargetClassification, Track, TrackQuality, TrackStatus, TrackerState};
-use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 use crate::tiles::LocalOrigin;
 
@@ -35,12 +32,10 @@ pub fn sync_tracks_to_visuals(
         Option<&mut FusionDiagnostics>,
     )>,
     visual_lookup: Query<(Entity, &FusionTrackLink)>,
-    label_query: Query<(Entity, &AircraftLabel)>,
     model_registry: Option<Res<AircraftModelRegistry>>,
     type_db: Option<Res<crate::aircraft::AircraftTypeDatabase>>,
     feed_mgr: Option<Res<FeedConnectionManager>>,
     enrichment_mgr: Option<Res<EnrichmentConnectionManager>>,
-    theme: Res<AppTheme>,
     time: Res<Time<Real>>,
     map_state: Res<MapState>,
     local_origin: Res<LocalOrigin>,
@@ -288,27 +283,10 @@ pub fn sync_tracks_to_visuals(
             if let Some(corr) = correction {
                 entity_commands.insert(corr);
             }
-            let aircraft_entity = entity_commands
+            entity_commands
                 .observe(on_aircraft_click)
                 .observe(on_aircraft_hover)
-                .observe(on_aircraft_out)
-                .id();
-
-            let label_text = format!("{}\n{}", display_name, format!("{} ft", alt_ft),);
-
-            commands.spawn((
-                Name::new(format!("Label: {}", aircraft_name)),
-                Text2d::new(label_text),
-                TextFont {
-                    font_size: FontSize::Px(constants::BASE_FONT_SIZE),
-                    ..default()
-                },
-                TextColor(theme.text_primary()),
-                Transform::from_xyz(pos.x, pos.y, constants::LABEL_Z_LAYER),
-                Visibility::Hidden,
-                AircraftLabel { aircraft_entity },
-                RenderLayers::layer(RenderCategory::LABELS),
-            ));
+                .observe(on_aircraft_out);
         }
     }
 }
@@ -452,7 +430,6 @@ pub fn cleanup_orphaned_visuals(
     mut commands: Commands,
     visuals: Query<(Entity, &FusionTrackLink, &Aircraft)>,
     fusion_tracks: Query<Entity, With<Track>>,
-    label_query: Query<(Entity, &AircraftLabel)>,
 ) {
     let now = chrono::Utc::now();
 
@@ -462,12 +439,6 @@ pub fn cleanup_orphaned_visuals(
         let timed_out = age_secs > crate::constants::ADSB_AIRCRAFT_TIMEOUT_SECS;
 
         if orphaned || timed_out {
-            for (label_entity, label) in label_query.iter() {
-                if label.aircraft_entity == visual_entity {
-                    commands.entity(label_entity).despawn();
-                    break;
-                }
-            }
             commands.entity(visual_entity).despawn();
         }
     }
