@@ -10,6 +10,14 @@ use std::time::Instant;
 
 use adsb_client::Icao;
 use crate::adsb::connection::FeedConnectionManager;
+use crate::adsb::enrichment::{EnrichmentConnectionManager, EnrichmentInfo, PositionSource};
+
+/// Position covariance (m^2) for a direct ADS-B/GPS-derived position.
+const POS_VAR_ADSB: f64 = 10_000.0;
+/// Position covariance (m^2) for an MLAT-derived position (~500m std dev).
+/// MLAT triangulates from time-difference-of-arrival across ground
+/// receivers and is meaningfully less precise than GPS-derived ADS-B.
+const POS_VAR_MLAT: f64 = 250_000.0;
 
 /// Tracks the last-pushed state per ICAO to avoid sending redundant observations.
 pub(crate) struct LastPushedState {
@@ -23,6 +31,7 @@ const MAX_PUSH_INTERVAL_SECS: u64 = 5;
 
 pub fn adsb_to_fusion_system(
     feed_mgr: Option<Res<FeedConnectionManager>>,
+    enrichment_mgr: Option<Res<EnrichmentConnectionManager>>,
     mut buffer: ResMut<ObservationBuffer>,
     mut last_pushed: Local<HashMap<Icao, LastPushedState>>,
 ) {
@@ -69,7 +78,11 @@ pub fn adsb_to_fusion_system(
                 },
             );
 
-            if let Some(obs) = adsb_aircraft_to_observation(ac, lat, lon, &sensor_id_str, &source_label) {
+            let enrichment = enrichment_mgr.as_ref().and_then(|mgr| mgr.lookup(ac.icao));
+
+            if let Some(obs) =
+                adsb_aircraft_to_observation(ac, lat, lon, &sensor_id_str, &source_label, enrichment)
+            {
                 buffer.observations.push(obs);
             }
         }
@@ -88,6 +101,7 @@ fn adsb_aircraft_to_observation(
     lon: f64,
     sensor_id_str: &str,
     source_label: &str,
+    enrichment: Option<EnrichmentInfo>,
 ) -> Option<SensorObservation> {
     let alt_m = ac.altitude.map(|a| f64::from(a) * 0.3048);
 
@@ -105,7 +119,16 @@ fn adsb_aircraft_to_observation(
 
     let vel_down = ac.vertical_rate.map(|vr| f64::from(-vr) * 0.00508);
 
-    let pos_var = 10_000.0_f64;
+    let is_mlat = matches!(
+        enrichment.map(|e| e.source),
+        Some(PositionSource::Mlat)
+    );
+    let sensor_kind = if is_mlat {
+        SensorKind::MlatNetwork
+    } else {
+        SensorKind::AdsbReceiver
+    };
+    let pos_var = if is_mlat { POS_VAR_MLAT } else { POS_VAR_ADSB };
     let vel_var = 100.0_f64;
     let cov = nalgebra::DMatrix::from_diagonal(&nalgebra::DVector::from_vec(vec![
         pos_var, pos_var, pos_var, vel_var, vel_var, vel_var,
@@ -114,7 +137,7 @@ fn adsb_aircraft_to_observation(
     Some(SensorObservation {
         sensor_id: SensorId {
             id: sensor_id_str.to_string(),
-            kind: SensorKind::AdsbReceiver,
+            kind: sensor_kind,
             tier: FusionTier::Regional,
             coordinate_frame: CoordinateFrame::Wgs84,
         },
@@ -139,6 +162,7 @@ fn adsb_aircraft_to_observation(
         metadata: ObservationMetadata {
             source_label: source_label.to_string(),
             is_on_ground: ac.is_on_ground,
+            accuracy_category: enrichment.and_then(|e| e.nic),
             ..Default::default()
         },
     })

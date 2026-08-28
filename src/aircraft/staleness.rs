@@ -1,6 +1,9 @@
 use bevy::prelude::*;
 use chrono::Utc;
 
+use crate::adsb::enrichment::PositionSource;
+use crate::aircraft::components::FusionDiagnostics;
+use crate::theme::AppTheme;
 use crate::{Aircraft, AircraftLabel};
 
 /// Seconds before an aircraft starts dimming
@@ -41,5 +44,28 @@ pub fn dim_stale_aircraft(
             let opacity = staleness_opacity(elapsed);
             text_color.0 = text_color.0.with_alpha(opacity);
         }
+    }
+}
+
+/// System that colors aircraft label text yellow while tracked via MLAT
+/// rather than direct ADS-B, reverting to the theme's default text color
+/// otherwise. Preserves whatever alpha `dim_stale_aircraft` has applied.
+pub fn color_mlat_labels(
+    diag_query: Query<Option<&FusionDiagnostics>, With<Aircraft>>,
+    mut label_query: Query<(&AircraftLabel, &mut TextColor)>,
+    theme: Res<AppTheme>,
+) {
+    let mlat_color = Color::srgb(1.0, 1.0, 0.0);
+
+    for (label, mut text_color) in label_query.iter_mut() {
+        let is_mlat = diag_query
+            .get(label.aircraft_entity)
+            .ok()
+            .flatten()
+            .and_then(|diag| diag.last_position_source)
+            .is_some_and(|source| source == PositionSource::Mlat);
+
+        let base = if is_mlat { mlat_color } else { theme.text_primary() };
+        text_color.0 = base.with_alpha(text_color.0.alpha());
     }
 }

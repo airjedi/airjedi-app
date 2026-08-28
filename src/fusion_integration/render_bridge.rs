@@ -1,4 +1,5 @@
 use crate::adsb::connection::FeedConnectionManager;
+use crate::adsb::enrichment::{EnrichmentConnectionManager, PositionSource};
 use crate::adsb::sync::AircraftModelRegistry;
 use crate::aircraft::components::{Aircraft, AircraftLabel, FusionDiagnostics, FusionTrackLink};
 use crate::aircraft::picking::{on_aircraft_click, on_aircraft_hover, on_aircraft_out};
@@ -38,6 +39,7 @@ pub fn sync_tracks_to_visuals(
     model_registry: Option<Res<AircraftModelRegistry>>,
     type_db: Option<Res<crate::aircraft::AircraftTypeDatabase>>,
     feed_mgr: Option<Res<FeedConnectionManager>>,
+    enrichment_mgr: Option<Res<EnrichmentConnectionManager>>,
     theme: Res<AppTheme>,
     time: Res<Time<Real>>,
     map_state: Res<MapState>,
@@ -128,6 +130,9 @@ pub fn sync_tracks_to_visuals(
         let spi = raw_ac.and_then(|ac| ac.spi);
         let roll_angle = raw_ac.and_then(|ac| ac.roll_angle.map(|v| v as f32));
         let track_angle_rate = raw_ac.and_then(|ac| ac.track_angle_rate.map(|v| v as f32));
+        let position_source = track_icao
+            .and_then(|icao| enrichment_mgr.as_ref().and_then(|mgr| mgr.lookup(icao)))
+            .map(|info| info.source);
 
         let existing_visual = visual_lookup
             .iter()
@@ -180,7 +185,7 @@ pub fn sync_tracks_to_visuals(
                 }
 
                 if let Some(mut diag) = diag_opt {
-                    update_diagnostics(&mut diag, tracker, quality);
+                    update_diagnostics(&mut diag, tracker, quality, position_source);
                 }
 
                 if position_changed {
@@ -267,7 +272,7 @@ pub fn sync_tracks_to_visuals(
                     track_entity,
                     track_id: track.id.clone(),
                 },
-                make_diagnostics(tracker, quality),
+                make_diagnostics(tracker, quality, position_source),
                 TrailHistory::default(),
                 InterpolationState::new(
                     lat,
@@ -319,7 +324,11 @@ fn filter_type_label(tracker: &TrackerState) -> &'static str {
     }
 }
 
-fn make_diagnostics(tracker: &TrackerState, quality: &TrackQuality) -> FusionDiagnostics {
+fn make_diagnostics(
+    tracker: &TrackerState,
+    quality: &TrackQuality,
+    position_source: Option<PositionSource>,
+) -> FusionDiagnostics {
     let mode = tracker.mode_info();
     FusionDiagnostics {
         filter_type: filter_type_label(tracker),
@@ -327,6 +336,7 @@ fn make_diagnostics(tracker: &TrackerState, quality: &TrackQuality) -> FusionDia
         dominant_mode: mode.as_ref().map(|m| m.dominant_mode),
         track_status: Some(quality.status),
         observation_count: quality.observation_count,
+        last_position_source: position_source,
     }
 }
 
@@ -334,6 +344,7 @@ fn update_diagnostics(
     diag: &mut FusionDiagnostics,
     tracker: &TrackerState,
     quality: &TrackQuality,
+    position_source: Option<PositionSource>,
 ) {
     let mode = tracker.mode_info();
     diag.filter_type = filter_type_label(tracker);
@@ -341,6 +352,9 @@ fn update_diagnostics(
     diag.dominant_mode = mode.as_ref().map(|m| m.dominant_mode);
     diag.track_status = Some(quality.status);
     diag.observation_count = quality.observation_count;
+    if position_source.is_some() {
+        diag.last_position_source = position_source;
+    }
 }
 
 fn is_air_target(category: TargetCategory) -> bool {

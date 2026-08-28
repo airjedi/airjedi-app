@@ -4,6 +4,7 @@ use bevy_egui::{egui, EguiContexts};
 use super::altitude::{format_altitude, format_altitude_with_indicator};
 use super::typeinfo::AircraftTypeInfo;
 use super::{CameraFollowState, DetailPanelState, SessionClock, TrailHistory};
+use crate::adsb::enrichment::PositionSource;
 use crate::geo::{haversine_distance_nm, CoordinateConverter};
 use crate::theme::{to_egui_color32, to_egui_color32_alpha, AppTheme};
 use crate::widgets::{Card, DataStrip, MiniPfd, PfdData, WidgetTheme};
@@ -48,6 +49,27 @@ pub struct AircraftFilters {
     pub require_position: bool,
     /// Whether to only show military aircraft
     pub military_only: bool,
+    /// Restrict the list to a specific position source (ADS-B vs MLAT)
+    pub position_source: PositionSourceFilter,
+}
+
+/// Position-source filter for the aircraft list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PositionSourceFilter {
+    #[default]
+    All,
+    AdsbOnly,
+    MlatOnly,
+}
+
+impl PositionSourceFilter {
+    pub fn label(&self) -> &'static str {
+        match self {
+            PositionSourceFilter::All => "All",
+            PositionSourceFilter::AdsbOnly => "ADS-B only",
+            PositionSourceFilter::MlatOnly => "MLAT only",
+        }
+    }
 }
 
 impl Default for AircraftFilters {
@@ -62,6 +84,7 @@ impl Default for AircraftFilters {
             include_ground_traffic: true,
             require_position: true,
             military_only: false,
+            position_source: PositionSourceFilter::All,
         }
     }
 }
@@ -129,7 +152,11 @@ pub struct AircraftDisplayList {
 pub fn update_aircraft_display_list(
     list_state: Res<AircraftListState>,
     app_config: Res<crate::config::AppConfig>,
-    aircraft_query: Query<(&crate::Aircraft, Option<&AircraftTypeInfo>)>,
+    aircraft_query: Query<(
+        &crate::Aircraft,
+        Option<&AircraftTypeInfo>,
+        Option<&super::components::FusionDiagnostics>,
+    )>,
     mut display_list: ResMut<AircraftDisplayList>,
 ) {
     let center_lat = app_config.map.default_latitude;
@@ -142,12 +169,24 @@ pub fn update_aircraft_display_list(
     // Collect and filter aircraft
     let mut aircraft: Vec<AircraftDisplayData> = aircraft_query
         .iter()
-        .filter_map(|(a, type_info)| {
+        .filter_map(|(a, type_info, fusion_diag)| {
             let distance = haversine_distance_nm(center_lat, center_lon, a.latitude, a.longitude);
 
             // Apply filters
             if distance > list_state.filters.max_distance {
                 return None;
+            }
+
+            // Position-source filter (ADS-B vs MLAT)
+            let is_mlat = matches!(
+                fusion_diag.and_then(|d| d.last_position_source),
+                Some(PositionSource::Mlat)
+            );
+            match list_state.filters.position_source {
+                PositionSourceFilter::All => {}
+                PositionSourceFilter::AdsbOnly if is_mlat => return None,
+                PositionSourceFilter::MlatOnly if !is_mlat => return None,
+                _ => {}
             }
 
             // Ground traffic filter
@@ -264,6 +303,19 @@ pub fn update_aircraft_display_list(
     }
 
     display_list.aircraft = aircraft;
+}
+
+/// Position-source badge label/color, shown only for non-standard sources
+/// (i.e. not shown for the common `AdsbIcao` case, to avoid badge noise).
+fn position_source_badge(source: Option<PositionSource>) -> Option<(&'static str, egui::Color32)> {
+    match source? {
+        PositionSource::Mlat => Some(("MLAT", egui::Color32::from_rgb(255, 170, 60))),
+        PositionSource::TisbIcao => Some(("TIS-B", egui::Color32::from_rgb(150, 150, 220))),
+        PositionSource::AdsrIcao => Some(("ADS-R", egui::Color32::from_rgb(150, 150, 220))),
+        PositionSource::Adsc => Some(("ADS-C", egui::Color32::from_rgb(150, 150, 220))),
+        PositionSource::Other => Some(("OTHER", egui::Color32::from_rgb(150, 150, 150))),
+        PositionSource::AdsbIcao | PositionSource::AdsbIcaoNt | PositionSource::Unknown => None,
+    }
 }
 
 /// Helper function to get altitude color based on altitude value
@@ -474,6 +526,35 @@ pub fn render_aircraft_list_panel(
                                 .color(header_color)
                                 .size(10.0),
                         );
+
+                        ui.add_space(4.0);
+
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("Source:")
+                                    .color(header_color)
+                                    .size(10.0),
+                            );
+                            egui::ComboBox::from_id_salt("position_source_filter")
+                                .selected_text(list_state.filters.position_source.label())
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(
+                                        &mut list_state.filters.position_source,
+                                        PositionSourceFilter::All,
+                                        "All",
+                                    );
+                                    ui.selectable_value(
+                                        &mut list_state.filters.position_source,
+                                        PositionSourceFilter::AdsbOnly,
+                                        "ADS-B only",
+                                    );
+                                    ui.selectable_value(
+                                        &mut list_state.filters.position_source,
+                                        PositionSourceFilter::MlatOnly,
+                                        "MLAT only",
+                                    );
+                                });
+                        });
 
                         ui.add_space(4.0);
 
@@ -884,6 +965,31 @@ pub fn render_aircraft_list_pane_content(
                         .color(header_color)
                         .size(10.0),
                 );
+
+                ui.add_space(4.0);
+
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Source:").color(header_color).size(10.0));
+                    egui::ComboBox::from_id_salt("position_source_filter_pane")
+                        .selected_text(list_state.filters.position_source.label())
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut list_state.filters.position_source,
+                                PositionSourceFilter::All,
+                                "All",
+                            );
+                            ui.selectable_value(
+                                &mut list_state.filters.position_source,
+                                PositionSourceFilter::AdsbOnly,
+                                "ADS-B only",
+                            );
+                            ui.selectable_value(
+                                &mut list_state.filters.position_source,
+                                PositionSourceFilter::MlatOnly,
+                                "MLAT only",
+                            );
+                        });
+                });
 
                 ui.add_space(4.0);
 
@@ -1301,6 +1407,18 @@ fn render_inline_detail(
                                                 .size(10.0)
                                                 .monospace(),
                                         );
+                                        if let Some((label, color)) =
+                                            position_source_badge(diag.last_position_source)
+                                        {
+                                            ui.add_space(8.0);
+                                            ui.label(egui::RichText::new("Src").color(wt.text_dim).size(10.0));
+                                            ui.label(
+                                                egui::RichText::new(label)
+                                                    .color(color)
+                                                    .size(10.0)
+                                                    .monospace(),
+                                            );
+                                        }
                                     });
                                 });
                         }

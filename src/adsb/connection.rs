@@ -146,6 +146,7 @@ impl FeedConnectionManager {
         }
         result
     }
+
 }
 
 /// Component to mark the connection status UI text.

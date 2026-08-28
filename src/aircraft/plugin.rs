@@ -13,7 +13,7 @@ use super::picking::{
     clear_stale_selection, deselect_on_escape, follow_aircraft_3d, manage_selection_outline,
     pick_aircraft_2d, pick_aircraft_3d,
 };
-use super::staleness::dim_stale_aircraft;
+use super::staleness::{color_mlat_labels, dim_stale_aircraft};
 use super::trail_renderer::draw_trails;
 use super::trails::record_trail_points;
 use super::typeloader::{
@@ -59,6 +59,7 @@ impl Plugin for AircraftPlugin {
                     update_emergency_banner,
                     update_emergency_banner_text,
                     dim_stale_aircraft,
+                    color_mlat_labels,
                 ),
             )
             .add_systems(Update, render_detail_panel)

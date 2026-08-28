@@ -1,4 +1,5 @@
 pub mod connection;
+pub mod enrichment;
 pub mod sync;
 
 pub use connection::*;
@@ -15,6 +16,7 @@ impl Plugin for AdsbPlugin {
             (
                 setup_aircraft_models,
                 setup_feed_connections.after(crate::setup_map),
+                enrichment::setup_enrichment_connections,
             ),
         );
 
@@ -29,7 +31,11 @@ impl Plugin for AdsbPlugin {
 
         app.add_systems(
             Update,
-            (update_connection_status, reconnect_on_feed_changes),
+            (
+                update_connection_status,
+                reconnect_on_feed_changes,
+                enrichment::reconnect_on_enrichment_changes,
+            ),
         );
     }
 }

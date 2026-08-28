@@ -1,6 +1,8 @@
 use bevy::prelude::*;
 use chrono::{DateTime, Utc};
 
+use crate::adsb::enrichment::PositionSource;
+
 /// Component for aircraft entities
 #[derive(Component, Reflect)]
 #[reflect(Component)]
@@ -63,4 +65,7 @@ pub struct FusionDiagnostics {
     pub dominant_mode: Option<usize>,
     pub track_status: Option<airjedi_fusion::TrackStatus>,
     pub observation_count: u32,
+    /// Position source (ADS-B vs MLAT) of the most recent update, when a
+    /// readsb enrichment feed is configured for the contributing source.
+    pub last_position_source: Option<PositionSource>,
 }

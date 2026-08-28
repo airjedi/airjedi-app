@@ -11,3 +11,5 @@ macos/assets/tiles
 /.worktrees/
 /.superpowers/
 config.toml
+# Real feeder secrets for the k3s Pi deployment (see infra/k3s-pi/README.md)
+infra/k3s-pi/secret.yaml

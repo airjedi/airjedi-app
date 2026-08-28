@@ -119,6 +119,10 @@ pub struct AppConfig {
     /// ADS-B data feeds (SBS-1, BEAST, etc.)
     #[serde(default = "default_feeds")]
     pub feeds: Vec<FeedSourceConfig>,
+    /// Optional readsb/ultrafeeder NDJSON enrichment sources (position
+    /// source, NIC/RC), independent of the feeds above.
+    #[serde(default)]
+    pub enrichment_sources: Vec<EnrichmentSourceConfig>,
     pub map: MapConfig,
     #[serde(default)]
     pub overlays: OverlayConfig,
@@ -308,6 +312,26 @@ pub struct FeedSourceConfig {
     pub receiver_location: Option<(f64, f64)>,
 }
 
+/// Configuration for a readsb/ultrafeeder NDJSON enrichment source
+/// (`--net-json-port`), used to annotate aircraft with position-source
+/// (ADS-B vs MLAT) and accuracy info. Looked up globally by ICAO across all
+/// configured sources — independent of which feed decoded a given
+/// aircraft, since MLAT-vs-ADS-B provenance isn't tied to any one Beast
+/// connection.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct EnrichmentSourceConfig {
+    /// Stable identifier for this source (survives renames).
+    #[serde(default = "generate_feed_id")]
+    pub id: String,
+    /// User-friendly name for this source.
+    pub name: String,
+    /// Connection endpoint in host:port format.
+    pub endpoint: String,
+    /// Whether this source is active.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
 pub fn new_feed_id() -> String {
     generate_feed_id()
 }
@@ -470,6 +494,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             feeds: default_feeds(),
+            enrichment_sources: Vec::new(),
             map: MapConfig {
                 default_latitude: 37.6872,
                 default_longitude: -97.3301,
@@ -576,7 +601,11 @@ impl SettingsUiState {
         self.error_message = None;
     }
 
-    pub fn validate_and_build(&self, current_feeds: &[FeedSourceConfig]) -> Result<AppConfig, String> {
+    pub fn validate_and_build(
+        &self,
+        current_feeds: &[FeedSourceConfig],
+        current_enrichment_sources: &[EnrichmentSourceConfig],
+    ) -> Result<AppConfig, String> {
         // Validate latitude
         let lat: f64 = self
             .default_latitude
@@ -619,6 +648,7 @@ impl SettingsUiState {
 
         Ok(AppConfig {
             feeds: current_feeds.to_vec(),
+            enrichment_sources: current_enrichment_sources.to_vec(),
             map: MapConfig {
                 default_latitude: lat,
                 default_longitude: lon,
@@ -786,7 +816,7 @@ pub fn render_settings_pane_content(
         }
 
         if ui.button("Save").clicked() {
-            match ui_state.validate_and_build(&app_config.feeds) {
+            match ui_state.validate_and_build(&app_config.feeds, &app_config.enrichment_sources) {
                 Ok(mut new_config) => {
                     new_config.bookmarks = app_config.bookmarks.clone();
                     new_config.appearance.theme = app_theme.name().to_string();
@@ -911,5 +941,62 @@ impl Plugin for ConfigPlugin {
                     apply_basemap_changes,
                 ),
             );
+    }
+}
+
+#[cfg(test)]
+mod enrichment_source_config_tests {
+    use super::*;
+
+    #[test]
+    fn enrichment_sources_round_trip_through_toml() {
+        let toml_str = r#"
+            [[feeds]]
+            id = "feed1"
+            name = "Beast"
+            endpoint = "airjedi.custine.com:30005"
+            protocol = "Beast"
+            enabled = true
+
+            [[enrichment_sources]]
+            id = "readsb-json-airjedi"
+            name = "readsb JSON (airjedi.custine.com)"
+            endpoint = "airjedi.custine.com:30047"
+            enabled = true
+
+            [map]
+            default_latitude = 37.6872
+            default_longitude = -97.3301
+            default_zoom = 10
+            basemap_style = "CartoDark"
+        "#;
+
+        let config: AppConfig = toml::from_str(toml_str).expect("should deserialize");
+        assert_eq!(config.enrichment_sources.len(), 1);
+        let source = &config.enrichment_sources[0];
+        assert_eq!(source.name, "readsb JSON (airjedi.custine.com)");
+        assert_eq!(source.endpoint, "airjedi.custine.com:30047");
+        assert!(source.enabled);
+    }
+
+    #[test]
+    fn missing_enrichment_sources_defaults_to_empty() {
+        let toml_str = r#"
+            [[feeds]]
+            id = "feed1"
+            name = "Beast"
+            endpoint = "airjedi.custine.com:30005"
+            protocol = "Beast"
+            enabled = true
+
+            [map]
+            default_latitude = 37.6872
+            default_longitude = -97.3301
+            default_zoom = 10
+            basemap_style = "CartoDark"
+        "#;
+
+        let config: AppConfig = toml::from_str(toml_str).expect("should deserialize");
+        assert!(config.enrichment_sources.is_empty());
     }
 }
