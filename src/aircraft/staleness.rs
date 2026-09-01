@@ -28,3 +28,14 @@ pub fn aircraft_age_secs(aircraft: &Aircraft) -> f32 {
     let now = Utc::now();
     (now - aircraft.last_seen).num_milliseconds().max(0) as f32 / 1000.0
 }
+
+/// Format seconds-since-last-message as a compact "Ns" / "Mm:SSs" string
+/// for the "last seen" timer shown in the aircraft list and hover popup.
+pub fn format_last_seen(elapsed_secs: f32) -> String {
+    let secs = elapsed_secs.max(0.0) as u64;
+    if secs < 60 {
+        format!("{secs}s")
+    } else {
+        format!("{}m{:02}s", secs / 60, secs % 60)
+    }
+}

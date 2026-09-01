@@ -26,6 +26,7 @@ use crate::tools_window;
 use crate::ui_panels::{PanelId, UiPanelManager};
 use crate::view3d::sky::{SunState, TimeState};
 use crate::view3d::View3DState;
+use crate::camera::PanToTarget;
 use crate::{Aircraft, MapState, ZoomState};
 
 // =============================================================================
@@ -362,6 +363,7 @@ impl<'a> Behavior<DockPane> for DockBehavior<'a> {
                         ResMut<AircraftListState>,
                         ResMut<DetailPanelState>,
                         ResMut<CameraFollowState>,
+                        ResMut<PanToTarget>,
                         Res<AircraftDisplayList>,
                         Res<AppConfig>,
                         Res<SessionClock>,
@@ -377,6 +379,7 @@ impl<'a> Behavior<DockPane> for DockBehavior<'a> {
                         mut list,
                         mut detail,
                         mut follow,
+                        mut pan_to_target,
                         display,
                         app_config,
                         clock,
@@ -388,6 +391,7 @@ impl<'a> Behavior<DockPane> for DockBehavior<'a> {
                         &mut list,
                         &mut detail,
                         &mut follow,
+                        &mut pan_to_target,
                         &display,
                         &app_config,
                         &clock,

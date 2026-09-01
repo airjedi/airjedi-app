@@ -7,6 +7,7 @@ use bevy_egui::{egui, EguiContexts};
 
 use super::list_panel::{full_position_source_label, get_altitude_color};
 use super::picking::HoverOutline;
+use super::staleness::{aircraft_age_secs, format_last_seen};
 use super::typeinfo::AircraftTypeInfo;
 use super::Aircraft;
 use crate::aircraft::altitude::format_altitude_with_indicator;
@@ -169,6 +170,12 @@ pub fn render_aircraft_hover_popup(
                     ui.label(
                         egui::RichText::new(source_label)
                             .color(source_color)
+                            .size(10.0)
+                            .monospace(),
+                    );
+                    ui.label(
+                        egui::RichText::new(format_last_seen(aircraft_age_secs(aircraft)))
+                            .color(wt.text_dim)
                             .size(10.0)
                             .monospace(),
                     );

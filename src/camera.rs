@@ -34,6 +34,15 @@ pub(crate) struct AircraftCamera2d;
 #[derive(Component)]
 pub(crate) struct MapCamera;
 
+/// One-shot animated pan of the map center to a target lat/lon, leaving zoom
+/// untouched. Triggered by selecting an aircraft in the list; unlike
+/// `CameraFollowState`, it eases toward a fixed point and then stops instead
+/// of continuously chasing a moving aircraft.
+#[derive(Resource, Default)]
+pub(crate) struct PanToTarget {
+    pub target: Option<(f64, f64)>,
+}
+
 // =============================================================================
 // Plugin
 // =============================================================================
@@ -42,16 +51,22 @@ pub(crate) struct CameraPlugin;
 
 impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
+        app.init_resource::<PanToTarget>()
+        .add_systems(
             Update,
             follow_aircraft.after(airjedi_fusion::systems::FusionSet::Lifecycle),
+        )
+        .add_systems(
+            Update,
+            animate_pan_to_target.after(airjedi_fusion::systems::FusionSet::Lifecycle),
         )
         .add_systems(
             Update,
             update_camera_position
                 .after(crate::input::handle_pan_drag)
                 .after(crate::zoom::apply_camera_zoom)
-                .after(follow_aircraft),
+                .after(follow_aircraft)
+                .after(animate_pan_to_target),
         )
         .add_systems(
             Update,
@@ -110,6 +125,34 @@ fn follow_aircraft(
 
     map_state.latitude = clamp_latitude(new_lat);
     map_state.longitude = clamp_longitude(new_lon);
+}
+
+/// Eases `MapState`'s center toward `PanToTarget`'s target, then clears
+/// itself once close enough. Zoom is never touched.
+fn animate_pan_to_target(
+    mut pan: ResMut<PanToTarget>,
+    mut map_state: ResMut<MapState>,
+    time: Res<Time>,
+) {
+    let Some((target_lat, target_lon)) = pan.target else {
+        return;
+    };
+
+    let lerp_speed = 4.0;
+    let t = (lerp_speed * time.delta_secs()).min(1.0) as f64;
+
+    let new_lat = map_state.latitude + (target_lat - map_state.latitude) * t;
+    let new_lon = map_state.longitude + (target_lon - map_state.longitude) * t;
+
+    map_state.latitude = clamp_latitude(new_lat);
+    map_state.longitude = clamp_longitude(new_lon);
+
+    let remaining = (target_lat - map_state.latitude).hypot(target_lon - map_state.longitude);
+    if remaining < 1e-5 {
+        map_state.latitude = target_lat;
+        map_state.longitude = target_lon;
+        pan.target = None;
+    }
 }
 
 fn update_camera_position(

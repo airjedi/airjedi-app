@@ -3,6 +3,7 @@ use bevy_egui::{egui, EguiContexts};
 
 use super::altitude::{format_altitude, format_altitude_with_indicator};
 use super::typeinfo::AircraftTypeInfo;
+use super::staleness::{aircraft_age_secs, format_last_seen};
 use super::{CameraFollowState, DetailPanelState, SessionClock, TrailHistory};
 use crate::adsb::enrichment::PositionSource;
 use crate::geo::{haversine_distance_nm, CoordinateConverter};
@@ -830,6 +831,7 @@ pub fn render_aircraft_list_pane_content(
     list_state: &mut AircraftListState,
     _detail_state: &mut DetailPanelState,
     follow_state: &mut CameraFollowState,
+    pan_to_target: &mut crate::camera::PanToTarget,
     display_list: &AircraftDisplayList,
     app_config: &crate::config::AppConfig,
     clock: &SessionClock,
@@ -1243,6 +1245,11 @@ pub fn render_aircraft_list_pane_content(
                         list_state.selected_icao = None;
                     } else {
                         list_state.selected_icao = Some(aircraft.icao.clone());
+                        if let Some((live, _, _, _)) =
+                            aircraft_query.iter().find(|(a, _, _, _)| a.icao == aircraft.icao)
+                        {
+                            pan_to_target.target = Some((live.latitude, live.longitude));
+                        }
                     }
                 }
             }
@@ -1415,6 +1422,14 @@ fn render_inline_detail(
                                         ui.label(egui::RichText::new("Obs").color(wt.text_dim).size(10.0));
                                         ui.label(
                                             egui::RichText::new(format!("{}", diag.observation_count))
+                                                .color(wt.text)
+                                                .size(10.0)
+                                                .monospace(),
+                                        );
+                                        ui.add_space(8.0);
+                                        ui.label(egui::RichText::new("Last").color(wt.text_dim).size(10.0));
+                                        ui.label(
+                                            egui::RichText::new(format_last_seen(aircraft_age_secs(aircraft)))
                                                 .color(wt.text)
                                                 .size(10.0)
                                                 .monospace(),
