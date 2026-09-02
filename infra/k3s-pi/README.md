@@ -88,6 +88,89 @@ Once you have a RadarBox sharing key: fill in `RADARBOX_SHARING_KEY` in
 `kubectl apply -f airnavradar-deployment.yaml`. Nothing else changes —
 `readsb` doesn't need to be touched or restarted.
 
+## Capturing raw I/Q for test fixtures
+
+The RTL-SDR dongle can only be held by one process at a time, so capturing
+a raw I/Q dump for `adsb-client` test fixtures means briefly taking the
+dongle away from `readsb`. This is disruptive (readsb/MLAT/adsb.lol feed
+all go down for the duration), so only do it when needed and keep captures
+short.
+
+```bash
+# 1. Scale readsb to 0 to release the USB device.
+ssh ccustine@airjedi.custine.com "sudo kubectl -n feeders scale deployment readsb --replicas=0"
+
+# 2. Confirm the pod is actually gone (USB release isn't instant).
+ssh ccustine@airjedi.custine.com "sudo kubectl -n feeders get pods -l app=readsb"
+#    Expect "No resources found". lsusb should still show the RTL2832U,
+#    just no longer held by readsb:
+ssh ccustine@airjedi.custine.com "lsusb"
+
+# 3. Capture. -f/-s match readsb's own tuning (1090 MHz, 2.4 Msps); -g 49.6
+#    is max gain — adjust down if the capture clips. `timeout N` bounds the
+#    capture to N seconds regardless of sample-count math.
+ssh ccustine@airjedi.custine.com \
+  "nohup timeout 300 rtl_sdr -f 1090000000 -s 2400000 -g 49.6 \
+    /home/ccustine/tmp/adsb_capture.bin \
+    > /home/ccustine/tmp/rtl_sdr.log 2>&1 &"
+
+# 4. Wait for it to finish (poll, don't just sleep-and-hope), then restore readsb.
+ssh ccustine@airjedi.custine.com "ps aux | grep '[r]tl_sdr' || echo done"
+ssh ccustine@airjedi.custine.com "sudo kubectl -n feeders scale deployment readsb --replicas=1"
+
+# 5. Confirm readsb actually came back up and is decoding before moving on
+#    — a crash-loop here (e.g. stale USB claim) is easy to miss otherwise.
+ssh ccustine@airjedi.custine.com "sudo kubectl -n feeders get pods -o wide"
+ssh ccustine@airjedi.custine.com "timeout 3 nc localhost 30003 | head -3"
+
+# 6. Get a checksum on the source before transferring anything, so the
+#    transfer itself can be verified byte-for-byte afterward.
+ssh ccustine@airjedi.custine.com "sha256sum /home/ccustine/tmp/adsb_capture.bin"
+```
+
+Output format is `rtl_sdr`'s native raw 8-bit unsigned interleaved I/Q
+(`I0 Q0 I1 Q1 ...`) — the same format `dump1090 --ifile`-style tools expect.
+File size in bytes = duration_seconds * sample_rate * 2 (2 bytes per I/Q pair).
+
+### Transferring the capture (macOS gotchas)
+
+This link (home WAN to the Pi) has been flaky and slow enough that both
+`scp` and naive `rsync` failed in practice:
+
+- **`scp` can silently truncate.** It reported exit 0 while having copied
+  only a fraction of the file. Always verify the destination's size and
+  checksum against the source — never trust a transfer tool's own exit
+  code for a large file over an unreliable link.
+- **macOS ships `openrsync`, not GNU rsync.** Flags like `--append-verify`
+  don't exist in `openrsync` and it fails immediately (not a network
+  issue) if you pass them. Check with `rsync --version` — if it prints
+  `openrsync: protocol version ...` instead of a normal GNU rsync banner,
+  stick to `--partial --append --compress --timeout=N`, which both
+  implementations support.
+- **Retry with resume, automatically.** A loop of `rsync --partial
+  --append --compress` re-invocations resumes from wherever the last
+  attempt left off instead of restarting, which matters a lot when the
+  connection resets mid-transfer every minute or two:
+  ```bash
+  DEST=crates/adsb-client/tests/fixtures/adsb_capture.bin
+  for attempt in $(seq 1 40); do
+    rsync -av --partial --append --compress --timeout=30 --progress \
+      ccustine@airjedi.custine.com:/home/ccustine/tmp/adsb_capture.bin "$DEST"
+    [ $? -eq 0 ] && break
+    sleep 3
+  done
+  shasum -a 256 "$DEST"   # compare against step 6's sha256sum output
+  ```
+
+### Where fixtures live
+
+Raw captures are too large for git (hundreds of MB to low GB). Drop them
+directly in `crates/adsb-client/tests/fixtures/` (gitignored via
+`crates/adsb-client/tests/fixtures/*.bin`) and document each one — center
+frequency, sample rate, gain, duration, capture date, and sha256 — in
+`crates/adsb-client/tests/fixtures/README.md` so they can be verified and
+regenerated later.
+
 ## Notes
 
 - Both deployments use `hostNetwork: true` and are pinned to node `airjedi`
