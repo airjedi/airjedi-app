@@ -34,3 +34,30 @@ Verify integrity after copying with:
 ```
 shasum -a 256 adsb_1090_2p4msps_iq_20260902.bin
 ```
+
+## adsb_1090_2p4msps_iq_20260902_120s.bin
+
+Second capture, same setup, taken later the same day during daytime hours
+to get denser air traffic than the earlier capture (which was taken in the
+early morning).
+
+- **Center frequency:** 1090 MHz
+- **Sample rate:** 2.4 Msps
+- **Gain:** 49.6 dB
+- **Format:** raw 8-bit unsigned interleaved I/Q (same as above)
+- **Duration:** ~119.4s actual (120s requested; file is
+  573,046,784 bytes = 286,523,392 I/Q sample pairs at 2.4 Msps * 2 bytes/sample)
+- **Size:** 573,046,784 bytes
+- **SHA-256:** `d2134de579f67af5515b840bc301178d416b904c97629066b1bf2b26417c8a95`
+- **Captured:** 2026-09-02 (daytime), same procedure as above: `readsb`
+  scaled to 0 replicas for exclusive USB access, then scaled back to 1
+  replica and confirmed healthy/decoding live SBS traffic afterward.
+- **Command:**
+  ```
+  rtl_sdr -f 1090000000 -s 2400000 -g 49.6 adsb_1090_2p4msps_iq_capture_120s.bin
+  ```
+
+Verify integrity after copying with:
+```
+shasum -a 256 adsb_1090_2p4msps_iq_20260902_120s.bin
+```
