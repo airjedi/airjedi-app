@@ -1,4 +1,10 @@
-# k3s feeder deployment for airjedi.custine.com
+# k3s feeder deployment for `<PI_HOST>`
+
+> **Placeholders in this doc:** `<PI_HOST>`, `<PI_SSH_USER>`. Real values
+> live in a gitignored project-local skill — see
+> `.claude/skills/homelab-vars.local.md` (create it from
+> `.claude/skills/homelab-vars.local.md.example` if missing). Never commit
+> the resolved values back into this file.
 
 Replaces the systemd `readsb.service` on the Pi with a k3s-managed
 deployment, and adds MLAT correlation via adsb.lol. AirNav RadarBox feeding
@@ -36,7 +42,7 @@ kubectl apply -f namespace.yaml -f configmap.yaml -f secret.yaml \
   -f readsb-deployment.yaml
 
 # 2. Stop and disable the old service (keep the unit file for rollback).
-ssh ccustine@airjedi.custine.com "sudo systemctl stop readsb && sudo systemctl disable readsb"
+ssh <PI_SSH_USER>@<PI_HOST> "sudo systemctl stop readsb && sudo systemctl disable readsb"
 
 # 3. Confirm the pod comes up.
 kubectl -n feeders get pods -o wide
@@ -58,14 +64,14 @@ kubectl -n feeders exec deploy/readsb -- ps aux | grep '[r]eadsb'
 #     `kubectl rollout restart deploy/readsb` before proceeding to step 4.
 
 # 4. Confirm ports are bound by the new pod, not a stray readsb process.
-ssh ccustine@airjedi.custine.com "ss -tlnp | grep -E '3000[1-5]|30104'"
+ssh <PI_SSH_USER>@<PI_HOST> "ss -tlnp | grep -E '3000[1-5]|30104'"
 
 # 5. Confirm decode is live.
-ssh ccustine@airjedi.custine.com "nc localhost 30003" # should show SBS lines
+ssh <PI_SSH_USER>@<PI_HOST> "nc localhost 30003" # should show SBS lines
 ```
 
 Then verify from AirJedi itself (no app config changes needed — same
-`airjedi.custine.com:30005`): existing traffic should look identical.
+`<PI_HOST>:30005`): existing traffic should look identical.
 
 The real end-to-end proof MLAT is working: watch for a previously
 position-less Mode-S-only contact (the kind diagnosed earlier — ADS-B-Out
@@ -78,7 +84,7 @@ online.
 
 ```bash
 kubectl -n feeders scale deployment readsb --replicas=0
-ssh ccustine@airjedi.custine.com "sudo systemctl enable --now readsb"
+ssh <PI_SSH_USER>@<PI_HOST> "sudo systemctl enable --now readsb"
 ```
 
 ## Adding AirNav RadarBox later
@@ -98,34 +104,34 @@ short.
 
 ```bash
 # 1. Scale readsb to 0 to release the USB device.
-ssh ccustine@airjedi.custine.com "sudo kubectl -n feeders scale deployment readsb --replicas=0"
+ssh <PI_SSH_USER>@<PI_HOST> "sudo kubectl -n feeders scale deployment readsb --replicas=0"
 
 # 2. Confirm the pod is actually gone (USB release isn't instant).
-ssh ccustine@airjedi.custine.com "sudo kubectl -n feeders get pods -l app=readsb"
+ssh <PI_SSH_USER>@<PI_HOST> "sudo kubectl -n feeders get pods -l app=readsb"
 #    Expect "No resources found". lsusb should still show the RTL2832U,
 #    just no longer held by readsb:
-ssh ccustine@airjedi.custine.com "lsusb"
+ssh <PI_SSH_USER>@<PI_HOST> "lsusb"
 
 # 3. Capture. -f/-s match readsb's own tuning (1090 MHz, 2.4 Msps); -g 49.6
 #    is max gain — adjust down if the capture clips. `timeout N` bounds the
 #    capture to N seconds regardless of sample-count math.
-ssh ccustine@airjedi.custine.com \
+ssh <PI_SSH_USER>@<PI_HOST> \
   "nohup timeout 300 rtl_sdr -f 1090000000 -s 2400000 -g 49.6 \
-    /home/ccustine/tmp/adsb_capture.bin \
-    > /home/ccustine/tmp/rtl_sdr.log 2>&1 &"
+    /home/<PI_SSH_USER>/tmp/adsb_capture.bin \
+    > /home/<PI_SSH_USER>/tmp/rtl_sdr.log 2>&1 &"
 
 # 4. Wait for it to finish (poll, don't just sleep-and-hope), then restore readsb.
-ssh ccustine@airjedi.custine.com "ps aux | grep '[r]tl_sdr' || echo done"
-ssh ccustine@airjedi.custine.com "sudo kubectl -n feeders scale deployment readsb --replicas=1"
+ssh <PI_SSH_USER>@<PI_HOST> "ps aux | grep '[r]tl_sdr' || echo done"
+ssh <PI_SSH_USER>@<PI_HOST> "sudo kubectl -n feeders scale deployment readsb --replicas=1"
 
 # 5. Confirm readsb actually came back up and is decoding before moving on
 #    — a crash-loop here (e.g. stale USB claim) is easy to miss otherwise.
-ssh ccustine@airjedi.custine.com "sudo kubectl -n feeders get pods -o wide"
-ssh ccustine@airjedi.custine.com "timeout 3 nc localhost 30003 | head -3"
+ssh <PI_SSH_USER>@<PI_HOST> "sudo kubectl -n feeders get pods -o wide"
+ssh <PI_SSH_USER>@<PI_HOST> "timeout 3 nc localhost 30003 | head -3"
 
 # 6. Get a checksum on the source before transferring anything, so the
 #    transfer itself can be verified byte-for-byte afterward.
-ssh ccustine@airjedi.custine.com "sha256sum /home/ccustine/tmp/adsb_capture.bin"
+ssh <PI_SSH_USER>@<PI_HOST> "sha256sum /home/<PI_SSH_USER>/tmp/adsb_capture.bin"
 ```
 
 Output format is `rtl_sdr`'s native raw 8-bit unsigned interleaved I/Q
@@ -155,7 +161,7 @@ This link (home WAN to the Pi) has been flaky and slow enough that both
   DEST=crates/adsb-client/tests/fixtures/adsb_capture.bin
   for attempt in $(seq 1 40); do
     rsync -av --partial --append --compress --timeout=30 --progress \
-      ccustine@airjedi.custine.com:/home/ccustine/tmp/adsb_capture.bin "$DEST"
+      <PI_SSH_USER>@<PI_HOST>:/home/<PI_SSH_USER>/tmp/adsb_capture.bin "$DEST"
     [ $? -eq 0 ] && break
     sleep 3
   done

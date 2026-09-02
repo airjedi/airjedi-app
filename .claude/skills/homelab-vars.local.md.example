@@ -1,0 +1,21 @@
+---
+name: homelab-vars
+description: >
+  Resolves the placeholders used in infra/k3s-pi/ docs (<PI_HOST>,
+  <PI_SSH_USER>) to their real values for this machine's homelab. Copy this
+  file to homelab-vars.local.md (gitignored) and fill in real values -
+  never commit the filled-in version.
+---
+
+# Homelab variables
+
+Placeholders used in `infra/k3s-pi/README.md` and related files, and what
+they resolve to on this machine:
+
+| Placeholder | Value |
+|---|---|
+| `<PI_HOST>` | (e.g. `your-pi-hostname.example.com`) |
+| `<PI_SSH_USER>` | (e.g. `your-ssh-user`) |
+
+When following a recipe in `infra/k3s-pi/`, substitute these in before
+running any command.

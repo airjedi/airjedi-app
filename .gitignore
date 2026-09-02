@@ -15,3 +15,5 @@ config.toml
 infra/k3s-pi/secret.yaml
 # Large raw I/Q capture fixtures, too big for git (see fixtures README for provenance)
 crates/adsb-client/tests/fixtures/*.bin
+# Local-only values for placeholders (<PI_HOST>, etc.) used in infra/k3s-pi/ docs
+.claude/skills/*.local.md

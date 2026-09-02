@@ -20,7 +20,8 @@ Mode S traffic instead of synthetic frames.
 - **Size:** 1,437,335,552 bytes
 - **SHA-256:** `413ba9cb725c12b85e0117baef1723e5aaf0ab49b5ddf621982a8ca699d77947`
 - **Captured:** 2026-09-02, from the RTL-SDR dongle attached to the
-  `airjedi` k3s node (`airjedi.custine.com`). The `readsb` Deployment
+  `airjedi` k3s node (`<PI_HOST>` - see `infra/k3s-pi/README.md` for what
+  that placeholder resolves to). The `readsb` Deployment
   (namespace `feeders`, see `infra/k3s-pi/`) was scaled to 0 replicas to
   release exclusive USB access to the dongle for the duration of the
   capture, then scaled back to 1 replica and confirmed healthy/decoding

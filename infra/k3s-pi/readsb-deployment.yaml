@@ -1,4 +1,5 @@
-# Replaces the systemd readsb.service on airjedi.custine.com. Uses
+# Replaces the systemd readsb.service on <PI_HOST> (see infra/k3s-pi/README.md
+# for what that placeholder resolves to). Uses
 # ghcr.io/sdr-enthusiasts/docker-adsb-ultrafeeder, which bundles readsb +
 # mlat-client + multi-aggregator feeding, all env-var configured.
 #

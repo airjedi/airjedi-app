@@ -1,5 +1,5 @@
 # Non-secret configuration for the readsb/ultrafeeder + airnavradar deployments.
-# Values here mirror the current /etc/default/readsb on airjedi.custine.com,
+# Values here mirror the current /etc/default/readsb on <PI_HOST>,
 # so behavior should be identical to the systemd service once cut over.
 apiVersion: v1
 kind: ConfigMap
