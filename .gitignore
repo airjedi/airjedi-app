@@ -13,3 +13,5 @@ macos/assets/tiles
 config.toml
 # Real feeder secrets for the k3s Pi deployment (see infra/k3s-pi/README.md)
 infra/k3s-pi/secret.yaml
+# Large raw I/Q capture fixtures, too big for git (see fixtures README for provenance)
+crates/adsb-client/tests/fixtures/*.bin
