@@ -95,7 +95,12 @@ impl Rs1090Decoder {
         now.timestamp() as f64 + f64::from(now.timestamp_subsec_millis()) / 1000.0
     }
 
-    fn decode_modes(&mut self, data: &[u8], signal_level: Option<f32>) -> Vec<AircraftMessage> {
+    fn decode_modes(
+        &mut self,
+        data: &[u8],
+        signal_level: Option<f32>,
+        frame_ts: Option<u64>,
+    ) -> Vec<AircraftMessage> {
         let mut msg = match Message::try_from(data) {
             Ok(m) => m,
             Err(_) => return vec![],
@@ -107,7 +112,15 @@ impl Rs1090Decoder {
         };
 
         let rs_icao = ICAO(icao.0);
-        let ts = self.timestamp();
+        // CPR even/odd pairing is time-windowed, so it must be driven by the
+        // frame's own reception time (BEAST 12 MHz receiver clock), not
+        // wall-clock. Using Utc::now() makes replay/simulation (and any
+        // non-realtime ingest) collapse every frame to the same instant,
+        // which breaks global CPR. Fall back to wall-clock only when the
+        // transport supplies no timestamp (e.g. SBS-1 line feeds).
+        let ts = frame_ts
+            .map(|t| t as f64 / 12_000_000.0)
+            .unwrap_or_else(|| self.timestamp());
 
         match &mut msg.df {
             DF::ShortAirAirSurveillance { ac, .. } => {
@@ -492,7 +505,7 @@ impl Decoder for Rs1090Decoder {
     fn decode(&mut self, frame: &Frame) -> Vec<AircraftMessage> {
         match frame.frame_type {
             FrameType::ModeSShort | FrameType::ModeSLong => {
-                self.decode_modes(&frame.data, frame.signal_level)
+                self.decode_modes(&frame.data, frame.signal_level, frame.timestamp)
             }
             _ => vec![],
         }
