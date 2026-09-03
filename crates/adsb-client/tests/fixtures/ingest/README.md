@@ -88,15 +88,20 @@ access to the ports was wedged at the time; see the recipe in
   without losing targets.
 - **Traffic:** 164 aircraft, 104,328 NDJSON lines.
 - **Source types:** `adsb_icao` 104,273, **`mlat` 55** (0 `tisb`).
-- **MLAT targets: 17 distinct aircraft** -
-  `a93257` SKW3595, `a94ff9` TFF900, `ab15a5` N813MS, `a59dbb` N461EE,
-  `a9f652`, `ae5e13`, `a083cb` TOG132, `a26412` EJA253, `a191a8` RAX270,
-  `a24de8` MXY1695, `a9ab0b` XSR722, `a7907c` LXJ587, `a2de1f` N284PC,
-  `ab24f7` SKW4821, `ab56ee` N83KM, `a388af` DAL2062, `4403bd` IJM572.
+- **Genuine MLAT position source: 1 aircraft** - `ae5e13` (all 55 `type:"mlat"`
+  lines). readsb's `type:"mlat"` is exactly what AirJedi's enrichment maps to
+  `PositionSource::Mlat` (see `src/adsb/enrichment.rs::PositionSource::parse`),
+  so this is the aircraft the app actually tags MLAT. Thin, but a real sample
+  where before we had none.
+- **Partial MLAT: 17 aircraft** carry MLAT-derived *fields* (a non-empty
+  `mlat[]` array) while their position source stays `adsb_icao`; the app treats
+  these as ADS-B, not MLAT. (`a93257`, `a94ff9`, `ab15a5`, `a59dbb`, `a9f652`,
+  `ae5e13`, `a083cb`, `a26412`, `a191a8`, `a24de8`, `a9ab0b`, `a7907c`,
+  `a2de1f`, `ab24f7`, `ab56ee`, `a388af`, `4403bd`.)
 - **Still no TIS-B** in this window; a `tisb`-tagged sample remains outstanding.
 
-Use this pair to assert the enrichment join tags these 17 ICAOs as MLAT while
-the rest decode as ADS-B.
+Use this pair to assert the enrichment join tags `ae5e13` as MLAT while the
+rest decode as ADS-B.
 
 ## Regenerating / adding a capture
 
