@@ -3,6 +3,10 @@
 Large binary fixtures are gitignored (`*.bin`, see repo `.gitignore`) and must
 be obtained separately - they are not stored in git history.
 
+> These are raw RTL-SDR I/Q samples, kept for a future AirJedi-native
+> demodulator. For the **decoded-network** ingest fixtures (BEAST + readsb
+> NDJSON) used by `tests/ingest_replay.rs`, see `ingest/README.md`.
+
 ## adsb_1090_2p4msps_iq_20260902.bin
 
 Raw RTL-SDR I/Q capture for exercising ADS-B decode paths against real

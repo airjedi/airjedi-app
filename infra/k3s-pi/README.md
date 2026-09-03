@@ -177,6 +177,83 @@ frequency, sample rate, gain, duration, capture date, and sha256 — in
 `crates/adsb-client/tests/fixtures/README.md` so they can be verified and
 regenerated later.
 
+## Capturing correlated BEAST + NDJSON (ingest fixtures)
+
+Distinct from the raw I/Q capture above. The I/Q capture takes the **dongle**
+(readsb must be scaled to 0), so it can never include readsb's NDJSON. This
+recipe instead **taps readsb's TCP outputs while readsb keeps running** - it is
+non-disruptive (no feed downtime, dongle untouched) and is the only way to get
+correlated MLAT/TIS-B source tags, since those are computed by the aggregator
+and injected back into the live feed.
+
+These fixtures feed the ingest-simulation test
+(`crates/adsb-client/tests/ingest_replay.rs`). Two ports, captured
+simultaneously so they join by ICAO + time:
+
+| Port | Stream | readsb flag |
+|---|---|---|
+| `30005` | BEAST binary (Mode-S frames + 12 MHz receiver timestamps) | `--net-bo-port 30005` |
+| `30047` | streaming NDJSON with `type` (`adsb_icao`/`tisb_icao`/`mlat`), `mlat[]`, `tisb[]`, `nic`/`nac_p`, ... | `--net-json-port` |
+
+> **Port 30047 is served by the ultrafeeder image even though it is not in
+> `READSB_EXTRA_ARGS`.** No reconfiguration is needed. If a future image stops
+> exposing it, add `--net-json-port 30047` to `configmap.yaml`'s
+> `READSB_EXTRA_ARGS` and `kubectl rollout restart deploy/readsb`.
+
+Run from any machine that can reach the feeder over the LAN (no SSH needed):
+
+```bash
+# 1. Confirm both ports are live and streaming (quick, non-destructive).
+#    BEAST should show 0x1a frame markers; NDJSON should show JSON lines.
+timeout 3 nc <PI_HOST> 30005 | xxd | head -3
+timeout 3 nc <PI_HOST> 30047 | head -2
+
+# 2. GOTCHA: do not rapidly open many probe connections back-to-back. readsb
+#    drops/starves connections under rapid churn, which silently truncates a
+#    capture to a few KB. Pause a few seconds between probes and the capture.
+
+# 3. Capture ~5 min of BOTH streams at once, into a staging dir.
+D=/tmp/ingest_cap; mkdir -p "$D"; cd "$D"
+date -u +%Y-%m-%dT%H:%M:%SZ > capture_start.txt
+timeout 300 nc <PI_HOST> 30005 > beast_30005.bin     2>/dev/null &  BP=$!
+timeout 300 nc <PI_HOST> 30047 > readsb_30047.ndjson 2>/dev/null &  JP=$!
+
+# 4. Health-gate at ~8s: abort and retry if either stream stalled early.
+sleep 8
+BB=$(wc -c < beast_30005.bin); NL=$(wc -l < readsb_30047.ndjson)
+echo "[t=8s] beast=${BB}B ndjson=${NL}L"
+if [ "$BB" -lt 2000 ] || [ "$NL" -lt 5 ]; then
+  echo "EARLY STALL - kill and retry"; kill "$BP" "$JP" 2>/dev/null; exit 1
+fi
+wait "$BP"; wait "$JP"
+date -u +%Y-%m-%dT%H:%M:%SZ > capture_end.txt
+
+# 5. Inspect: how many aircraft, and did any MLAT/TIS-B targets appear?
+grep -o '"type":"[a-z_]*"' readsb_30047.ndjson | sort | uniq -c | sort -rn
+echo "distinct aircraft: $(grep -o '"hex":"[a-f0-9]*"' readsb_30047.ndjson | sort -u | wc -l)"
+echo "populated mlat[]: $(grep -c '"mlat":\[[0-9]' readsb_30047.ndjson)  tisb[]: $(grep -c '"tisb":\[[0-9]' readsb_30047.ndjson)"
+```
+
+> **MLAT/TIS-B are opportunistic.** They only appear for Mode-S-only aircraft
+> being multilaterated (or TIS-B ground uplink). A given 5-min window may be
+> pure `adsb_icao` (the 2026-09-02 fixture was). To catch a real MLAT sample,
+> capture when step 5 shows non-empty `mlat[]` / a `"type":"mlat"` line - retry
+> at a busier time or once RadarBox MLAT writeback is active (see "Adding AirNav
+> RadarBox later").
+
+Then install the fixtures (gzipped, committable - unlike the I/Q `.bin`):
+
+```bash
+DEST=crates/adsb-client/tests/fixtures/ingest   # in the repo
+gzip -c beast_30005.bin     > "$DEST/beast_30005_$(date +%Y%m%d).bin.gz"
+gzip -c readsb_30047.ndjson > "$DEST/readsb_30047_$(date +%Y%m%d).ndjson.gz"
+shasum -a 256 "$DEST"/*.gz   # record in that dir's README.md
+```
+
+Document each capture (sizes, sha256, source-type breakdown, aircraft count) in
+`crates/adsb-client/tests/fixtures/ingest/README.md` - kept separate from the
+raw I/Q fixtures README.
+
 ## Notes
 
 - Both deployments use `hostNetwork: true` and are pinned to node `airjedi`

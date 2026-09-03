@@ -104,6 +104,7 @@ dependencies = [
  "bytes",
  "chrono",
  "desperado",
+ "flate2",
  "log",
  "rs1090",
  "thiserror 1.0.69",
