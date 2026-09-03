@@ -28,6 +28,7 @@ default = []
 nats = ["dep:async-nats", "dep:crossbeam-channel", "dep:tokio", "dep:bincode", "dep:futures"]
 
 [dependencies]
+airjedi-core = { path = "../airjedi-core" }
 bevy_app = "0.19"
 bevy_ecs = "0.19"
 bevy_time = "0.19"

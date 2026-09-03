@@ -2,29 +2,16 @@ use crate::coord::CoordinateFrame;
 use crate::types::{StateVectorType, TargetCategory, TargetId, Timestamp};
 use nalgebra::{DMatrix, DVector};
 
+// `SensorKind` moved to `airjedi-core` so `SensorContributions` can name it
+// without the fusion engine; the richer `SensorId`/`SensorObservation` stay here.
+pub use airjedi_core::SensorKind;
+
 #[derive(Debug, Clone)]
 pub struct SensorId {
     pub id: String,
     pub kind: SensorKind,
     pub tier: FusionTier,
     pub coordinate_frame: CoordinateFrame,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SensorKind {
-    AdsbReceiver,
-    MlatNetwork,
-    PrimaryRadar,
-    SecondaryRadar,
-    AisReceiver,
-    MaritimeRadar,
-    Sonar,
-    OpticalTracker,
-    RfTracker,
-    GpsTracker,
-    SpaceSurveillanceRadar,
-    UpstreamFusedTrack,
-    Simulated,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

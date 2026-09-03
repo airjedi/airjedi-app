@@ -5,6 +5,10 @@ use crate::types::{TargetCategory, TargetId, Timestamp, TrackId};
 use std::collections::HashMap;
 use std::time::Duration;
 
+// `TrackStatus` moved to `airjedi-core` (the client renders it without the
+// engine); the transition logic below still owns it.
+pub use airjedi_core::TrackStatus;
+
 #[derive(Component, Debug, Clone)]
 pub struct Track {
     pub id: TrackId,
@@ -12,14 +16,6 @@ pub struct Track {
     pub created_at: Timestamp,
     pub last_update: Timestamp,
     pub is_on_ground: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Reflect)]
-pub enum TrackStatus {
-    Tentative,
-    Confirmed,
-    Coasting,
-    Lost,
 }
 
 #[derive(Component, Debug, Clone, Reflect)]

@@ -22,6 +22,7 @@ pub fn detect_landings(
     aviation_data: Option<Res<AviationData>>,
     mut fusion_tracks: Query<(Entity, &mut Track, &mut TrackerState, &TrackQuality)>,
     visual_lookup: Query<(Entity, &FusionTrackLink), Without<LandedAircraft>>,
+    clock: Res<super::clock::SimClock>,
 ) {
     let Some(aviation_data) = aviation_data else {
         return;
@@ -90,7 +91,7 @@ pub fn detect_landings(
             for (visual_entity, link) in &visual_lookup {
                 if link.track_entity == track_entity {
                     commands.entity(visual_entity).insert(LandedAircraft {
-                        landed_at: Utc::now(),
+                        landed_at: clock.now_utc(),
                         near_airport: nearest_airport.clone(),
                     });
                 }
@@ -103,8 +104,9 @@ pub fn cleanup_landed_aircraft(
     mut commands: Commands,
     landed_query: Query<(Entity, &LandedAircraft, &FusionTrackLink)>,
     fusion_tracks: Query<&TrackQuality>,
+    clock: Res<super::clock::SimClock>,
 ) {
-    let now = Utc::now();
+    let now = clock.now_utc();
 
     for (entity, landed, link) in &landed_query {
         let age = now.signed_duration_since(landed.landed_at).num_seconds();

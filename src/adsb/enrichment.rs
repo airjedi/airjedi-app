@@ -19,32 +19,11 @@ use std::time::{Duration, Instant};
 use adsb_client::Icao;
 use bevy::prelude::*;
 
-/// Position source as classified by readsb's `type` field.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PositionSource {
-    AdsbIcao,
-    AdsbIcaoNt,
-    AdsrIcao,
-    TisbIcao,
-    Adsc,
-    Mlat,
-    Other,
-    Unknown,
-}
-
-impl PositionSource {
-    fn parse(type_str: &str) -> Self {
-        match type_str {
-            "adsb_icao" => Self::AdsbIcao,
-            "adsb_icao_nt" => Self::AdsbIcaoNt,
-            "adsr_icao" => Self::AdsrIcao,
-            "tisb_icao" => Self::TisbIcao,
-            "adsc" => Self::Adsc,
-            "mlat" => Self::Mlat,
-            _ => Self::Other,
-        }
-    }
-}
+// `PositionSource` (and its `type`-string mapping) moved to `airjedi-core` so
+// `DisplayTrack` can carry it across the projection boundary. This module keeps
+// the live NDJSON reader and the ICAO-keyed lookup table. Re-exported here so
+// every existing `crate::adsb::enrichment::PositionSource` import keeps working.
+pub use airjedi_core::PositionSource;
 
 /// Enrichment info for a single aircraft, as of its last NDJSON update.
 #[derive(Debug, Clone, Copy)]

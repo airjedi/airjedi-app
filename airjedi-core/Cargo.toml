@@ -1,0 +1,19 @@
+[package]
+name = "airjedi-core"
+version = "0.1.0"
+edition = "2021"
+description = "Shared domain vocabulary and serializable display components for AirJedi (fusion agent + client)"
+
+[dependencies]
+# ECS Component derive for the display components, and Reflect for the domain
+# enums that the app already registers. Both are needed regardless (bevy_ecs
+# pulls bevy_reflect), so this crate stays free of the heavy fusion deps
+# (nalgebra / kiddo / pathfinding) - that is the whole point of splitting it out.
+bevy_ecs = "0.19"
+bevy_reflect = "0.19"
+serde = { version = "1.0", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[dev-dependencies]
+serde_json = "1.0"

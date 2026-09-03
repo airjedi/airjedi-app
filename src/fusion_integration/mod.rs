@@ -1,4 +1,5 @@
 mod adsb_adapter;
+pub(crate) mod clock;
 pub(crate) mod estimated_track;
 #[allow(dead_code)]
 pub(crate) mod fusion_ui;
@@ -23,6 +24,7 @@ impl Plugin for FusionIntegrationPlugin {
         }
 
         app.add_plugins(FusionPlugin)
+            .init_resource::<clock::SimClock>()
             .register_type::<estimated_track::EstimatedTrackConfig>()
             .init_resource::<estimated_track::EstimatedTrackConfig>()
             .init_resource::<estimated_track::HeadingHistory>()
@@ -31,6 +33,12 @@ impl Plugin for FusionIntegrationPlugin {
             .add_systems(
                 Update,
                 adsb_adapter::adsb_to_fusion_system.before(FusionSet::Drain),
+            )
+            // Refresh the injectable clock before any projection system reads it,
+            // so live behavior matches reading the real clock directly.
+            .add_systems(
+                Update,
+                clock::advance_sim_clock.before(render_bridge::sync_tracks_to_visuals),
             )
             .add_systems(
                 Update,
@@ -60,6 +68,13 @@ impl Plugin for FusionIntegrationPlugin {
                     multi_sensor_debug::draw_multi_sensor_sources
                         .after(render_bridge::sync_tracks_to_visuals)
                         .after(crate::ZoomSet::Change),
+                    // Agent-side projection writers (populate serializable
+                    // display components; readers migrate onto them later).
+                    multi_sensor_debug::sync_sensor_contributions
+                        .after(render_bridge::sync_tracks_to_visuals),
+                    estimated_track::sync_display_estimate
+                        .after(estimated_track::update_heading_history)
+                        .after(crate::aircraft::interpolation::interpolate_aircraft_positions),
                 ),
             );
     }

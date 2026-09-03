@@ -8,6 +8,7 @@ use crate::constants;
 use crate::geo;
 use crate::map::MapState;
 use crate::view3d;
+use airjedi_core::DisplayTrack;
 use airjedi_fusion::types::{IdentifierType, TargetCategory};
 use airjedi_fusion::{TargetClassification, Track, TrackQuality, TrackStatus, TrackerState};
 use bevy::prelude::*;
@@ -36,7 +37,7 @@ pub fn sync_tracks_to_visuals(
     type_db: Option<Res<crate::aircraft::AircraftTypeDatabase>>,
     feed_mgr: Option<Res<FeedConnectionManager>>,
     enrichment_mgr: Option<Res<EnrichmentConnectionManager>>,
-    time: Res<Time<Real>>,
+    clock: Res<super::clock::SimClock>,
     map_state: Res<MapState>,
     local_origin: Res<LocalOrigin>,
     view3d_state: Res<view3d::View3DState>,
@@ -129,6 +130,16 @@ pub fn sync_tracks_to_visuals(
             .and_then(|icao| enrichment_mgr.as_ref().and_then(|mgr| mgr.lookup(icao)))
             .map(|info| info.source);
 
+        // Design-b projection boundary: write the serializable `DisplayTrack`
+        // onto the fusion track entity from the same merged values used below.
+        // The `Aircraft` writes are left untouched during this step; readers
+        // migrate to `DisplayTrack` (and the inline derivation here is removed)
+        // in a follow-up. `h_uncertainty_m`/`predicting` are filled by the
+        // uncertainty and interpolation systems in later tasks.
+        commands
+            .entity(track_entity)
+            .insert(derive_display_track(track, tracker, quality, raw_ac, position_source));
+
         let existing_visual = visual_lookup
             .iter()
             .find(|(_, link)| link.track_entity == track_entity);
@@ -194,7 +205,7 @@ pub fn sync_tracks_to_visuals(
                             Some(speed_kts),
                             vrate,
                             None,
-                            time.elapsed_secs_f64(),
+                            clock.elapsed_secs_f64(),
                         );
                     }
                 }
@@ -277,7 +288,7 @@ pub fn sync_tracks_to_visuals(
                     Some(speed_kts),
                     vrate,
                     None,
-                    time.elapsed_secs_f64(),
+                    clock.elapsed_secs_f64(),
                 ),
             ));
             if let Some(corr) = correction {
@@ -333,6 +344,158 @@ fn update_diagnostics(
     if position_source.is_some() {
         diag.last_position_source = position_source;
     }
+}
+
+/// Derive the render-ready [`DisplayTrack`] for a fusion track from the same
+/// prefer-raw/prefer-filter merge policy and ECEF->geodetic derivation that
+/// `sync_tracks_to_visuals` applies to `Aircraft`. This is the single source of
+/// the merge truth for the serializable projection boundary.
+///
+/// `h_uncertainty_m` and `predicting` are left `None`/`false` here - the
+/// uncertainty and interpolation systems own those fields in later tasks.
+fn derive_display_track(
+    track: &Track,
+    tracker: &TrackerState,
+    quality: &TrackQuality,
+    raw_ac: Option<&adsb_client::Aircraft>,
+    position_source: Option<PositionSource>,
+) -> DisplayTrack {
+    let (lat, lon, alt_m) = tracker.position_geodetic();
+    let filter_alt_ft = (alt_m / 0.3048) as i32;
+
+    let vel_ecef = tracker.velocity_ecef();
+    let speed_mps = (vel_ecef[0].powi(2) + vel_ecef[1].powi(2) + vel_ecef[2].powi(2)).sqrt();
+    let speed_kts = speed_mps / 0.514444;
+
+    // Matches `interpolate_display_positions`: `predicting` is driven by the
+    // filter's own speed, captured before the raw-vs-filter merge below.
+    let predicting = speed_kts > crate::aircraft::interpolation::MIN_PREDICTION_SPEED_KTS;
+
+    let heading = compute_heading_from_ecef(lat, lon, &vel_ecef, speed_mps);
+
+    let alt_ft = raw_ac.and_then(|ac| ac.altitude).unwrap_or(filter_alt_ft);
+    let vrate = raw_ac
+        .and_then(|ac| ac.vertical_rate)
+        .or_else(|| compute_vertical_rate(&vel_ecef, lat, lon));
+
+    let is_coasting = quality.status == TrackStatus::Coasting;
+
+    // During coasting the raw ADS-B values are stale (pre-gap); prefer the
+    // filter's forward-propagated estimate. When confirmed, the freshest raw
+    // observation wins.
+    let heading = if is_coasting {
+        heading
+    } else {
+        raw_ac.and_then(|ac| ac.track).or(heading)
+    };
+    let speed_kts = if is_coasting {
+        speed_kts
+    } else {
+        raw_ac.and_then(|ac| ac.velocity).unwrap_or(speed_kts)
+    };
+    let lat = if is_coasting {
+        lat
+    } else {
+        raw_ac.and_then(|ac| ac.latitude).unwrap_or(lat)
+    };
+    let lon = if is_coasting {
+        lon
+    } else {
+        raw_ac.and_then(|ac| ac.longitude).unwrap_or(lon)
+    };
+
+    let squawk = raw_ac.and_then(|ac| ac.squawk.clone());
+    let is_on_ground = raw_ac
+        .and_then(|ac| ac.is_on_ground)
+        .or(Some(track.is_on_ground));
+    let alert = raw_ac.and_then(|ac| ac.alert);
+    let emergency = raw_ac.and_then(|ac| ac.emergency);
+    let spi = raw_ac.and_then(|ac| ac.spi);
+    let roll_angle = raw_ac.and_then(|ac| ac.roll_angle.map(|v| v as f32));
+    let track_angle_rate = raw_ac.and_then(|ac| ac.track_angle_rate.map(|v| v as f32));
+
+    let icao = track
+        .cooperative_ids
+        .iter()
+        .find(|id| id.id_type == IdentifierType::Icao)
+        .map(|id| id.id.clone())
+        .unwrap_or_else(|| format!("TRK-{}", &track.id.0.to_string()[..8]));
+
+    let callsign = raw_ac
+        .and_then(|ac| ac.callsign.clone())
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            track
+                .cooperative_ids
+                .iter()
+                .find(|id| id.id_type == IdentifierType::Callsign)
+                .map(|id| id.id.clone())
+        });
+
+    let mode = tracker.mode_info();
+
+    DisplayTrack {
+        track_id: track.id.clone(),
+        icao,
+        callsign,
+        latitude: lat,
+        longitude: lon,
+        altitude_ft: Some(alt_ft),
+        heading: heading.map(|h| h as f32),
+        velocity_kts: Some(speed_kts),
+        vertical_rate: vrate,
+        roll_angle,
+        track_angle_rate,
+        squawk,
+        is_on_ground,
+        alert,
+        emergency,
+        spi,
+        last_seen: track.last_update,
+        status: quality.status,
+        position_source,
+        h_uncertainty_m: horizontal_uncertainty_m(tracker),
+        predicting,
+        filter_type: filter_type_label(tracker).to_string(),
+        mode_probabilities: mode.as_ref().map(|m| m.probabilities.clone()),
+        dominant_mode: mode.as_ref().map(|m| m.dominant_mode),
+        observation_count: quality.observation_count,
+    }
+}
+
+/// 1-sigma horizontal position uncertainty in meters, reduced from the filter's
+/// ECEF covariance to the local ENU frame. Mirrors `uncertainty_viz`'s scalar
+/// reduction so `DisplayTrack.h_uncertainty_m` carries it across the boundary;
+/// the ellipse drawer will read this field instead of recomputing (cutover
+/// follows). Returns `None` when the covariance has no position block.
+fn horizontal_uncertainty_m(tracker: &TrackerState) -> Option<f64> {
+    let cov = tracker.variant.covariance_mat();
+    if cov.nrows() < 3 {
+        return None;
+    }
+
+    let (lat, lon, _) = tracker.position_geodetic();
+    let lat_rad = lat.to_radians();
+    let lon_rad = lon.to_radians();
+
+    let sin_lat = lat_rad.sin();
+    let cos_lat = lat_rad.cos();
+    let sin_lon = lon_rad.sin();
+    let cos_lon = lon_rad.cos();
+
+    let pos_cov = cov.view((0, 0), (3, 3));
+
+    let var_east = sin_lon * sin_lon * pos_cov[(0, 0)] + cos_lon * cos_lon * pos_cov[(1, 1)]
+        - 2.0 * sin_lon * cos_lon * pos_cov[(0, 1)];
+
+    let var_north = (sin_lat * cos_lon).powi(2) * pos_cov[(0, 0)]
+        + (sin_lat * sin_lon).powi(2) * pos_cov[(1, 1)]
+        + cos_lat.powi(2) * pos_cov[(2, 2)]
+        + 2.0 * sin_lat.powi(2) * sin_lon * cos_lon * pos_cov[(0, 1)]
+        - 2.0 * sin_lat * cos_lat * cos_lon * pos_cov[(0, 2)]
+        - 2.0 * sin_lat * cos_lat * sin_lon * pos_cov[(1, 2)];
+
+    Some((var_east.abs() + var_north.abs()).sqrt())
 }
 
 fn is_air_target(category: TargetCategory) -> bool {
@@ -406,8 +569,6 @@ pub fn refresh_aircraft_last_seen(
         return;
     };
 
-    let now = chrono::Utc::now();
-
     for conn in mgr.connections.values() {
         let aircraft_list = match conn.data.aircraft.try_lock() {
             Ok(list) => list,
@@ -430,8 +591,9 @@ pub fn cleanup_orphaned_visuals(
     mut commands: Commands,
     visuals: Query<(Entity, &FusionTrackLink, &Aircraft)>,
     fusion_tracks: Query<Entity, With<Track>>,
+    clock: Res<super::clock::SimClock>,
 ) {
-    let now = chrono::Utc::now();
+    let now = clock.now_utc();
 
     for (visual_entity, link, aircraft) in &visuals {
         let orphaned = fusion_tracks.get(link.track_entity).is_err();

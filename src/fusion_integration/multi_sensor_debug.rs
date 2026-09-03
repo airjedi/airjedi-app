@@ -1,7 +1,8 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use airjedi_fusion::{Measurement, SensorObservation, TimelineStore};
+use airjedi_core::{SensorContributions, SensorReport};
+use airjedi_fusion::{Measurement, SensorObservation, TimelineStore, Track};
 use bevy::prelude::*;
 
 use crate::aircraft::components::FusionTrackLink;
@@ -53,6 +54,41 @@ fn observation_lat_lon(obs: &SensorObservation) -> Option<(f64, f64)> {
             lat_deg, lon_deg, ..
         } => Some((*lat_deg, *lon_deg)),
         _ => None,
+    }
+}
+
+/// Agent-side projection: write each fused track's latest per-sensor raw
+/// positions into the serializable [`SensorContributions`] component on the
+/// track entity. This mirrors exactly what `draw_multi_sensor_sources` reads
+/// from `TimelineStore` today; the drawer migrates to read the component (and
+/// this becomes the sole `TimelineStore` reader) during the reader cutover.
+pub fn sync_sensor_contributions(
+    mut commands: Commands,
+    timeline_store: Res<TimelineStore>,
+    tracks: Query<(Entity, &Track)>,
+) {
+    for (entity, track) in &tracks {
+        let latest = timeline_store.latest_per_sensor(&track.id);
+
+        let mut sources: Vec<SensorReport> = latest
+            .iter()
+            .filter_map(|(sensor_id, stored)| {
+                let (lat, lon) = observation_lat_lon(&stored.observation)?;
+                Some(SensorReport {
+                    sensor_id: sensor_id.clone(),
+                    lat,
+                    lon,
+                    kind: stored.observation.sensor_id.kind,
+                })
+            })
+            .collect();
+        // Deterministic order so the component is stable frame to frame (and
+        // for snapshot tests), since the source map has no inherent ordering.
+        sources.sort_by(|a, b| a.sensor_id.cmp(&b.sensor_id));
+
+        commands
+            .entity(entity)
+            .insert(SensorContributions { sources });
     }
 }
 

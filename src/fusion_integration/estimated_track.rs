@@ -1,5 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 
+use airjedi_core::DisplayEstimate;
 use airjedi_fusion::nalgebra::DMatrix;
 use airjedi_fusion::{ModeInfo, TrackQuality, TrackStatus, TrackerState};
 use bevy::prelude::*;
@@ -561,6 +562,99 @@ pub fn draw_estimated_track_cones(
         prev_left = left;
         prev_right = right;
     }
+}
+
+/// Agent-side projection: forward-sample the selected/followed track and write
+/// the result into the serializable [`DisplayEstimate`] component on the track
+/// entity. This runs the identical sampling as `draw_estimated_track_cones`
+/// (same snap-to-visual, staleness damping, IMM turn-rate weighting and
+/// `sample_predicted_track`) but stores the samples instead of drawing them; the
+/// cone drawer migrates to read the component during the reader cutover.
+///
+/// Only the one selected aircraft is sampled - matching the current cost, since
+/// the full cone was never computed for every aircraft (others get the cheap
+/// straight-line vector in `draw_all_aircraft_predictions`).
+pub fn sync_display_estimate(
+    mut commands: Commands,
+    config: Res<EstimatedTrackConfig>,
+    app_config: Res<AppConfig>,
+    list_state: Res<AircraftListState>,
+    follow_state: Res<CameraFollowState>,
+    heading_history: Res<HeadingHistory>,
+    fusion_tracks: Query<(&TrackerState, &TrackQuality)>,
+    visuals: Query<(&FusionTrackLink, &Aircraft, Option<&InterpolationState>)>,
+) {
+    if !config.enabled {
+        return;
+    }
+
+    let target_icao = follow_state
+        .following_icao
+        .as_ref()
+        .or(list_state.selected_icao.as_ref());
+    let Some(target_icao) = target_icao else {
+        return;
+    };
+
+    let Some((link, aircraft, interp)) = visuals.iter().find(|(_, a, _)| &a.icao == target_icao)
+    else {
+        return;
+    };
+    let (vis_lat, vis_lon, vis_heading) =
+        visual_position(aircraft, interp, app_config.interpolation_enabled);
+
+    let Ok((tracker, quality)) = fusion_tracks.get(link.track_entity) else {
+        return;
+    };
+
+    let vel = tracker.velocity_ecef();
+    let speed_mps = (vel[0].powi(2) + vel[1].powi(2) + vel[2].powi(2)).sqrt();
+    let speed_kts = speed_mps / 0.514444;
+    if speed_kts < config.min_speed_kts {
+        // Below the cone threshold: clear any prior estimate so a stale cone
+        // never lingers once the reader migrates onto this component.
+        commands
+            .entity(link.track_entity)
+            .insert(DisplayEstimate::default());
+        return;
+    }
+
+    let staleness_secs = quality.staleness.as_secs_f64();
+    let staleness_damping = (-staleness_secs / 8.0).exp();
+    let is_coasting = matches!(quality.status, TrackStatus::Coasting);
+
+    let raw_turn_rate = heading_history
+        .smoothed_turn_rates
+        .get(&link.track_entity)
+        .copied()
+        .unwrap_or(0.0);
+    let turn_rate = raw_turn_rate * staleness_damping;
+
+    let mode_info = tracker.mode_info();
+    let snap_heading = if is_coasting { None } else { vis_heading };
+    let aligned_tracker = snap_tracker_to_visual(tracker, vis_lat, vis_lon, snap_heading);
+
+    let samples = sample_predicted_track(&aligned_tracker, &config, turn_rate, mode_info.as_ref());
+
+    let maneuver_prob = mode_info
+        .as_ref()
+        .and_then(|m| m.probabilities.get(1).copied())
+        .unwrap_or(0.0) as f32;
+
+    let display = DisplayEstimate {
+        samples: samples
+            .iter()
+            .map(|s| airjedi_core::PredictedSample {
+                lat: s.lat,
+                lon: s.lon,
+                h_uncertainty_m: s.h_uncertainty_m,
+                heading_deg: s.heading_deg as f32,
+                time_ahead: s.time_ahead,
+            })
+            .collect(),
+        maneuver_prob,
+    };
+    commands.entity(link.track_entity).insert(display);
 }
 
 /// Draw simple straight-line prediction vectors for all non-selected aircraft.
