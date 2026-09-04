@@ -136,6 +136,13 @@ impl Plugin for TilesPlugin {
 }
 
 /// When the basemap style changes, update TileDownloadSettings to match.
+///
+/// This fires on startup too (the resource is `changed` when first inserted),
+/// so it must set every style-derived field - including the endpoint, format,
+/// and axis order. Setting only the retina/cache fields here left `endpoint` at
+/// its default (OSM) while `supports_retina` followed the saved style, so a
+/// non-OSM style like CartoDark produced invalid `tile.openstreetmap.org/...@2x`
+/// URLs (HTTP 400, blank map) until the user manually re-picked the basemap.
 fn sync_download_settings_on_basemap_change(
     basemap: Res<crate::config::CurrentBasemapState>,
     mut dl: ResMut<TileDownloadSettings>,
@@ -143,6 +150,9 @@ fn sync_download_settings_on_basemap_change(
     if !basemap.is_changed() {
         return;
     }
+    dl.endpoint = basemap.style.endpoint_url().to_string();
+    dl.tile_format = basemap.style.tile_format();
+    dl.reverse_axes = basemap.style.reverse_axes();
     dl.supports_retina = basemap.style.supports_retina();
     dl.uses_extension_in_url = basemap.style.uses_extension_in_url();
     dl.cache_key = basemap.style.cache_key().to_string();
