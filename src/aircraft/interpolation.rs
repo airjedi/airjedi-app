@@ -6,7 +6,9 @@ use crate::geo;
 pub const BLEND_THRESHOLD_NM: f64 = 0.5;
 pub const BLEND_DURATION_SECS: f32 = 0.3;
 pub const MAX_PREDICTION_SECS: f64 = 15.0;
-pub const MIN_PREDICTION_SPEED_KTS: f64 = 10.0;
+// Single-sourced with `DisplayTrack.predicting` so the client dead-reckons on
+// exactly the threshold the projection reports.
+pub use airjedi_fusion::display::MIN_PREDICTION_SPEED_KTS;
 
 #[derive(Clone)]
 pub struct BlendTarget {

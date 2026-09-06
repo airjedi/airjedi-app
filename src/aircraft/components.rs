@@ -49,6 +49,11 @@ pub struct Aircraft {
 #[derive(Component, Debug)]
 pub struct FusionTrackLink {
     pub track_entity: Entity,
+    /// Stable cross-boundary identity. Fat mode looks display components up by
+    /// `track_entity` (O(1)), but `Entity` is meaningless across a replication
+    /// boundary - thin mode will key off this `TrackId` instead. Kept as the
+    /// seed for that cutover.
+    #[allow(dead_code)]
     pub track_id: airjedi_fusion::TrackId,
 }
 

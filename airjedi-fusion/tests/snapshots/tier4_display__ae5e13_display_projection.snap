@@ -1,0 +1,5 @@
+---
+source: airjedi-fusion/tests/tier4_display.rs
+expression: summary
+---
+ae5e13 DisplayTrack: source=Some(Mlat) status=Confirmed filter=IMM predicting=false on_ground=Some(false) altitude_ft_present=true lat_round=38 lon_round=-97

@@ -8,9 +8,11 @@ use crate::constants;
 use crate::geo;
 use crate::map::MapState;
 use crate::view3d;
-use airjedi_core::DisplayTrack;
 use airjedi_fusion::types::{IdentifierType, TargetCategory};
-use airjedi_fusion::{TargetClassification, Track, TrackQuality, TrackStatus, TrackerState};
+use airjedi_fusion::{
+    derive_display_track, filter_type_label, RawObservationHint, TargetClassification, Track,
+    TrackQuality, TrackStatus, TrackerState,
+};
 use bevy::prelude::*;
 use crate::tiles::LocalOrigin;
 
@@ -63,82 +65,43 @@ pub fn sync_tracks_to_visuals(
         });
 
     for (track_entity, track, tracker, quality, classification) in &fusion_tracks {
-        let (lat, lon, alt_m) = tracker.position_geodetic();
-        let filter_alt_ft = (alt_m / 0.3048) as i32;
-
-        let vel_ecef = tracker.velocity_ecef();
-        let speed_mps = (vel_ecef[0].powi(2) + vel_ecef[1].powi(2) + vel_ecef[2].powi(2)).sqrt();
-        let speed_kts = speed_mps / 0.514444;
-
-        let heading = compute_heading_from_ecef(lat, lon, &vel_ecef, speed_mps);
-
         let track_icao = track
             .cooperative_ids
             .iter()
             .find(|id| id.id_type == IdentifierType::Icao)
             .and_then(|id| adsb_client::Icao::from_hex(&id.id));
-        let raw_ac = track_icao.and_then(|icao| {
-            raw_aircraft
-                .as_ref()
-                .and_then(|map| map.get(&icao))
-        });
-        let alt_ft = raw_ac
-            .and_then(|ac| ac.altitude)
-            .unwrap_or(filter_alt_ft);
-        let vrate = raw_ac
-            .and_then(|ac| ac.vertical_rate)
-            .or_else(|| compute_vertical_rate(&vel_ecef, lat, lon));
-        let is_coasting = quality.status == TrackStatus::Coasting;
-
-        // During coasting, the raw ADS-B heading and speed are stale (from before the
-        // signal gap). Use the filter's predicted values instead, which propagate forward
-        // each frame via predict().
-        let heading = if is_coasting {
-            heading
-        } else {
-            raw_ac.and_then(|ac| ac.track).or(heading)
-        };
-        let speed_kts = if is_coasting {
-            speed_kts
-        } else {
-            raw_ac.and_then(|ac| ac.velocity).unwrap_or(speed_kts)
-        };
-
-        // During coasting, prefer the filter's predicted position (which propagates forward
-        // each frame) over the stale raw position to show smooth dead reckoning. When
-        // confirmed, raw data takes priority as it is the freshest observed position.
-        let lat = if is_coasting {
-            lat
-        } else {
-            raw_ac.and_then(|ac| ac.latitude).unwrap_or(lat)
-        };
-        let lon = if is_coasting {
-            lon
-        } else {
-            raw_ac.and_then(|ac| ac.longitude).unwrap_or(lon)
-        };
-        let squawk = raw_ac.and_then(|ac| ac.squawk.clone());
-        let is_on_ground = raw_ac
-            .and_then(|ac| ac.is_on_ground)
-            .or(Some(track.is_on_ground));
-        let alert = raw_ac.and_then(|ac| ac.alert);
-        let emergency = raw_ac.and_then(|ac| ac.emergency);
-        let spi = raw_ac.and_then(|ac| ac.spi);
-        let roll_angle = raw_ac.and_then(|ac| ac.roll_angle.map(|v| v as f32));
-        let track_angle_rate = raw_ac.and_then(|ac| ac.track_angle_rate.map(|v| v as f32));
+        let raw_ac = track_icao
+            .and_then(|icao| raw_aircraft.as_ref().and_then(|map| map.get(&icao)));
         let position_source = track_icao
             .and_then(|icao| enrichment_mgr.as_ref().and_then(|mgr| mgr.lookup(icao)))
             .map(|info| info.source);
 
-        // Design-b projection boundary: write the serializable `DisplayTrack`
-        // onto the fusion track entity from the same merged values used below.
-        // The `Aircraft` writes are left untouched during this step; readers
-        // migrate to `DisplayTrack` (and the inline derivation here is removed)
-        // in a follow-up. `h_uncertainty_m`/`predicting` are filled by the
-        // uncertainty and interpolation systems in later tasks.
-        commands
-            .entity(track_entity)
-            .insert(derive_display_track(track, tracker, quality, raw_ac, position_source));
+        // Single source of truth: derive the render-ready DisplayTrack once. The
+        // prefer-raw/prefer-filter merge + ECEF->geodetic derivation live in
+        // airjedi_fusion::derive_display_track (reachable from headless tests);
+        // the raw ADS-B overrides cross into it via a sensor-agnostic hint. The
+        // visual `Aircraft` written below is a client-side view built from this
+        // same `dt`; the serializable DisplayTrack is stored on the track entity
+        // as the projection boundary.
+        let hint = raw_ac.map(|ac| RawObservationHint {
+            altitude_ft: ac.altitude,
+            vertical_rate: ac.vertical_rate,
+            track_deg: ac.track,
+            velocity_kts: ac.velocity,
+            latitude: ac.latitude,
+            longitude: ac.longitude,
+            squawk: ac.squawk.clone(),
+            is_on_ground: ac.is_on_ground,
+            alert: ac.alert,
+            emergency: ac.emergency,
+            spi: ac.spi,
+            roll_angle: ac.roll_angle.map(|v| v as f32),
+            track_angle_rate: ac.track_angle_rate.map(|v| v as f32),
+            callsign: ac.callsign.clone(),
+        });
+        let dt = derive_display_track(track, tracker, quality, hint.as_ref(), position_source);
+        let is_coasting = dt.status == TrackStatus::Coasting;
+        commands.entity(track_entity).insert(dt.clone());
 
         let existing_visual = visual_lookup
             .iter()
@@ -152,27 +115,27 @@ pub fn sync_tracks_to_visuals(
 
         if let Some((visual_entity, _)) = existing_visual {
             if let Ok((_, mut aircraft, interp_opt, diag_opt)) = visuals.get_mut(visual_entity) {
-                let position_changed = (lat - aircraft.latitude).abs() > f64::EPSILON
-                    || (lon - aircraft.longitude).abs() > f64::EPSILON;
+                let position_changed = (dt.latitude - aircraft.latitude).abs() > f64::EPSILON
+                    || (dt.longitude - aircraft.longitude).abs() > f64::EPSILON;
 
-                aircraft.latitude = lat;
-                aircraft.longitude = lon;
-                aircraft.altitude = Some(alt_ft);
-                aircraft.heading = heading.map(|h| h as f32);
-                aircraft.velocity = Some(speed_kts);
-                aircraft.vertical_rate = vrate;
-                aircraft.is_on_ground = is_on_ground;
-                aircraft.alert = alert;
-                aircraft.emergency = emergency;
-                aircraft.spi = spi;
-                aircraft.roll_angle = roll_angle;
-                aircraft.track_angle_rate = track_angle_rate;
-                if roll_angle.is_some() || track_angle_rate.is_some() {
-                    aircraft.roll_last_seen = Some(track.last_update);
+                aircraft.latitude = dt.latitude;
+                aircraft.longitude = dt.longitude;
+                aircraft.altitude = dt.altitude_ft;
+                aircraft.heading = dt.heading;
+                aircraft.velocity = dt.velocity_kts;
+                aircraft.vertical_rate = dt.vertical_rate;
+                aircraft.is_on_ground = dt.is_on_ground;
+                aircraft.alert = dt.alert;
+                aircraft.emergency = dt.emergency;
+                aircraft.spi = dt.spi;
+                aircraft.roll_angle = dt.roll_angle;
+                aircraft.track_angle_rate = dt.track_angle_rate;
+                if dt.roll_angle.is_some() || dt.track_angle_rate.is_some() {
+                    aircraft.roll_last_seen = Some(dt.last_seen);
                 }
-                aircraft.last_seen = track.last_update;
-                if squawk.is_some() {
-                    aircraft.squawk = squawk.clone();
+                aircraft.last_seen = dt.last_seen;
+                if dt.squawk.is_some() {
+                    aircraft.squawk = dt.squawk.clone();
                 }
 
                 if let Some(ac) = raw_ac {
@@ -198,12 +161,12 @@ pub fn sync_tracks_to_visuals(
                     if let Some(mut interp) = interp_opt {
                         crate::aircraft::interpolation::update_interpolation_on_adsb(
                             &mut interp,
-                            lat,
-                            lon,
-                            Some(alt_ft),
-                            heading.map(|h| h as f32),
-                            Some(speed_kts),
-                            vrate,
+                            dt.latitude,
+                            dt.longitude,
+                            dt.altitude_ft,
+                            dt.heading,
+                            dt.velocity_kts,
+                            dt.vertical_rate,
                             None,
                             clock.elapsed_secs_f64(),
                         );
@@ -248,7 +211,7 @@ pub fn sync_tracks_to_visuals(
             let aircraft_name = display_name;
 
             let converter = geo::CoordinateConverter::new(&local_origin);
-            let pos = converter.latlon_to_world(lat, lon);
+            let pos = converter.latlon_to_world(dt.latitude, dt.longitude);
 
             let mut entity_commands = commands.spawn((
                 Name::new(format!("Aircraft: {}", aircraft_name)),
@@ -258,21 +221,25 @@ pub fn sync_tracks_to_visuals(
                 Aircraft {
                     icao: icao.clone(),
                     callsign: callsign.clone(),
-                    latitude: lat,
-                    longitude: lon,
-                    altitude: Some(alt_ft),
-                    heading: heading.map(|h| h as f32),
-                    velocity: Some(speed_kts),
-                    vertical_rate: vrate,
-                    roll_angle,
-                    track_angle_rate,
-                    roll_last_seen: if roll_angle.is_some() || track_angle_rate.is_some() { Some(track.last_update) } else { None },
-                    squawk,
-                    is_on_ground,
-                    alert,
-                    emergency,
-                    spi,
-                    last_seen: track.last_update,
+                    latitude: dt.latitude,
+                    longitude: dt.longitude,
+                    altitude: dt.altitude_ft,
+                    heading: dt.heading,
+                    velocity: dt.velocity_kts,
+                    vertical_rate: dt.vertical_rate,
+                    roll_angle: dt.roll_angle,
+                    track_angle_rate: dt.track_angle_rate,
+                    roll_last_seen: if dt.roll_angle.is_some() || dt.track_angle_rate.is_some() {
+                        Some(dt.last_seen)
+                    } else {
+                        None
+                    },
+                    squawk: dt.squawk.clone(),
+                    is_on_ground: dt.is_on_ground,
+                    alert: dt.alert,
+                    emergency: dt.emergency,
+                    spi: dt.spi,
+                    last_seen: dt.last_seen,
                 },
                 FusionTrackLink {
                     track_entity,
@@ -281,12 +248,12 @@ pub fn sync_tracks_to_visuals(
                 make_diagnostics(tracker, quality, position_source),
                 TrailHistory::default(),
                 InterpolationState::new(
-                    lat,
-                    lon,
-                    Some(alt_ft),
-                    heading.map(|h| h as f32),
-                    Some(speed_kts),
-                    vrate,
+                    dt.latitude,
+                    dt.longitude,
+                    dt.altitude_ft,
+                    dt.heading,
+                    dt.velocity_kts,
+                    dt.vertical_rate,
                     None,
                     clock.elapsed_secs_f64(),
                 ),
@@ -298,17 +265,6 @@ pub fn sync_tracks_to_visuals(
                 .observe(on_aircraft_click)
                 .observe(on_aircraft_hover)
                 .observe(on_aircraft_out);
-        }
-    }
-}
-
-fn filter_type_label(tracker: &TrackerState) -> &'static str {
-    if tracker.mode_info().is_some() {
-        "IMM"
-    } else {
-        match tracker.state_type {
-            airjedi_fusion::StateVectorType::Surface4Dof => "Surface",
-            _ => "EKF",
         }
     }
 }
@@ -346,158 +302,6 @@ fn update_diagnostics(
     }
 }
 
-/// Derive the render-ready [`DisplayTrack`] for a fusion track from the same
-/// prefer-raw/prefer-filter merge policy and ECEF->geodetic derivation that
-/// `sync_tracks_to_visuals` applies to `Aircraft`. This is the single source of
-/// the merge truth for the serializable projection boundary.
-///
-/// `h_uncertainty_m` and `predicting` are left `None`/`false` here - the
-/// uncertainty and interpolation systems own those fields in later tasks.
-fn derive_display_track(
-    track: &Track,
-    tracker: &TrackerState,
-    quality: &TrackQuality,
-    raw_ac: Option<&adsb_client::Aircraft>,
-    position_source: Option<PositionSource>,
-) -> DisplayTrack {
-    let (lat, lon, alt_m) = tracker.position_geodetic();
-    let filter_alt_ft = (alt_m / 0.3048) as i32;
-
-    let vel_ecef = tracker.velocity_ecef();
-    let speed_mps = (vel_ecef[0].powi(2) + vel_ecef[1].powi(2) + vel_ecef[2].powi(2)).sqrt();
-    let speed_kts = speed_mps / 0.514444;
-
-    // Matches `interpolate_display_positions`: `predicting` is driven by the
-    // filter's own speed, captured before the raw-vs-filter merge below.
-    let predicting = speed_kts > crate::aircraft::interpolation::MIN_PREDICTION_SPEED_KTS;
-
-    let heading = compute_heading_from_ecef(lat, lon, &vel_ecef, speed_mps);
-
-    let alt_ft = raw_ac.and_then(|ac| ac.altitude).unwrap_or(filter_alt_ft);
-    let vrate = raw_ac
-        .and_then(|ac| ac.vertical_rate)
-        .or_else(|| compute_vertical_rate(&vel_ecef, lat, lon));
-
-    let is_coasting = quality.status == TrackStatus::Coasting;
-
-    // During coasting the raw ADS-B values are stale (pre-gap); prefer the
-    // filter's forward-propagated estimate. When confirmed, the freshest raw
-    // observation wins.
-    let heading = if is_coasting {
-        heading
-    } else {
-        raw_ac.and_then(|ac| ac.track).or(heading)
-    };
-    let speed_kts = if is_coasting {
-        speed_kts
-    } else {
-        raw_ac.and_then(|ac| ac.velocity).unwrap_or(speed_kts)
-    };
-    let lat = if is_coasting {
-        lat
-    } else {
-        raw_ac.and_then(|ac| ac.latitude).unwrap_or(lat)
-    };
-    let lon = if is_coasting {
-        lon
-    } else {
-        raw_ac.and_then(|ac| ac.longitude).unwrap_or(lon)
-    };
-
-    let squawk = raw_ac.and_then(|ac| ac.squawk.clone());
-    let is_on_ground = raw_ac
-        .and_then(|ac| ac.is_on_ground)
-        .or(Some(track.is_on_ground));
-    let alert = raw_ac.and_then(|ac| ac.alert);
-    let emergency = raw_ac.and_then(|ac| ac.emergency);
-    let spi = raw_ac.and_then(|ac| ac.spi);
-    let roll_angle = raw_ac.and_then(|ac| ac.roll_angle.map(|v| v as f32));
-    let track_angle_rate = raw_ac.and_then(|ac| ac.track_angle_rate.map(|v| v as f32));
-
-    let icao = track
-        .cooperative_ids
-        .iter()
-        .find(|id| id.id_type == IdentifierType::Icao)
-        .map(|id| id.id.clone())
-        .unwrap_or_else(|| format!("TRK-{}", &track.id.0.to_string()[..8]));
-
-    let callsign = raw_ac
-        .and_then(|ac| ac.callsign.clone())
-        .filter(|s| !s.trim().is_empty())
-        .or_else(|| {
-            track
-                .cooperative_ids
-                .iter()
-                .find(|id| id.id_type == IdentifierType::Callsign)
-                .map(|id| id.id.clone())
-        });
-
-    let mode = tracker.mode_info();
-
-    DisplayTrack {
-        track_id: track.id.clone(),
-        icao,
-        callsign,
-        latitude: lat,
-        longitude: lon,
-        altitude_ft: Some(alt_ft),
-        heading: heading.map(|h| h as f32),
-        velocity_kts: Some(speed_kts),
-        vertical_rate: vrate,
-        roll_angle,
-        track_angle_rate,
-        squawk,
-        is_on_ground,
-        alert,
-        emergency,
-        spi,
-        last_seen: track.last_update,
-        status: quality.status,
-        position_source,
-        h_uncertainty_m: horizontal_uncertainty_m(tracker),
-        predicting,
-        filter_type: filter_type_label(tracker).to_string(),
-        mode_probabilities: mode.as_ref().map(|m| m.probabilities.clone()),
-        dominant_mode: mode.as_ref().map(|m| m.dominant_mode),
-        observation_count: quality.observation_count,
-    }
-}
-
-/// 1-sigma horizontal position uncertainty in meters, reduced from the filter's
-/// ECEF covariance to the local ENU frame. Mirrors `uncertainty_viz`'s scalar
-/// reduction so `DisplayTrack.h_uncertainty_m` carries it across the boundary;
-/// the ellipse drawer will read this field instead of recomputing (cutover
-/// follows). Returns `None` when the covariance has no position block.
-fn horizontal_uncertainty_m(tracker: &TrackerState) -> Option<f64> {
-    let cov = tracker.variant.covariance_mat();
-    if cov.nrows() < 3 {
-        return None;
-    }
-
-    let (lat, lon, _) = tracker.position_geodetic();
-    let lat_rad = lat.to_radians();
-    let lon_rad = lon.to_radians();
-
-    let sin_lat = lat_rad.sin();
-    let cos_lat = lat_rad.cos();
-    let sin_lon = lon_rad.sin();
-    let cos_lon = lon_rad.cos();
-
-    let pos_cov = cov.view((0, 0), (3, 3));
-
-    let var_east = sin_lon * sin_lon * pos_cov[(0, 0)] + cos_lon * cos_lon * pos_cov[(1, 1)]
-        - 2.0 * sin_lon * cos_lon * pos_cov[(0, 1)];
-
-    let var_north = (sin_lat * cos_lon).powi(2) * pos_cov[(0, 0)]
-        + (sin_lat * sin_lon).powi(2) * pos_cov[(1, 1)]
-        + cos_lat.powi(2) * pos_cov[(2, 2)]
-        + 2.0 * sin_lat.powi(2) * sin_lon * cos_lon * pos_cov[(0, 1)]
-        - 2.0 * sin_lat * cos_lat * cos_lon * pos_cov[(0, 2)]
-        - 2.0 * sin_lat * cos_lat * sin_lon * pos_cov[(1, 2)];
-
-    Some((var_east.abs() + var_north.abs()).sqrt())
-}
-
 fn is_air_target(category: TargetCategory) -> bool {
     matches!(
         category,
@@ -507,54 +311,6 @@ fn is_air_target(category: TargetCategory) -> bool {
             | TargetCategory::Balloon
             | TargetCategory::Unknown
     )
-}
-
-fn compute_heading_from_ecef(
-    lat_deg: f64,
-    lon_deg: f64,
-    vel_ecef: &[f64; 3],
-    speed_mps: f64,
-) -> Option<f64> {
-    if speed_mps < 1.0 {
-        return None;
-    }
-
-    let lat_rad = lat_deg.to_radians();
-    let lon_rad = lon_deg.to_radians();
-
-    let sin_lat = lat_rad.sin();
-    let cos_lat = lat_rad.cos();
-    let sin_lon = lon_rad.sin();
-    let cos_lon = lon_rad.cos();
-
-    // ECEF to ENU rotation
-    let ve = -sin_lon * vel_ecef[0] + cos_lon * vel_ecef[1];
-    let vn =
-        -sin_lat * cos_lon * vel_ecef[0] - sin_lat * sin_lon * vel_ecef[1] + cos_lat * vel_ecef[2];
-
-    let heading = ve.atan2(vn).to_degrees();
-    Some(((heading % 360.0) + 360.0) % 360.0)
-}
-
-fn compute_vertical_rate(vel_ecef: &[f64; 3], lat_deg: f64, lon_deg: f64) -> Option<i32> {
-    let lat_rad = lat_deg.to_radians();
-    let lon_rad = lon_deg.to_radians();
-
-    let sin_lat = lat_rad.sin();
-    let cos_lat = lat_rad.cos();
-    let sin_lon = lon_rad.sin();
-    let cos_lon = lon_rad.cos();
-
-    let vu = cos_lat * cos_lon * vel_ecef[0]
-        + cos_lat * sin_lon * vel_ecef[1]
-        + sin_lat * vel_ecef[2];
-
-    let vr_fpm = vu / 0.00508;
-    if vr_fpm.abs() > 0.1 {
-        Some(vr_fpm as i32)
-    } else {
-        None
-    }
 }
 
 /// Refresh visual aircraft last_seen directly from the feed tracker data.

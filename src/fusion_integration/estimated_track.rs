@@ -1,6 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 
-use airjedi_core::DisplayEstimate;
+use airjedi_core::{DisplayEstimate, DisplayTrack};
 use airjedi_fusion::nalgebra::DMatrix;
 use airjedi_fusion::{ModeInfo, TrackQuality, TrackStatus, TrackerState};
 use bevy::prelude::*;
@@ -202,26 +202,26 @@ fn mode_weighted_turn_rate(
 
 /// Compute prediction center-line color from IMM mode probability.
 /// Mode 0 = CV (straight flight) -> blue-teal; Mode 1 = high maneuver -> amber
-fn prediction_center_color(mode_info: Option<&ModeInfo>, alpha: f32) -> Color {
-    let maneuver_prob = mode_info
-        .and_then(|m| m.probabilities.get(1).copied())
-        .unwrap_or(0.0) as f32;
-
+fn prediction_center_color(maneuver_prob: f32, alpha: f32) -> Color {
     let r = 0.0_f32 * (1.0 - maneuver_prob) + 1.0 * maneuver_prob;
     let g = 0.85_f32 * (1.0 - maneuver_prob) + 0.65 * maneuver_prob;
     let b = 1.0_f32 * (1.0 - maneuver_prob) + 0.0 * maneuver_prob;
     Color::srgba(r, g, b, alpha)
 }
 
-fn prediction_boundary_color(mode_info: Option<&ModeInfo>, alpha: f32) -> Color {
-    let maneuver_prob = mode_info
-        .and_then(|m| m.probabilities.get(1).copied())
-        .unwrap_or(0.0) as f32;
-
+fn prediction_boundary_color(maneuver_prob: f32, alpha: f32) -> Color {
     let r = 0.3_f32 * (1.0 - maneuver_prob) + 1.0 * maneuver_prob;
     let g = 0.7_f32 * (1.0 - maneuver_prob) + 0.55 * maneuver_prob;
     let b = 1.0_f32 * (1.0 - maneuver_prob) + 0.1 * maneuver_prob;
     Color::srgba(r, g, b, alpha)
+}
+
+/// Maneuver probability (IMM mode 1) as a 0..1 scalar, for the straight-line
+/// all-aircraft predictions that still read the filter directly.
+fn maneuver_prob_of(mode_info: Option<&ModeInfo>) -> f32 {
+    mode_info
+        .and_then(|m| m.probabilities.get(1).copied())
+        .unwrap_or(0.0) as f32
 }
 
 /// Return a clone of `tracker` with its position overridden to match the aircraft's visual
@@ -418,8 +418,7 @@ pub fn draw_estimated_track_cones(
     list_state: Res<AircraftListState>,
     follow_state: Res<CameraFollowState>,
     local_origin: Res<LocalOrigin>,
-    heading_history: Res<HeadingHistory>,
-    fusion_tracks: Query<(&TrackerState, &TrackQuality)>,
+    tracks: Query<(&DisplayEstimate, &DisplayTrack)>,
     visuals: Query<(&FusionTrackLink, &Aircraft, Option<&InterpolationState>)>,
 ) {
     if !config.enabled {
@@ -439,49 +438,23 @@ pub fn draw_estimated_track_cones(
     else {
         return;
     };
-    let (vis_lat, vis_lon, vis_heading) =
+    let (vis_lat, vis_lon, _vis_heading) =
         visual_position(aircraft, interp, app_config.interpolation_enabled);
 
-    let Ok((tracker, quality)) = fusion_tracks.get(link.track_entity) else {
+    // The forward prediction (snap-to-visual, staleness damping, IMM turn-rate
+    // weighting, filter propagation) runs agent-side in `sync_display_estimate`;
+    // here we only draw the resulting samples. An empty estimate means the track
+    // was below the cone speed threshold - nothing to draw.
+    let Ok((estimate, track)) = tracks.get(link.track_entity) else {
         return;
     };
-
-    let vel = tracker.velocity_ecef();
-    let speed_mps = (vel[0].powi(2) + vel[1].powi(2) + vel[2].powi(2)).sqrt();
-    let speed_kts = speed_mps / 0.514444;
-    if speed_kts < config.min_speed_kts {
+    if estimate.samples.is_empty() {
         return;
     }
 
-    // Scale prediction confidence based on observation staleness.
-    // Fresh data (<2s): full turn rate. Coasting or stale (>10s): strongly damped toward
-    // straight-line prediction since we have no evidence the current maneuver continues.
-    let staleness_secs = quality.staleness.as_secs_f64();
-    let staleness_damping = (-staleness_secs / 8.0).exp();  // 1.0 at 0s, 0.29 at 10s, 0.08 at 20s
-    let is_coasting = matches!(quality.status, TrackStatus::Coasting);
-
-    let raw_turn_rate = heading_history
-        .smoothed_turn_rates
-        .get(&link.track_entity)
-        .copied()
-        .unwrap_or(0.0);
-    let turn_rate = raw_turn_rate * staleness_damping;
-
-    let mode_info = tracker.mode_info();
+    let is_coasting = track.status == TrackStatus::Coasting;
+    let maneuver_prob = estimate.maneuver_prob;
     let converter = CoordinateConverter::new(&local_origin);
-
-    // Snap the tracker's initial position to the aircraft's visual (raw ADS-B) position while
-    // keeping the filter's velocity and covariance intact. This eliminates the gap between
-    // the aircraft icon and the cone's starting point caused by filter-vs-raw position offsets.
-    // During coasting, aircraft.heading is stale (from before the gap) so let the filter's
-    // own predicted velocity determine the direction.
-    let snap_heading = if is_coasting { None } else { vis_heading };
-    let aligned_tracker = snap_tracker_to_visual(tracker, vis_lat, vis_lon, snap_heading);
-
-    let samples = sample_predicted_track(&aligned_tracker, &config, turn_rate, mode_info.as_ref());
-    if samples.is_empty() {
-        return;
-    }
 
     let aircraft_pos = converter.latlon_to_world(vis_lat, vis_lon);
 
@@ -493,7 +466,8 @@ pub fn draw_estimated_track_cones(
     let sample_dt = config.horizon_seconds / config.sample_count as f32;
     let mark_tolerance = sample_dt * 0.6;
 
-    for (i, sample) in samples.iter().enumerate() {
+    let sample_count = estimate.samples.len();
+    for (i, sample) in estimate.samples.iter().enumerate() {
         let t_frac = sample.time_ahead / config.horizon_seconds;
         // Quadratic fade: stays bright longer, then falls off toward the end
         let alpha_fade = (1.0 - t_frac * t_frac * 0.7).max(0.1);
@@ -501,7 +475,7 @@ pub fn draw_estimated_track_cones(
         let sample_pos = converter.latlon_to_world(sample.lat, sample.lon);
         let radius_world = sample.h_uncertainty_m as f32;
 
-        let heading_rad = sample.heading_deg.to_radians();
+        let heading_rad = (sample.heading_deg as f64).to_radians();
         let heading_dir = Vec2::new(heading_rad.sin() as f32, heading_rad.cos() as f32);
 
         if heading_dir == Vec2::ZERO {
@@ -519,17 +493,17 @@ pub fn draw_estimated_track_cones(
         let center_color = if is_coasting {
             Color::srgba(1.0, 0.55, 0.1, confidence_alpha * alpha_fade)
         } else {
-            prediction_center_color(mode_info.as_ref(), confidence_alpha * alpha_fade)
+            prediction_center_color(maneuver_prob, confidence_alpha * alpha_fade)
         };
         let boundary_color = if is_coasting {
             Color::srgba(1.0, 0.4, 0.1, 0.35 * alpha_fade)
         } else {
-            prediction_boundary_color(mode_info.as_ref(), 0.45 * alpha_fade)
+            prediction_boundary_color(maneuver_prob, 0.45 * alpha_fade)
         };
         let crossbar_color = if is_coasting {
             Color::srgba(1.0, 0.4, 0.1, 0.1 * alpha_fade)
         } else {
-            prediction_boundary_color(mode_info.as_ref(), 0.12 * alpha_fade)
+            prediction_boundary_color(maneuver_prob, 0.12 * alpha_fade)
         };
 
         gizmos.line_2d(prev_center, sample_pos, center_color);
@@ -552,8 +526,8 @@ pub fn draw_estimated_track_cones(
         }
 
         // Terminal endpoint circle at the end of the prediction horizon
-        if i == samples.len() - 1 {
-            let endpoint_color = prediction_center_color(mode_info.as_ref(), 0.55);
+        if i == sample_count - 1 {
+            let endpoint_color = prediction_center_color(maneuver_prob, 0.55);
             let endpoint_radius = radius_world.max(200.0);
             gizmos.circle_2d(sample_pos, endpoint_radius, endpoint_color);
         }
@@ -735,7 +709,7 @@ pub fn draw_all_aircraft_predictions(
         let end_pos = converter.latlon_to_world(end_lat, end_lon);
 
         let mode_info = tracker.mode_info();
-        let line_color = prediction_center_color(mode_info.as_ref(), 0.22);
+        let line_color = prediction_center_color(maneuver_prob_of(mode_info.as_ref()), 0.22);
         gizmos.line_2d(start_pos, end_pos, line_color);
     }
 }

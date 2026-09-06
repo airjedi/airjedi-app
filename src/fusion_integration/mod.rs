@@ -51,7 +51,7 @@ impl Plugin for FusionIntegrationPlugin {
                     estimated_track::update_heading_history
                         .after(render_bridge::sync_tracks_to_visuals),
                     estimated_track::draw_estimated_track_cones
-                        .after(estimated_track::update_heading_history)
+                        .after(estimated_track::sync_display_estimate)
                         .after(crate::aircraft::interpolation::interpolate_aircraft_positions)
                         .after(crate::ZoomSet::Change),
                     estimated_track::draw_all_aircraft_predictions
@@ -66,10 +66,10 @@ impl Plugin for FusionIntegrationPlugin {
                     landing_detection::cleanup_landed_aircraft
                         .after(landing_detection::detect_landings),
                     multi_sensor_debug::draw_multi_sensor_sources
-                        .after(render_bridge::sync_tracks_to_visuals)
+                        .after(multi_sensor_debug::sync_sensor_contributions)
                         .after(crate::ZoomSet::Change),
-                    // Agent-side projection writers (populate serializable
-                    // display components; readers migrate onto them later).
+                    // Agent-side projection writers (drawers above read the
+                    // display components these populate).
                     multi_sensor_debug::sync_sensor_contributions
                         .after(render_bridge::sync_tracks_to_visuals),
                     estimated_track::sync_display_estimate

@@ -101,7 +101,7 @@ pub fn draw_multi_sensor_sources(
     list_state: Res<AircraftListState>,
     follow_state: Res<CameraFollowState>,
     local_origin: Res<LocalOrigin>,
-    timeline_store: Res<TimelineStore>,
+    contributions: Query<&SensorContributions>,
     visuals: Query<(&FusionTrackLink, &Aircraft)>,
 ) {
     if !config.enabled {
@@ -124,25 +124,21 @@ pub fn draw_multi_sensor_sources(
             continue;
         }
 
-        let sources = timeline_store.latest_per_sensor(&link.track_id);
+        let Ok(contrib) = contributions.get(link.track_entity) else {
+            continue;
+        };
         // A single contributing sensor has nothing to disagree with - skip it
         // rather than drawing a redundant marker on top of the aircraft icon.
-        if sources.len() < 2 {
+        if contrib.sources.len() < 2 {
             continue;
         }
 
         let fused_pos = converter.latlon_to_world(aircraft.latitude, aircraft.longitude);
 
-        let mut sensor_ids: Vec<&String> = sources.keys().collect();
-        sensor_ids.sort();
-
-        for sensor_id in sensor_ids {
-            let stored = sources[sensor_id];
-            let Some((lat, lon)) = observation_lat_lon(&stored.observation) else {
-                continue;
-            };
-            let pos = converter.latlon_to_world(lat, lon);
-            let color = sensor_color(sensor_id, 0.85);
+        // `sources` is already sorted by sensor id in the writer.
+        for report in &contrib.sources {
+            let pos = converter.latlon_to_world(report.lat, report.lon);
+            let color = sensor_color(&report.sensor_id, 0.85);
 
             gizmos.circle_2d(pos, 30.0, color);
             gizmos.line_2d(pos, fused_pos, color.with_alpha(0.35));

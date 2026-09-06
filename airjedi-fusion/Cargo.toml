@@ -50,6 +50,7 @@ futures = { version = "0.3", optional = true }
 
 [dev-dependencies]
 approx = "0.5"
+insta = "1"
 # Test-only: the correlated-MLAT fusion test decodes the real BEAST fixture and
 # reads the correlated readsb NDJSON. adsb-client is a dev-dep only - the fusion
 # engine has no runtime dependency on ADS-B decoding.
