@@ -19,23 +19,33 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use bevy::prelude::*;
-use bevy_replicon::prelude::{RepliconChannels, RepliconPlugins};
-use bevy_replicon_renet::RepliconRenetPlugins;
+use bevy_replicon::prelude::{ClientState, RepliconChannels, RepliconPlugins};
+use bevy_replicon_renet::{netcode::NetcodeClientTransport, RenetClient, RepliconRenetPlugins};
 
-use airjedi_core::DisplayTrack;
+use airjedi_core::{DisplayEstimate, DisplayTrack, SensorContributions, TrackStatus};
 use airjedi_net::{create_client, register_replicated, DEFAULT_PORT};
 
 use crate::adsb::sync::AircraftModelRegistry;
 use crate::aircraft::interpolation::update_interpolation_on_adsb;
-use crate::aircraft::{AircraftTypeDatabase, InterpolationState, TrailHistory};
 use crate::aircraft::picking::{on_aircraft_click, on_aircraft_hover, on_aircraft_out};
+use crate::aircraft::{
+    AircraftListState, AircraftTypeDatabase, CameraFollowState, InterpolationState, TrailHistory,
+};
+use crate::config::AppConfig;
+use crate::fusion_integration::estimated_track::EstimatedTrackConfig;
+use crate::fusion_integration::multi_sensor_debug::{sensor_color, MultiSensorDebugConfig};
 use crate::geo::CoordinateConverter;
+use crate::statusbar::ThinClientStatus;
 use crate::tiles::LocalOrigin;
 use crate::Aircraft;
 
 /// The resolved agent address the client connects to.
 #[derive(Resource, Clone, Copy)]
 struct ThinAgentAddr(SocketAddr);
+
+/// Throttles reconnect attempts while the client is disconnected.
+#[derive(Resource)]
+struct ReconnectBackoff(Timer);
 
 /// Registers the replication client and the `DisplayTrack` -> visual hydrator.
 pub struct ThinClientPlugin {
@@ -60,9 +70,35 @@ impl Plugin for ThinClientPlugin {
 
         app.add_plugins((RepliconPlugins, RepliconRenetPlugins));
         register_replicated(app);
+
+        // Overlay configs the fat FusionIntegrationPlugin would normally provide.
+        app.insert_resource(EstimatedTrackConfig::default())
+            .register_type::<EstimatedTrackConfig>()
+            .insert_resource(MultiSensorDebugConfig::default())
+            .register_type::<MultiSensorDebugConfig>();
+
         app.insert_resource(ThinAgentAddr(addr))
+            .insert_resource(ThinClientStatus::default())
+            .insert_resource(ReconnectBackoff(Timer::from_seconds(
+                2.0,
+                TimerMode::Repeating,
+            )))
             .add_systems(Startup, connect_to_agent)
-            .add_systems(Update, (hydrate_new_tracks, update_hydrated_tracks).chain());
+            .add_systems(
+                Update,
+                (
+                    manage_connection,
+                    update_thin_status,
+                    hydrate_new_tracks,
+                    update_hydrated_tracks,
+                )
+                    .chain(),
+            )
+            .add_systems(
+                Update,
+                (draw_estimated_cones, draw_sensor_contributions)
+                    .after(crate::aircraft::interpolation::interpolate_aircraft_positions),
+            );
     }
 }
 
@@ -105,6 +141,63 @@ fn connect_to_agent(
         }
         Err(e) => error!("thin client failed to connect to {}: {e}", addr.0),
     }
+}
+
+/// Re-dial the agent when the connection drops. Two steps, because replicon only
+/// registers a *fresh* client connection (netcode tokens are single-use):
+///  1. On disconnect, tear down the stale `RenetClient` + transport.
+///  2. Once absent, mint a new client + transport after a backoff interval.
+fn manage_connection(
+    client: Option<Res<RenetClient>>,
+    state: Res<State<ClientState>>,
+    time: Res<Time>,
+    mut backoff: ResMut<ReconnectBackoff>,
+    channels: Res<RepliconChannels>,
+    addr: Res<ThinAgentAddr>,
+    stale: Query<Entity, With<DisplayTrack>>,
+    mut commands: Commands,
+) {
+    // Step 1: disconnected but the stale client is still present - remove it so
+    // the next insert reads as a brand-new connection, and despawn the now-stale
+    // replicated aircraft so a reconnect repopulates cleanly instead of doubling.
+    if *state.get() == ClientState::Disconnected && client.is_some() {
+        commands.remove_resource::<RenetClient>();
+        commands.remove_resource::<NetcodeClientTransport>();
+        for entity in &stale {
+            commands.entity(entity).despawn();
+        }
+        return;
+    }
+
+    // Connecting or connected: keep the backoff primed for the next drop.
+    if client.is_some() {
+        backoff.0.reset();
+        return;
+    }
+
+    // Step 2: no client - (re)connect once the backoff elapses.
+    backoff.0.tick(time.delta());
+    if !backoff.0.just_finished() {
+        return;
+    }
+    match create_client(&channels, addr.0) {
+        Ok((client, transport)) => {
+            commands.insert_resource(client);
+            commands.insert_resource(transport);
+            info!("thin client reconnecting to agent at {}", addr.0);
+        }
+        Err(e) => warn!("thin client reconnect failed: {e}"),
+    }
+}
+
+/// Publish agent-connection status + replicated aircraft count for the status bar.
+fn update_thin_status(
+    state: Res<State<ClientState>>,
+    aircraft: Query<(), With<Aircraft>>,
+    mut status: ResMut<ThinClientStatus>,
+) {
+    status.connected = *state.get() == ClientState::Connected;
+    status.aircraft = aircraft.iter().count();
 }
 
 /// Build the app's `Aircraft` view from a replicated `DisplayTrack`.
@@ -241,6 +334,163 @@ fn update_hydrated_tracks(
                     now,
                 );
             }
+        }
+    }
+}
+
+// --- thin-mode overlay drawers (replicated DisplayEstimate / SensorContributions) ---
+//
+// These mirror the fat FusionIntegrationPlugin drawers, but read the replicated
+// components straight off the aircraft entity (thin mode puts DisplayTrack,
+// DisplayEstimate, SensorContributions, and Aircraft all on one entity - no
+// FusionTrackLink join). The forward sampling and per-sensor collection already
+// ran agent-side; the client only draws.
+
+fn cone_center_color(maneuver_prob: f32, alpha: f32) -> Color {
+    let r = maneuver_prob;
+    let g = 0.85 * (1.0 - maneuver_prob) + 0.65 * maneuver_prob;
+    let b = 1.0 * (1.0 - maneuver_prob);
+    Color::srgba(r, g, b, alpha)
+}
+
+fn cone_boundary_color(maneuver_prob: f32, alpha: f32) -> Color {
+    let r = 0.3 * (1.0 - maneuver_prob) + 1.0 * maneuver_prob;
+    let g = 0.7 * (1.0 - maneuver_prob) + 0.55 * maneuver_prob;
+    let b = 1.0 * (1.0 - maneuver_prob) + 0.1 * maneuver_prob;
+    Color::srgba(r, g, b, alpha)
+}
+
+/// Draw the forward-prediction cone for the selected/followed aircraft from its
+/// replicated `DisplayEstimate` (mirrors `draw_estimated_track_cones`).
+fn draw_estimated_cones(
+    mut gizmos: Gizmos,
+    config: Res<EstimatedTrackConfig>,
+    app_config: Res<AppConfig>,
+    list_state: Res<AircraftListState>,
+    follow_state: Res<CameraFollowState>,
+    local_origin: Res<LocalOrigin>,
+    tracks: Query<(&DisplayEstimate, &DisplayTrack, &Aircraft, Option<&InterpolationState>)>,
+) {
+    if !config.enabled {
+        return;
+    }
+    let Some(target) = follow_state
+        .following_icao
+        .as_ref()
+        .or(list_state.selected_icao.as_ref())
+    else {
+        return;
+    };
+    let Some((estimate, track, aircraft, interp)) =
+        tracks.iter().find(|(_, _, a, _)| &a.icao == target)
+    else {
+        return;
+    };
+    if estimate.samples.is_empty() {
+        return;
+    }
+
+    let (vis_lat, vis_lon) = if app_config.interpolation_enabled {
+        interp
+            .map(|i| (i.display_lat, i.display_lon))
+            .unwrap_or((aircraft.latitude, aircraft.longitude))
+    } else {
+        (aircraft.latitude, aircraft.longitude)
+    };
+
+    let is_coasting = track.status == TrackStatus::Coasting;
+    let maneuver_prob = estimate.maneuver_prob;
+    let converter = CoordinateConverter::new(&local_origin);
+    let start = converter.latlon_to_world(vis_lat, vis_lon);
+    let horizon = estimate
+        .samples
+        .last()
+        .map(|s| s.time_ahead)
+        .unwrap_or(1.0)
+        .max(1e-3);
+
+    let mut prev_center = start;
+    let mut prev_left = start;
+    let mut prev_right = start;
+    let n = estimate.samples.len();
+    for (i, s) in estimate.samples.iter().enumerate() {
+        let t_frac = s.time_ahead / horizon;
+        let alpha_fade = (1.0 - t_frac * t_frac * 0.7).max(0.1);
+        let pos = converter.latlon_to_world(s.lat, s.lon);
+        let radius = s.h_uncertainty_m as f32;
+        let hr = (s.heading_deg as f64).to_radians();
+        let dir = Vec2::new(hr.sin() as f32, hr.cos() as f32);
+        if dir == Vec2::ZERO {
+            prev_center = pos;
+            continue;
+        }
+        let perp = Vec2::new(-dir.y, dir.x);
+        let left = pos + perp * radius;
+        let right = pos - perp * radius;
+
+        let ca = if is_coasting { 0.55 } else { 0.75 };
+        let center = if is_coasting {
+            Color::srgba(1.0, 0.55, 0.1, ca * alpha_fade)
+        } else {
+            cone_center_color(maneuver_prob, ca * alpha_fade)
+        };
+        let boundary = if is_coasting {
+            Color::srgba(1.0, 0.4, 0.1, 0.35 * alpha_fade)
+        } else {
+            cone_boundary_color(maneuver_prob, 0.45 * alpha_fade)
+        };
+        let cross = cone_boundary_color(maneuver_prob, 0.12 * alpha_fade);
+
+        gizmos.line_2d(prev_center, pos, center);
+        gizmos.line_2d(prev_left, left, boundary);
+        gizmos.line_2d(prev_right, right, boundary);
+        gizmos.line_2d(left, right, cross);
+
+        if i == n - 1 {
+            gizmos.circle_2d(pos, radius.max(200.0), cone_center_color(maneuver_prob, 0.55));
+        }
+
+        prev_center = pos;
+        prev_left = left;
+        prev_right = right;
+    }
+}
+
+/// Draw per-sensor markers + lines to the fused position, for tracks with 2+
+/// contributing sensors (mirrors `draw_multi_sensor_sources`).
+fn draw_sensor_contributions(
+    mut gizmos: Gizmos,
+    config: Res<MultiSensorDebugConfig>,
+    list_state: Res<AircraftListState>,
+    follow_state: Res<CameraFollowState>,
+    local_origin: Res<LocalOrigin>,
+    tracks: Query<(&SensorContributions, &Aircraft)>,
+) {
+    if !config.enabled {
+        return;
+    }
+    let selected = follow_state
+        .following_icao
+        .as_ref()
+        .or(list_state.selected_icao.as_ref());
+    if !config.show_all_aircraft && selected.is_none() {
+        return;
+    }
+
+    let converter = CoordinateConverter::new(&local_origin);
+    for (contrib, aircraft) in &tracks {
+        if !config.show_all_aircraft && Some(&aircraft.icao) != selected {
+            continue;
+        }
+        if contrib.sources.len() < 2 {
+            continue;
+        }
+        let fused = converter.latlon_to_world(aircraft.latitude, aircraft.longitude);
+        for report in &contrib.sources {
+            let pos = converter.latlon_to_world(report.lat, report.lon);
+            let color = sensor_color(&report.sensor_id, 0.85);
+            gizmos.circle_2d(pos, 30.0, color);
+            gizmos.line_2d(pos, fused, color.with_alpha(0.35));
         }
     }
 }

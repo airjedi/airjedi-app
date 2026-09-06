@@ -45,10 +45,20 @@ const FONT_SIZE: f32 = 11.0;
 const FPS_SMOOTHING: f32 = 0.05;
 const MSG_RATE_INTERVAL_SECS: f32 = 1.0;
 
+/// Thin-client (design-b) connection status, published by `ThinClientPlugin`.
+/// When present, the status bar shows the agent link + replicated aircraft count
+/// instead of the local-feed status (thin mode runs no local feeds).
+#[derive(Resource, Default, Clone, Copy)]
+pub struct ThinClientStatus {
+    pub connected: bool,
+    pub aircraft: usize,
+}
+
 pub fn render_statusbar(
     mut contexts: EguiContexts,
     theme: Res<AppTheme>,
     feed_mgr: Option<Res<FeedConnectionManager>>,
+    thin_status: Option<Res<ThinClientStatus>>,
     stats: Res<StatsPanelState>,
     recording: Res<RecordingState>,
     map_state: Res<MapState>,
@@ -116,7 +126,11 @@ pub fn render_statusbar(
 
                 // -- Clickable feed status area --
                 let feed_section_response = render_feed_status_section(
-                    ui, &feed_mgr, &theme, msg_rate,
+                    ui,
+                    &feed_mgr,
+                    thin_status.as_deref(),
+                    &theme,
+                    msg_rate,
                 );
 
                 if feed_section_response.clicked() {
@@ -202,9 +216,33 @@ pub fn render_statusbar(
 fn render_feed_status_section(
     ui: &mut egui::Ui,
     feed_mgr: &Option<Res<FeedConnectionManager>>,
+    thin_status: Option<&ThinClientStatus>,
     theme: &AppTheme,
     msg_rate: f32,
 ) -> egui::Response {
+    // Thin-client mode: show the agent link + replicated aircraft count instead
+    // of local feeds (there are none).
+    if let Some(thin) = thin_status {
+        let primary = to_egui_color32(theme.text_primary());
+        let (dot_color, label) = if thin.connected {
+            (to_egui_color32(theme.text_success()), "Agent".to_string())
+        } else {
+            (to_egui_color32(theme.text_warn()), "Agent: reconnecting".to_string())
+        };
+        let response = ui.horizontal(|ui| {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+            ui.painter().circle_filled(rect.center(), 4.0, dot_color);
+            ui.label(egui::RichText::new(label).size(FONT_SIZE).color(dot_color));
+            ui.label(egui::RichText::new("|").size(FONT_SIZE).color(to_egui_color32(theme.text_dim())));
+            ui.label(
+                egui::RichText::new(format!("{} aircraft", thin.aircraft))
+                    .size(FONT_SIZE)
+                    .color(primary),
+            );
+        });
+        return response.response.interact(egui::Sense::click());
+    }
+
     let Some(mgr) = feed_mgr else {
         let dim = to_egui_color32(theme.text_dim());
         return ui.label(egui::RichText::new("No feeds").size(FONT_SIZE).color(dim));

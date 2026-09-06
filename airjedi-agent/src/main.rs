@@ -25,7 +25,7 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use airjedi_core::{DisplayTrack, PositionSource};
+use airjedi_core::{DisplayEstimate, DisplayTrack, PositionSource, SensorContributions};
 use airjedi_fusion::sensor::SensorKind;
 use airjedi_fusion::systems::{FusionSet, ObservationBuffer};
 use airjedi_fusion::{FusionConfig, FusionPlugin};
@@ -336,14 +336,22 @@ fn setup_probe_client(
 
 fn report_probe(app: &mut App) {
     let world = app.world_mut();
-    let mut q = world.query::<&DisplayTrack>();
-    let tracks: Vec<DisplayTrack> = q.iter(world).cloned().collect();
+
+    let mut tq = world.query::<&DisplayTrack>();
+    let tracks: Vec<DisplayTrack> = tq.iter(world).cloned().collect();
     let mlat = tracks
         .iter()
         .filter(|t| t.position_source == Some(PositionSource::Mlat))
         .count();
+
+    let mut eq = world.query::<&DisplayEstimate>();
+    let estimates_with_samples = eq.iter(world).filter(|e| !e.samples.is_empty()).count();
+
+    let mut sq = world.query::<&SensorContributions>();
+    let sensor_sources: usize = sq.iter(world).map(|c| c.sources.len()).sum();
+
     println!(
-        "[probe] received DisplayTracks: {} (mlat-tagged: {mlat})",
+        "[probe] DisplayTracks: {} (mlat {mlat}) | estimates w/ samples: {estimates_with_samples} | sensor reports: {sensor_sources}",
         tracks.len()
     );
     for t in tracks
