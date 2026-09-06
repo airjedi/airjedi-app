@@ -7,6 +7,13 @@ pub use sync::*;
 
 use bevy::prelude::*;
 
+/// When present, the app opens no local ADS-B feeds or enrichment streams.
+/// Thin-client mode (design-b) inserts this so the headless fusion agent is the
+/// sole source of tracks; `AdsbPlugin` still provides the model registry and
+/// aircraft post-processing systems the thin-client hydrator relies on.
+#[derive(Resource, Default)]
+pub struct LocalIngestDisabled;
+
 pub struct AdsbPlugin;
 
 impl Plugin for AdsbPlugin {

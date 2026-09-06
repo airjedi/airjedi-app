@@ -1,0 +1,28 @@
+[package]
+name = "airjedi-agent"
+version = "0.1.0"
+edition = "2021"
+description = "Headless AirJedi fusion agent: ingest -> fusion -> display projection, replicated to thin clients"
+
+[[bin]]
+name = "airjedi-agent"
+path = "src/main.rs"
+
+[dependencies]
+# Headless bevy (no renderer). Same lean facade the transport crate uses.
+bevy = { version = "0.19", default-features = false, features = ["std", "bevy_state", "bevy_log"] }
+# Server for the agent; client for the `--probe` verification mode.
+bevy_replicon = { version = "0.44", default-features = false, features = ["client", "server"] }
+bevy_replicon_renet = { version = "0.20", default-features = false, features = ["client", "server", "renet_netcode"] }
+
+airjedi-core = { path = "../airjedi-core" }
+airjedi-fusion = { path = "../airjedi-fusion" }
+airjedi-net = { path = "../airjedi-net" }
+# adsb-client is a real runtime dep here (the agent decodes the feed); the fixture
+# replay uses the same rs1090 decode path the app uses.
+adsb-client = { path = "../crates/adsb-client", default-features = false, features = ["decoder-rs1090"] }
+
+nalgebra = "0.33"
+chrono = { version = "0.4", features = ["serde"] }
+flate2 = "1"
+serde_json = "1"

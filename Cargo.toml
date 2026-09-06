@@ -1,5 +1,5 @@
 [workspace]
-members = ["airjedi-core", "airjedi-fusion", "crates/adsb-client", "airjedi-web"]
+members = ["airjedi-core", "airjedi-fusion", "crates/adsb-client", "airjedi-web", "airjedi-net", "airjedi-agent"]
 resolver = "2"
 
 [package]
@@ -10,6 +10,10 @@ edition = "2021"
 [features]
 default = ["brp"]
 brp = ["bevy/bevy_remote", "dep:bevy_brp_extras"]
+# design-b thin client: run the app as a renderer for a headless fusion agent,
+# consuming replicated DisplayTracks instead of running fusion locally. Off by
+# default - fat mode (in-process fusion) is unchanged and pulls no replicon deps.
+thin-client = ["dep:bevy_replicon", "dep:bevy_replicon_renet", "dep:airjedi-net"]
 
 [dependencies]
 bevy = { version = "0.19", features = ["jpeg"] }
@@ -39,6 +43,10 @@ libc = "0.2"
 image = { version = "0.25", default-features = false, features = ["png"] }
 bevy_brp_extras = { version = "0.20", optional = true }
 airjedi-fusion = { path = "airjedi-fusion" }
+# Thin-client transport (optional; enabled by the `thin-client` feature).
+bevy_replicon = { version = "0.44", default-features = false, features = ["client"], optional = true }
+bevy_replicon_renet = { version = "0.20", default-features = false, features = ["client", "renet_netcode"], optional = true }
+airjedi-net = { path = "airjedi-net", optional = true }
 shadow-rs = { version = "1", default-features = false }
 tokio-cron-scheduler = "0.15"
 crossbeam-channel = "0.5"

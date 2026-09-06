@@ -1,0 +1,18 @@
+[package]
+name = "airjedi-net"
+version = "0.1.0"
+edition = "2021"
+description = "design-b thin-mode transport: display components replicated agent -> client over bevy_replicon + renet"
+
+[dependencies]
+# Headless bevy facade (no 2d/3d/ui/audio). `std` + state + log are the only
+# facade features we need; bevy_time is non-optional so MinimalPlugins compiles.
+bevy = { version = "0.19", default-features = false, features = ["std", "bevy_state", "bevy_log"] }
+# Core replication (client + server rules); drop `world_serialization` - we
+# replicate registered components, not scene snapshots.
+bevy_replicon = { version = "0.44", default-features = false, features = ["client", "server"] }
+bevy_replicon_renet = { version = "0.20", default-features = false, features = ["client", "server", "renet_netcode"] }
+airjedi-core = { path = "../airjedi-core" }
+
+[dev-dependencies]
+chrono = { version = "0.4", features = ["serde"] }

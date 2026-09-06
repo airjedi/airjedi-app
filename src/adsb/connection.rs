@@ -158,28 +158,31 @@ pub fn setup_feed_connections(
     mut commands: Commands,
     map_state: Res<MapState>,
     app_config: Res<config::AppConfig>,
+    ingest_disabled: Option<Res<super::LocalIngestDisabled>>,
 ) {
     let mut manager = FeedConnectionManager::default();
 
-    for feed in &app_config.feeds {
-        if feed.enabled {
-            let data = spawn_feed_client(feed, map_state.latitude, map_state.longitude);
-            manager.connections.insert(
-                feed.id.clone(),
-                FeedConnection {
-                    config: feed.clone(),
-                    data,
-                },
-            );
+    // Thin-client mode opens no local feeds - the agent is the sole ingest - but
+    // we still insert an (empty) manager so status/UI systems have their resource.
+    if ingest_disabled.is_none() {
+        for feed in &app_config.feeds {
+            if feed.enabled {
+                let data = spawn_feed_client(feed, map_state.latitude, map_state.longitude);
+                manager.connections.insert(
+                    feed.id.clone(),
+                    FeedConnection {
+                        config: feed.clone(),
+                        data,
+                    },
+                );
+            }
         }
     }
 
     manager.prev_feed_snapshot = app_config.feeds.clone();
+    let started = manager.connections.len();
     commands.insert_resource(manager);
-    info!(
-        "Feed connections started ({} feeds)",
-        app_config.feeds.iter().filter(|f| f.enabled).count()
-    );
+    info!("Feed connections started ({started} feeds)");
 }
 
 fn spawn_feed_client(
@@ -287,7 +290,12 @@ pub fn reconnect_on_feed_changes(
     app_config: Res<config::AppConfig>,
     mut manager: ResMut<FeedConnectionManager>,
     map_state: Res<MapState>,
+    ingest_disabled: Option<Res<super::LocalIngestDisabled>>,
 ) {
+    // Never open local feeds in thin-client mode, even if the user edits config.
+    if ingest_disabled.is_some() {
+        return;
+    }
     if !app_config.is_changed() {
         return;
     }

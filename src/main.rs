@@ -40,6 +40,8 @@ mod render_layers;
 mod statusbar;
 mod terrain;
 pub(crate) mod theme;
+#[cfg(feature = "thin-client")]
+mod thin_client;
 mod tile_cache;
 mod tiles;
 mod toolbar;
@@ -290,7 +292,25 @@ fn main() {
     .add_systems(Update, debug_panel::update_debug_metrics)
     .add_systems(Update, heartbeat_diagnostic);
 
-    app.add_plugins(fusion_integration::FusionIntegrationPlugin);
+    // design-b: thin mode replaces in-process fusion with a feed of replicated
+    // DisplayTracks from a headless agent. It is selected at runtime via
+    // AIRJEDI_THIN_AGENT=host:port and only when built `--features thin-client`;
+    // otherwise the app runs fat mode (in-process fusion), unchanged.
+    #[cfg(feature = "thin-client")]
+    let thin_agent = std::env::var("AIRJEDI_THIN_AGENT").ok();
+    #[cfg(not(feature = "thin-client"))]
+    let thin_agent: Option<String> = None;
+
+    match thin_agent {
+        #[cfg(feature = "thin-client")]
+        Some(addr) => {
+            info!("thin-client mode: consuming DisplayTracks from agent at {addr}");
+            app.add_plugins(thin_client::ThinClientPlugin::new(addr));
+        }
+        _ => {
+            app.add_plugins(fusion_integration::FusionIntegrationPlugin);
+        }
+    }
 
     #[cfg(feature = "brp")]
     app.add_plugins(brp::BrpPlugin);

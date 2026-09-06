@@ -140,19 +140,23 @@ impl EnrichmentConnectionManager {
 pub fn setup_enrichment_connections(
     mut commands: Commands,
     app_config: Res<crate::config::AppConfig>,
+    ingest_disabled: Option<Res<crate::adsb::LocalIngestDisabled>>,
 ) {
     let mut manager = EnrichmentConnectionManager::default();
 
-    for source in &app_config.enrichment_sources {
-        if source.enabled {
-            if let Some(data) = spawn_from_config(source) {
-                manager.connections.insert(
-                    source.id.clone(),
-                    EnrichmentSourceConnection {
-                        config: source.clone(),
-                        data,
-                    },
-                );
+    // Thin-client mode opens no enrichment streams; still insert the resource.
+    if ingest_disabled.is_none() {
+        for source in &app_config.enrichment_sources {
+            if source.enabled {
+                if let Some(data) = spawn_from_config(source) {
+                    manager.connections.insert(
+                        source.id.clone(),
+                        EnrichmentSourceConnection {
+                            config: source.clone(),
+                            data,
+                        },
+                    );
+                }
             }
         }
     }
@@ -165,7 +169,11 @@ pub fn setup_enrichment_connections(
 pub fn reconnect_on_enrichment_changes(
     app_config: Res<crate::config::AppConfig>,
     mut manager: ResMut<EnrichmentConnectionManager>,
+    ingest_disabled: Option<Res<crate::adsb::LocalIngestDisabled>>,
 ) {
+    if ingest_disabled.is_some() {
+        return;
+    }
     if !app_config.is_changed() {
         return;
     }
