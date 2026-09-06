@@ -293,11 +293,16 @@ fn main() {
     .add_systems(Update, heartbeat_diagnostic);
 
     // design-b: thin mode replaces in-process fusion with a feed of replicated
-    // DisplayTracks from a headless agent. It is selected at runtime via
-    // AIRJEDI_THIN_AGENT=host:port and only when built `--features thin-client`;
-    // otherwise the app runs fat mode (in-process fusion), unchanged.
+    // DisplayTracks from a headless agent. Building `--features thin-client` (the
+    // macOS bundle default) makes thin mode the default; the agent address comes
+    // from AIRJEDI_THIN_AGENT (set in the bundle's Info.plist LSEnvironment) and
+    // falls back to a localhost agent. Builds without the feature always run fat
+    // mode (in-process fusion), unchanged.
     #[cfg(feature = "thin-client")]
-    let thin_agent = std::env::var("AIRJEDI_THIN_AGENT").ok();
+    let thin_agent = Some(
+        std::env::var("AIRJEDI_THIN_AGENT")
+            .unwrap_or_else(|_| format!("127.0.0.1:{}", airjedi_net::DEFAULT_PORT)),
+    );
     #[cfg(not(feature = "thin-client"))]
     let thin_agent: Option<String> = None;
 

@@ -54,6 +54,9 @@ zip = "2"
 
 [build-dependencies]
 shadow-rs = { version = "1", features = ["build"] }
+# Build libgit2 from source (via shadow-rs -> git2) so the build does not depend
+# on a version-fragile system/homebrew libgit2. Build-time only; not shipped.
+libgit2-sys = { version = "0.18.3", features = ["vendored"] }
 
 [dev-dependencies]
 egui_kittest = "0.34"

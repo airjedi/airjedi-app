@@ -272,6 +272,7 @@ dependencies = [
  "googleprojection",
  "image",
  "libc",
+ "libgit2-sys",
  "reqwest",
  "serde",
  "serde_json",

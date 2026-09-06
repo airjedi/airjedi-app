@@ -29,11 +29,16 @@ echo "Building $APP_NAME v$VERSION..."
 UNIVERSAL="${UNIVERSAL:-true}"
 
 # Step 1: Build binary
+# The bundle ships as a thin client (design-b): it renders a headless fusion
+# agent's replicated tracks instead of running fusion in-process. `thin-client`
+# enables that path; release still drops the default `brp` feature (no remote
+# protocol in shipped bundles). The default agent address is set in Info.plist's
+# LSEnvironment (AIRJEDI_THIN_AGENT).
 echo "Step 1: Building $BUILD_MODE binary..."
 if [ "$BUILD_MODE" = "release" ]; then
-    CARGO_FLAGS="--release --no-default-features"
+    CARGO_FLAGS="--release --no-default-features --features thin-client"
 else
-    CARGO_FLAGS=""
+    CARGO_FLAGS="--features thin-client"
 fi
 
 if [ "$UNIVERSAL" = "true" ]; then

@@ -26,5 +26,12 @@
     <string>13.0</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
+    <!-- Thin-client default agent address. Edit host:port to point the bundle at
+         a remote fusion agent; overridden by the AIRJEDI_THIN_AGENT env var. -->
+    <key>LSEnvironment</key>
+    <dict>
+        <key>AIRJEDI_THIN_AGENT</key>
+        <string>127.0.0.1:5599</string>
+    </dict>
 </dict>
 </plist>
