@@ -1,6 +1,6 @@
 use crate::prelude_imports::*;
 use crate::sensor::SensorObservation;
-use crate::types::{Timestamp, TrackId};
+use crate::types::{TargetId, Timestamp, TrackId};
 use airjedi_core::ObservationIdentity;
 use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
@@ -126,13 +126,39 @@ impl TimelineStore {
         latest
     }
 
+    /// Return observations already associated with a track plus observations
+    /// still awaiting association that identify the same target. The latter is
+    /// needed during the frame in which track initiation promotes a report.
+    #[must_use]
+    pub fn observations_for_track<'a>(
+        &'a self,
+        track_id: &TrackId,
+        cooperative_ids: &[TargetId],
+    ) -> Vec<&'a StoredObservation> {
+        let mut observations: Vec<&StoredObservation> = self
+            .by_track
+            .get(track_id)
+            .into_iter()
+            .flat_map(|stored| stored.iter())
+            .collect();
+
+        observations.extend(self.unassociated_obs.iter().filter(|stored| {
+            stored
+                .observation
+                .target_id
+                .as_ref()
+                .is_some_and(|target| cooperative_ids.iter().any(|id| id == target))
+        }));
+        observations
+    }
+
     #[must_use]
     pub fn unassociated(&self) -> &[StoredObservation] {
         &self.unassociated_obs
     }
 
     #[must_use]
-    pub fn observations_for_track(&self, track_id: &TrackId) -> Vec<&StoredObservation> {
+    pub fn associated_observations_for_track(&self, track_id: &TrackId) -> Vec<&StoredObservation> {
         self.by_track
             .get(track_id)
             .map(|observations| observations.iter().collect())

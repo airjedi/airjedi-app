@@ -106,6 +106,16 @@ fn run_reader(mut stream: TcpStream, shared: &Arc<Mutex<Vec<Contact>>>) {
                         alt_ft: a.altitude,
                         track: a.track,
                         vel_kts: a.velocity,
+                        vertical_rate: a.vertical_rate,
+                        airspeed_kts: a.airspeed,
+                        callsign: a.callsign.clone(),
+                        squawk: a.squawk.clone(),
+                        is_on_ground: a.is_on_ground,
+                        alert: a.alert,
+                        emergency: a.emergency,
+                        spi: a.spi,
+                        roll_angle: a.roll_angle.map(|v| v as f32),
+                        track_angle_rate: a.track_angle_rate.map(|v| v as f32),
                         observation_time: a
                             .position_observation_time
                             .unwrap_or(a.last_observation_time),

@@ -95,7 +95,7 @@ pub fn fusion_update_system(
             tracker.variant.predict(dt);
         }
 
-        let obs = store.observations_for_track(&track.id);
+        let obs = store.associated_observations_for_track(&track.id);
 
         for stored_obs in obs {
             if tracker.is_processed(stored_obs) {

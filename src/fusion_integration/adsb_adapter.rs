@@ -1,4 +1,4 @@
-use airjedi_core::ObservationFreshness;
+use airjedi_core::{AltitudeReference, HeadingReference, ObservationFreshness};
 use airjedi_fusion::coord::CoordinateFrame;
 use airjedi_fusion::nalgebra;
 use airjedi_fusion::sensor::*;
@@ -198,6 +198,17 @@ fn adsb_aircraft_to_observation(
         metadata: ObservationMetadata {
             source_label: source_label.to_string(),
             is_on_ground: ac.is_on_ground,
+            altitude_reference: ac.altitude.map(|_| AltitudeReference::Barometric),
+            heading_reference: ac.track.map(|_| HeadingReference::GroundTrack),
+            vertical_rate_fpm: ac.vertical_rate,
+            airspeed_kts: ac.airspeed,
+            callsign: ac.callsign.clone(),
+            squawk: ac.squawk.clone(),
+            alert: ac.alert,
+            emergency: ac.emergency,
+            spi: ac.spi,
+            roll_angle: ac.roll_angle.map(|v| v as f32),
+            track_angle_rate: ac.track_angle_rate.map(|v| v as f32),
             accuracy_category: enrichment.and_then(|e| e.nic),
             observation_id: latest
                 .map(|freshness| freshness.identity)

@@ -17,7 +17,9 @@ pub mod types;
 pub use classification::TargetClassification;
 pub use clock::FusionClock;
 pub use config::FusionConfig;
-pub use display::{derive_display_track, filter_type_label, RawObservationHint};
+pub use display::{
+    derive_display_track, filter_type_label, raw_observation_hint_for, RawObservationHint,
+};
 pub use filter::{ModeInfo, TrackerState};
 pub use sensor::{Measurement, SensorObservation};
 pub use store::TimelineStore;

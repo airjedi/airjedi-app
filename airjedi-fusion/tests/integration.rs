@@ -306,7 +306,6 @@ fn telemetry_only_update_reaches_display_without_refreshing_position_or_fusing_t
     };
 
     let telemetry_time = start + Duration::seconds(4);
-    let telemetry_freshness = freshness(telemetry_time, 4);
     let telemetry = stamp_observation(
         make_adsb_obs(0.0, 0.0, 35_000.0, "TEL001"),
         telemetry_time,
@@ -318,7 +317,7 @@ fn telemetry_only_update_reaches_display_without_refreshing_position_or_fusing_t
     app.world_mut()
         .resource_mut::<ObservationBuffer>()
         .observations
-        .push(telemetry);
+        .push(telemetry.clone());
     app.update();
 
     let (track, tracker, quality) = {
@@ -334,17 +333,7 @@ fn telemetry_only_update_reaches_display_without_refreshing_position_or_fusing_t
     assert_eq!(quality.observation_count, before_count);
     assert_eq!(track.last_update, before_last_update);
 
-    let hint = RawObservationHint {
-        latitude: Some(0.0),
-        longitude: Some(0.0),
-        altitude_ft: Some(35_000),
-        track_deg: Some(90.0),
-        velocity_kts: Some(250.0),
-        position_freshness: None,
-        altitude_freshness: Some(telemetry_freshness),
-        velocity_freshness: Some(telemetry_freshness),
-        ..Default::default()
-    };
+    let hint = RawObservationHint::from_observation(&telemetry);
     let display = derive_display_track(&track, &tracker, &quality, Some(&hint), None);
 
     assert!((display.latitude - before_position.0).abs() < 1e-6);

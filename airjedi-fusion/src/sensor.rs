@@ -1,6 +1,9 @@
 use crate::coord::CoordinateFrame;
 use crate::types::{StateVectorType, TargetCategory, TargetId, Timestamp};
-use airjedi_core::{ObservationFreshness, ObservationIdentity, TimeSourceQuality};
+use airjedi_core::{
+    AltitudeReference, HeadingReference, ObservationFreshness, ObservationIdentity,
+    TimeSourceQuality,
+};
 use nalgebra::{DMatrix, DVector};
 
 // `SensorKind` moved to `airjedi-core` so `SensorContributions` can name it
@@ -85,6 +88,17 @@ pub struct ObservationMetadata {
     pub accuracy_category: Option<u8>,
     pub source_label: String,
     pub is_on_ground: Option<bool>,
+    pub altitude_reference: Option<AltitudeReference>,
+    pub heading_reference: Option<HeadingReference>,
+    pub vertical_rate_fpm: Option<i32>,
+    pub airspeed_kts: Option<f64>,
+    pub callsign: Option<String>,
+    pub squawk: Option<String>,
+    pub alert: Option<bool>,
+    pub emergency: Option<bool>,
+    pub spi: Option<bool>,
+    pub roll_angle: Option<f32>,
+    pub track_angle_rate: Option<f32>,
     /// Source-local identity used to distinguish repeated polls from reports.
     pub observation_id: Option<ObservationIdentity>,
     /// Quality of the observation timestamp.

@@ -13,8 +13,8 @@ use airjedi_core::{
     SensorReport, TrackId,
 };
 use airjedi_fusion::{
-    derive_display_track, IdentifierType, Measurement, SensorObservation, TimelineStore, Track,
-    TrackQuality, TrackStatus, TrackerState,
+    derive_display_track, raw_observation_hint_for, IdentifierType, Measurement, SensorObservation,
+    TimelineStore, Track, TrackQuality, TrackStatus, TrackerState,
 };
 use bevy::prelude::*;
 use bevy_replicon::prelude::Replicated;
@@ -76,7 +76,8 @@ pub fn sync_replicated_tracks(
         //  - DisplayTrack: same projection the fat-mode app uses.
         //  - DisplayEstimate: straight-flight forward-prediction cone.
         //  - SensorContributions: latest per-sensor raw positions from the store.
-        let dt = derive_display_track(track, tracker, quality, None, position_source);
+        let hint = raw_observation_hint_for(&timeline_store, track);
+        let dt = derive_display_track(track, tracker, quality, hint.as_ref(), position_source);
         let estimate = sample_estimate(tracker);
         let contributions = contributions_for(&timeline_store, track);
 

@@ -11,8 +11,8 @@ use crate::tiles::LocalOrigin;
 use crate::view3d;
 use airjedi_fusion::types::{IdentifierType, TargetCategory};
 use airjedi_fusion::{
-    derive_display_track, filter_type_label, RawObservationHint, TargetClassification, Track,
-    TrackQuality, TrackStatus, TrackerState,
+    derive_display_track, filter_type_label, raw_observation_hint_for, TargetClassification,
+    TimelineStore, Track, TrackQuality, TrackStatus, TrackerState,
 };
 use bevy::prelude::*;
 
@@ -34,8 +34,8 @@ pub fn sync_tracks_to_visuals(
     visual_lookup: Query<(Entity, &FusionTrackLink)>,
     model_registry: Option<Res<AircraftModelRegistry>>,
     type_db: Option<Res<crate::aircraft::AircraftTypeDatabase>>,
-    feed_mgr: Option<Res<FeedConnectionManager>>,
     enrichment_mgr: Option<Res<EnrichmentConnectionManager>>,
+    timeline_store: Res<TimelineStore>,
     clock: Res<super::clock::SimClock>,
     map_state: Res<MapState>,
     local_origin: Res<LocalOrigin>,
@@ -45,30 +45,12 @@ pub fn sync_tracks_to_visuals(
         return;
     };
 
-    let raw_aircraft: Option<std::collections::HashMap<adsb_client::Icao, adsb_client::Aircraft>> =
-        feed_mgr.as_ref().map(|mgr| {
-            let mut best: std::collections::HashMap<adsb_client::Icao, adsb_client::Aircraft> =
-                std::collections::HashMap::new();
-            for (_, ac) in mgr.all_aircraft() {
-                best.entry(ac.icao)
-                    .and_modify(|existing| {
-                        if ac.last_seen > existing.last_seen {
-                            *existing = ac.clone();
-                        }
-                    })
-                    .or_insert(ac);
-            }
-            best
-        });
-
     for (track_entity, track, tracker, quality, classification) in &fusion_tracks {
         let track_icao = track
             .cooperative_ids
             .iter()
             .find(|id| id.id_type == IdentifierType::Icao)
             .and_then(|id| adsb_client::Icao::from_hex(&id.id));
-        let raw_ac =
-            track_icao.and_then(|icao| raw_aircraft.as_ref().and_then(|map| map.get(&icao)));
         let position_source = track_icao
             .and_then(|icao| enrichment_mgr.as_ref().and_then(|mgr| mgr.lookup(icao)))
             .map(|info| info.source);
@@ -79,26 +61,9 @@ pub fn sync_tracks_to_visuals(
         // the raw ADS-B overrides cross into it via a sensor-agnostic hint. The
         // visual `Aircraft` written below is a client-side view built from this
         // same `dt`; the serializable DisplayTrack is stored on the track entity
-        // as the projection boundary.
-        let hint = raw_ac.map(|ac| RawObservationHint {
-            altitude_ft: ac.altitude,
-            vertical_rate: ac.vertical_rate,
-            track_deg: ac.track,
-            velocity_kts: ac.velocity,
-            latitude: ac.latitude,
-            longitude: ac.longitude,
-            squawk: ac.squawk.clone(),
-            is_on_ground: ac.is_on_ground,
-            alert: ac.alert,
-            emergency: ac.emergency,
-            spi: ac.spi,
-            roll_angle: ac.roll_angle.map(|v| v as f32),
-            track_angle_rate: ac.track_angle_rate.map(|v| v as f32),
-            callsign: ac.callsign.clone(),
-            position_freshness: ac.position_freshness,
-            altitude_freshness: ac.altitude_freshness,
-            velocity_freshness: ac.velocity_freshness,
-        });
+        // as the projection boundary. Both embedded and headless paths build
+        // the hint from the same timestamped TimelineStore observations.
+        let hint = raw_observation_hint_for(&timeline_store, track);
         let dt = derive_display_track(track, tracker, quality, hint.as_ref(), position_source);
         let is_coasting = dt.status == TrackStatus::Coasting;
         commands.entity(track_entity).insert(dt.clone());
@@ -138,13 +103,7 @@ pub fn sync_tracks_to_visuals(
                     aircraft.squawk = dt.squawk.clone();
                 }
 
-                if let Some(ac) = raw_ac {
-                    if let Some(ref cs) = ac.callsign {
-                        if !cs.trim().is_empty() {
-                            aircraft.callsign = Some(cs.clone());
-                        }
-                    }
-                } else if aircraft.callsign.is_none() {
+                if aircraft.callsign.is_none() {
                     for cid in &track.cooperative_ids {
                         if cid.id_type == IdentifierType::Callsign {
                             aircraft.callsign = Some(cid.id.clone());

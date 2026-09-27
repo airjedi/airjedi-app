@@ -30,9 +30,13 @@ fn sample_track() -> DisplayTrack {
         position_freshness: None,
         altitude_freshness: None,
         velocity_freshness: None,
+        altitude_reference: airjedi_core::AltitudeReference::Barometric,
         heading: Some(270.0),
+        heading_reference: airjedi_core::HeadingReference::GroundTrack,
         velocity_kts: Some(420.0),
+        airspeed_kts: None,
         vertical_rate: Some(0),
+        vertical_rate_reference: airjedi_core::VerticalRateReference::FeetPerMinute,
         roll_angle: None,
         track_angle_rate: None,
         squawk: Some("1200".to_string()),
@@ -49,6 +53,7 @@ fn sample_track() -> DisplayTrack {
         mode_probabilities: Some(vec![0.7, 0.3]),
         dominant_mode: Some(0),
         observation_count: 12,
+        provenance: airjedi_core::DisplayProvenance::default(),
     }
 }
 
