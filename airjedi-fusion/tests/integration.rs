@@ -306,14 +306,23 @@ fn telemetry_only_update_reaches_display_without_refreshing_position_or_fusing_t
     };
 
     let telemetry_time = start + Duration::seconds(4);
-    let telemetry = stamp_observation(
-        make_adsb_obs(0.0, 0.0, 35_000.0, "TEL001"),
+    let mut telemetry = stamp_observation(
+        make_adsb_obs(0.0, 0.0, 35_000.0 * 0.3048, "TEL001"),
         telemetry_time,
         4,
         false,
         true,
         true,
     );
+    if let Measurement::PositionVelocity3D {
+        vel_north_mps,
+        vel_east_mps,
+        ..
+    } = &mut telemetry.measurement
+    {
+        *vel_north_mps = Some(250.0 * 0.514444);
+        *vel_east_mps = Some(0.0);
+    }
     app.world_mut()
         .resource_mut::<ObservationBuffer>()
         .observations
@@ -339,7 +348,7 @@ fn telemetry_only_update_reaches_display_without_refreshing_position_or_fusing_t
     assert!((display.latitude - before_position.0).abs() < 1e-6);
     assert!((display.longitude - before_position.1).abs() < 1e-6);
     assert_eq!(display.altitude_ft, Some(35_000));
-    assert_eq!(display.velocity_kts, Some(250.0));
+    assert!((display.velocity_kts.unwrap() - 250.0).abs() < 1e-9);
     assert!(display.position_freshness.is_none());
     assert_eq!(
         display.altitude_freshness.unwrap().identity.frame_sequence,
