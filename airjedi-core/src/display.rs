@@ -20,6 +20,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::ids::TrackId;
+use crate::observation::ObservationFreshness;
 use crate::sensor_kind::SensorKind;
 use crate::source::PositionSource;
 use crate::status::TrackStatus;
@@ -38,6 +39,11 @@ pub struct DisplayTrack {
     pub latitude: f64,
     pub longitude: f64,
     pub altitude_ft: Option<i32>,
+
+    /// Latest independent measurement timing for each display field.
+    pub position_freshness: Option<ObservationFreshness>,
+    pub altitude_freshness: Option<ObservationFreshness>,
+    pub velocity_freshness: Option<ObservationFreshness>,
 
     pub heading: Option<f32>,
     pub velocity_kts: Option<f64>,
@@ -136,6 +142,9 @@ mod tests {
             latitude: 37.8233,
             longitude: -97.1529,
             altitude_ft: Some(30_000),
+            position_freshness: None,
+            altitude_freshness: None,
+            velocity_freshness: None,
             heading: Some(270.0),
             velocity_kts: Some(420.0),
             vertical_rate: Some(-64),

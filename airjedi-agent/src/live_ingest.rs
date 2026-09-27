@@ -112,6 +112,9 @@ fn run_reader(mut stream: TcpStream, shared: &Arc<Mutex<Vec<Contact>>>) {
                         receipt_time: a.last_seen,
                         time_source: a.position_time_source.unwrap_or(a.last_time_source),
                         observation_id: a.position_observation_id.unwrap_or(a.last_observation_id),
+                        position_freshness: a.position_freshness,
+                        altitude_freshness: a.altitude_freshness,
+                        velocity_freshness: a.velocity_freshness,
                     })
                 })
                 .collect();

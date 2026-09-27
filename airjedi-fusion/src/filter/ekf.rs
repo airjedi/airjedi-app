@@ -54,10 +54,7 @@ impl Ekf6Dof {
     }
 
     #[must_use]
-    pub fn with_transition_model(
-        mut self,
-        model: Box<dyn TransitionModel>,
-    ) -> Self {
+    pub fn with_transition_model(mut self, model: Box<dyn TransitionModel>) -> Self {
         assert_eq!(
             model.state_dim(),
             6,

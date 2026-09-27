@@ -12,10 +12,7 @@ pub struct ImmFilter {
 
 impl ImmFilter {
     #[must_use]
-    pub fn new(
-        filters: Vec<Box<dyn TrackFilter>>,
-        transition_matrix: DMatrix<f64>,
-    ) -> Self {
+    pub fn new(filters: Vec<Box<dyn TrackFilter>>, transition_matrix: DMatrix<f64>) -> Self {
         let n = filters.len();
         assert!(n >= 2, "IMM requires at least 2 filters");
         assert_eq!(
@@ -175,6 +172,7 @@ impl TrackFilter for ImmFilter {
                 FilterResult::Updated => {
                     any_updated = true;
                 }
+                FilterResult::TelemetryOnly => {}
                 FilterResult::OutlierRejected { .. } => {
                     likelihoods[i] = 1e-300;
                 }
@@ -309,16 +307,9 @@ mod tests {
     }
 
     fn make_imm() -> ImmFilter {
-        let filters: Vec<Box<dyn TrackFilter>> = vec![
-            make_cv_ekf(1.0),
-            make_cv_ekf(10.0),
-        ];
+        let filters: Vec<Box<dyn TrackFilter>> = vec![make_cv_ekf(1.0), make_cv_ekf(10.0)];
 
-        let transition_matrix = DMatrix::from_row_slice(
-            2,
-            2,
-            &[0.95, 0.05, 0.05, 0.95],
-        );
+        let transition_matrix = DMatrix::from_row_slice(2, 2, &[0.95, 0.05, 0.05, 0.95]);
 
         ImmFilter::new(filters, transition_matrix)
     }
@@ -370,8 +361,7 @@ mod tests {
         let s1 = imm.filters[1].state_vec();
 
         for i in 0..6 {
-            let expected =
-                imm.mode_probabilities[0] * s0[i] + imm.mode_probabilities[1] * s1[i];
+            let expected = imm.mode_probabilities[0] * s0[i] + imm.mode_probabilities[1] * s1[i];
             assert_relative_eq!(combined[i], expected, epsilon = 1e-9);
         }
     }
@@ -404,11 +394,8 @@ mod tests {
 
     #[test]
     fn imm_three_models() {
-        let filters: Vec<Box<dyn TrackFilter>> = vec![
-            make_cv_ekf(0.5),
-            make_cv_ekf(5.0),
-            make_cv_ekf(50.0),
-        ];
+        let filters: Vec<Box<dyn TrackFilter>> =
+            vec![make_cv_ekf(0.5), make_cv_ekf(5.0), make_cv_ekf(50.0)];
 
         #[rustfmt::skip]
         let tm = DMatrix::from_row_slice(3, 3, &[

@@ -26,3 +26,15 @@ pub enum TimeSourceQuality {
     /// anchor.
     ReceiverReset,
 }
+
+/// Timing and identity for one independently fresh measurement field.
+///
+/// The identity remains source-local. Consumers combine it with the sensor or
+/// feed identifier when deduplicating observations from independent sources.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ObservationFreshness {
+    pub observation_time: chrono::DateTime<chrono::Utc>,
+    pub receipt_time: chrono::DateTime<chrono::Utc>,
+    pub time_source: TimeSourceQuality,
+    pub identity: ObservationIdentity,
+}

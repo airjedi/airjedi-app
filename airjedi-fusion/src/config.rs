@@ -8,7 +8,7 @@ use crate::filter::{FilterVariant, OosmConfig, TrackFilter, TrackerState};
 use crate::prelude_imports::*;
 use crate::sensor::FusionTier;
 use crate::store::StoreConfig;
-use crate::track::initiation::{InitiationConfig, MofNInitiator};
+use crate::track::initiation::InitiationConfig;
 use crate::track::LifecycleProfiles;
 use crate::transport::NatsTransportConfig;
 use crate::types::{StateVectorType, TargetCategory};
@@ -91,6 +91,8 @@ impl FusionConfig {
                     variant: FilterVariant::new(ImmFilter::new(filters, tm)),
                     state_type: StateVectorType::Cartesian6Dof,
                     last_update: None,
+                    processed_observations: std::collections::HashSet::new(),
+                    processed_store_indices: std::collections::HashSet::new(),
                 }
             }
             FilterStrategy::Ukf => {
@@ -102,12 +104,16 @@ impl FusionConfig {
                     variant: FilterVariant::new(Ukf::new(6, model, UkfConfig::default())),
                     state_type: StateVectorType::Cartesian6Dof,
                     last_update: None,
+                    processed_observations: std::collections::HashSet::new(),
+                    processed_store_indices: std::collections::HashSet::new(),
                 }
             }
             FilterStrategy::Surface => TrackerState {
                 variant: FilterVariant::new(Surface4Dof::new(SurfaceConfig::default())),
                 state_type: StateVectorType::Surface4Dof,
                 last_update: None,
+                processed_observations: std::collections::HashSet::new(),
+                processed_store_indices: std::collections::HashSet::new(),
             },
             FilterStrategy::Ekf => TrackerState::new_6dof(self.filter_defaults.clone()),
         }

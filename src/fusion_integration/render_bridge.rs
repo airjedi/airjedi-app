@@ -7,6 +7,7 @@ use crate::aircraft::{InterpolationState, TrailHistory};
 use crate::constants;
 use crate::geo;
 use crate::map::MapState;
+use crate::tiles::LocalOrigin;
 use crate::view3d;
 use airjedi_fusion::types::{IdentifierType, TargetCategory};
 use airjedi_fusion::{
@@ -14,20 +15,16 @@ use airjedi_fusion::{
     TrackQuality, TrackStatus, TrackerState,
 };
 use bevy::prelude::*;
-use crate::tiles::LocalOrigin;
 
 pub fn sync_tracks_to_visuals(
     mut commands: Commands,
-    fusion_tracks: Query<
-        (
-            Entity,
-            &Track,
-            &TrackerState,
-            &TrackQuality,
-            &TargetClassification,
-        ),
-        Changed<TrackerState>,
-    >,
+    fusion_tracks: Query<(
+        Entity,
+        &Track,
+        &TrackerState,
+        &TrackQuality,
+        &TargetClassification,
+    )>,
     mut visuals: Query<(
         &FusionTrackLink,
         &mut Aircraft,
@@ -70,8 +67,8 @@ pub fn sync_tracks_to_visuals(
             .iter()
             .find(|id| id.id_type == IdentifierType::Icao)
             .and_then(|id| adsb_client::Icao::from_hex(&id.id));
-        let raw_ac = track_icao
-            .and_then(|icao| raw_aircraft.as_ref().and_then(|map| map.get(&icao)));
+        let raw_ac =
+            track_icao.and_then(|icao| raw_aircraft.as_ref().and_then(|map| map.get(&icao)));
         let position_source = track_icao
             .and_then(|icao| enrichment_mgr.as_ref().and_then(|mgr| mgr.lookup(icao)))
             .map(|info| info.source);
@@ -98,6 +95,9 @@ pub fn sync_tracks_to_visuals(
             roll_angle: ac.roll_angle.map(|v| v as f32),
             track_angle_rate: ac.track_angle_rate.map(|v| v as f32),
             callsign: ac.callsign.clone(),
+            position_freshness: ac.position_freshness,
+            altitude_freshness: ac.altitude_freshness,
+            velocity_freshness: ac.velocity_freshness,
         });
         let dt = derive_display_track(track, tracker, quality, hint.as_ref(), position_source);
         let is_coasting = dt.status == TrackStatus::Coasting;

@@ -12,7 +12,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use adsb_client::{BeastFramer, Decoder, Framer, Icao, Rs1090Decoder, TrackerConfig};
-use airjedi_core::{ObservationIdentity, TimeSourceQuality};
+use airjedi_core::{ObservationFreshness, ObservationIdentity, TimeSourceQuality};
 use airjedi_fusion::coord::CoordinateFrame;
 use airjedi_fusion::sensor::*;
 use airjedi_fusion::{IdentifierType, TargetCategory, TargetDomain, TargetId};
@@ -44,6 +44,9 @@ pub struct Contact {
     pub receipt_time: DateTime<Utc>,
     pub time_source: TimeSourceQuality,
     pub observation_id: ObservationIdentity,
+    pub position_freshness: Option<ObservationFreshness>,
+    pub altitude_freshness: Option<ObservationFreshness>,
+    pub velocity_freshness: Option<ObservationFreshness>,
 }
 
 /// The decoded scene: ADS-B contacts, MLAT contacts, and the set of ICAOs that
@@ -112,6 +115,9 @@ fn decode_beast_contacts(dir: &Path) -> std::io::Result<Vec<Contact>> {
                 receipt_time: a.last_seen,
                 time_source: a.position_time_source.unwrap_or(a.last_time_source),
                 observation_id: a.position_observation_id.unwrap_or(a.last_observation_id),
+                position_freshness: a.position_freshness,
+                altitude_freshness: a.altitude_freshness,
+                velocity_freshness: a.velocity_freshness,
             })
         })
         .collect();
@@ -173,6 +179,25 @@ fn parse_mlat(dir: &Path) -> std::io::Result<(HashSet<u32>, HashMap<u32, Contact
                         frame_sequence: line_number as u64,
                         payload_index: 0,
                     },
+                    position_freshness: Some(ObservationFreshness {
+                        observation_time: capture_time,
+                        receipt_time: capture_time,
+                        time_source: TimeSourceQuality::ProtocolTimestamp,
+                        identity: ObservationIdentity {
+                            frame_sequence: line_number as u64,
+                            payload_index: 0,
+                        },
+                    }),
+                    altitude_freshness: alt.map(|_| ObservationFreshness {
+                        observation_time: capture_time,
+                        receipt_time: capture_time,
+                        time_source: TimeSourceQuality::ProtocolTimestamp,
+                        identity: ObservationIdentity {
+                            frame_sequence: line_number as u64,
+                            payload_index: 0,
+                        },
+                    }),
+                    velocity_freshness: None,
                 },
             );
         }
@@ -257,6 +282,9 @@ pub fn make_observation(c: &Contact, kind: SensorKind) -> SensorObservation {
         metadata: ObservationMetadata {
             observation_id: Some(c.observation_id),
             time_source: Some(c.time_source),
+            position_freshness: c.position_freshness,
+            altitude_freshness: c.altitude_freshness,
+            velocity_freshness: c.velocity_freshness,
             ..Default::default()
         },
     }
@@ -283,6 +311,9 @@ mod tests {
                 frame_sequence: 12,
                 payload_index: 0,
             },
+            position_freshness: None,
+            altitude_freshness: None,
+            velocity_freshness: None,
         };
 
         let first = make_observation(&contact, SensorKind::AdsbReceiver);

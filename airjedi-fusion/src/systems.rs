@@ -7,13 +7,16 @@ use crate::config::FusionConfig;
 use crate::filter::{FilterResult, TrackerState};
 use crate::prelude_imports::*;
 use crate::sensor::SensorObservation;
-use crate::store::TimelineStore;
+use crate::store::{observation_key, ObservationKey, TimelineStore};
 use crate::track::initiation::MofNInitiator;
 use crate::track::{LifecycleProfiles, Track, TrackQuality, TrackStatus};
 use crate::types::TrackId;
 
 #[derive(Resource)]
-pub struct TrackInitiator(pub MofNInitiator);
+pub struct TrackInitiator {
+    pub initiator: MofNInitiator,
+    pub processed_observations: std::collections::HashSet<ObservationKey>,
+}
 
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FusionSet {
@@ -92,19 +95,20 @@ pub fn fusion_update_system(
             tracker.variant.predict(dt);
         }
 
-        let obs = store.query_range(
-            &track.id,
-            tracker.last_update.unwrap_or(track.created_at),
-            now,
-        );
+        let obs = store.observations_for_track(&track.id);
 
-        for stored_obs in &obs {
+        for stored_obs in obs {
+            if tracker.is_processed(stored_obs) {
+                continue;
+            }
+
             match tracker.variant.update(&stored_obs.observation) {
                 FilterResult::Updated => {
                     quality.observation_count += 1;
                     quality.reacquire();
                     track.last_update = now;
                 }
+                FilterResult::TelemetryOnly => {}
                 FilterResult::OutlierRejected { .. } => {
                     // A gate rejection after a signal gap is almost always a coasted
                     // constant-velocity prediction that diverged from a maneuvering
@@ -135,6 +139,8 @@ pub fn fusion_update_system(
                     tracker.zero_velocity();
                 }
             }
+
+            tracker.mark_processed(stored_obs);
         }
 
         tracker.last_update = Some(now);
@@ -194,6 +200,16 @@ pub fn track_initiation_system(
     let mut initiated_ids: HashSet<String> = HashSet::new();
 
     for obs in store.unassociated() {
+        if let Some(key) = observation_key(&obs.observation) {
+            if !initiator.processed_observations.insert(key) {
+                continue;
+            }
+        }
+
+        if obs.observation.is_telemetry_only() {
+            continue;
+        }
+
         if let Some(ref target_id) = obs.observation.target_id {
             if existing_ids.contains(&target_id.id) {
                 continue;
@@ -203,7 +219,9 @@ pub fn track_initiation_system(
             }
         }
 
-        let decision = initiator.0.process_observation(&obs.observation, now);
+        let decision = initiator
+            .initiator
+            .process_observation(&obs.observation, now);
 
         let promote_obs = match decision {
             crate::track::initiation::InitiationDecision::Promote(promoted) => promoted,
@@ -225,6 +243,7 @@ pub fn track_initiation_system(
         let mut tracker = fusion_config.create_tracker(&category);
         tracker.variant.initialize(&promote_obs);
         tracker.last_update = Some(now);
+        tracker.mark_processed(obs);
 
         let mut cooperative_ids = Vec::new();
         if let Some(ref target_id) = promote_obs.target_id {
@@ -245,12 +264,15 @@ pub fn track_initiation_system(
                 is_on_ground: false,
             },
             tracker,
-            TrackQuality::default(),
+            TrackQuality {
+                observation_count: 1,
+                ..Default::default()
+            },
             classification,
         ));
     }
 
-    initiator.0.evict_stale(now);
+    initiator.initiator.evict_stale(now);
 }
 
 pub fn track_cleanup_system(

@@ -98,8 +98,7 @@ impl GnnAssociator {
 
         let assigned_obs_set: HashSet<usize> =
             assignments.iter().map(|a| a.observation_idx).collect();
-        let assigned_track_set: HashSet<usize> =
-            assignments.iter().map(|a| a.track_idx).collect();
+        let assigned_track_set: HashSet<usize> = assignments.iter().map(|a| a.track_idx).collect();
 
         let unassigned_observations: Vec<usize> = (0..observations.len())
             .filter(|i| !assigned_obs_set.contains(i))
@@ -151,7 +150,9 @@ fn optimal_assignment(
     let forced_tracks: HashSet<usize> = forced.iter().map(|a| a.track_idx).collect();
 
     let free_obs: Vec<usize> = (0..n_obs).filter(|i| !forced_obs.contains(i)).collect();
-    let free_tracks: Vec<usize> = (0..n_tracks).filter(|i| !forced_tracks.contains(i)).collect();
+    let free_tracks: Vec<usize> = (0..n_tracks)
+        .filter(|i| !forced_tracks.contains(i))
+        .collect();
 
     if free_obs.is_empty() || free_tracks.is_empty() {
         return forced;
@@ -169,9 +170,13 @@ fn optimal_assignment(
     let mut matrix = pathfinding::matrix::Matrix::new(dim, dim, big_cost);
 
     // Map original indices to dense matrix indices
-    let obs_to_dense: HashMap<usize, usize> = free_obs.iter().enumerate().map(|(d, &o)| (o, d)).collect();
-    let track_to_dense: HashMap<usize, usize> =
-        free_tracks.iter().enumerate().map(|(d, &t)| (t, d)).collect();
+    let obs_to_dense: HashMap<usize, usize> =
+        free_obs.iter().enumerate().map(|(d, &o)| (o, d)).collect();
+    let track_to_dense: HashMap<usize, usize> = free_tracks
+        .iter()
+        .enumerate()
+        .map(|(d, &t)| (t, d))
+        .collect();
 
     for (obs_idx, track_idx, distance) in &gated {
         if let (Some(&row), Some(&col)) = (obs_to_dense.get(obs_idx), track_to_dense.get(track_idx))

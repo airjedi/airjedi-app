@@ -25,19 +25,21 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use airjedi_core::{DisplayEstimate, DisplayTrack, PositionSource, SensorContributions};
+use airjedi_core::{
+    DisplayEstimate, DisplayTrack, ObservationIdentity, PositionSource, SensorContributions,
+};
 use airjedi_fusion::sensor::SensorKind;
 use airjedi_fusion::systems::{FusionSet, ObservationBuffer};
 use airjedi_fusion::{FusionConfig, FusionPlugin, TimelineStore, Track};
-use airjedi_net::{DEFAULT_PORT, create_client, create_server, register_replicated};
+use airjedi_net::{create_client, create_server, register_replicated, DEFAULT_PORT};
 use bevy::app::ScheduleRunnerPlugin;
 use bevy::prelude::*;
 use bevy::state::app::StatesPlugin;
 use bevy_replicon::prelude::{RepliconChannels, RepliconPlugins};
 use bevy_replicon_renet::RepliconRenetPlugins;
 
-use crate::ingest::{Contact, Scene, default_fixture_dir, load_scene, make_observation};
-use crate::replicate_tracks::{MlatSet, TrackEntityMap, sync_replicated_tracks};
+use crate::ingest::{default_fixture_dir, load_scene, make_observation, Contact, Scene};
+use crate::replicate_tracks::{sync_replicated_tracks, MlatSet, TrackEntityMap};
 
 /// Where the agent gets observations from.
 enum Ingest {
@@ -69,6 +71,7 @@ struct ReplayFeed {
     mlat: Vec<Contact>,
     timer: Timer,
     primed: bool,
+    sequence: u64,
 }
 
 fn main() {
@@ -150,20 +153,67 @@ fn add_fusion_and_projection(app: &mut App, mlat_set: std::collections::HashSet<
 }
 
 /// Push the whole scene into the observation buffer at the current instant.
-fn push_scene(app: &mut App, scene: &Scene, include_adsb: bool) {
+fn push_scene(app: &mut App, scene: &Scene, include_adsb: bool, replay_sequence: u64) {
     let mut buffer = app.world_mut().resource_mut::<ObservationBuffer>();
     if include_adsb {
         for c in &scene.adsb {
-            buffer
-                .observations
-                .push(make_observation(c, SensorKind::AdsbReceiver));
+            buffer.observations.push(make_replay_observation(
+                c,
+                SensorKind::AdsbReceiver,
+                replay_sequence,
+            ));
         }
     }
     for c in &scene.mlat {
-        buffer
-            .observations
-            .push(make_observation(c, SensorKind::MlatNetwork));
+        buffer.observations.push(make_replay_observation(
+            c,
+            SensorKind::MlatNetwork,
+            replay_sequence,
+        ));
     }
+}
+
+fn make_replay_observation(
+    contact: &Contact,
+    kind: SensorKind,
+    replay_sequence: u64,
+) -> airjedi_fusion::SensorObservation {
+    let mut observation = make_observation(contact, kind);
+    let Some(original) = observation.metadata.observation_id else {
+        return observation;
+    };
+    let identity = ObservationIdentity {
+        frame_sequence: replay_sequence
+            .wrapping_mul(1_000_000)
+            .wrapping_add(original.frame_sequence),
+        payload_index: original.payload_index,
+    };
+    observation.metadata.observation_id = Some(identity);
+    observation.metadata.position_freshness =
+        observation
+            .metadata
+            .position_freshness
+            .map(|mut freshness| {
+                freshness.identity = identity;
+                freshness
+            });
+    observation.metadata.altitude_freshness =
+        observation
+            .metadata
+            .altitude_freshness
+            .map(|mut freshness| {
+                freshness.identity = identity;
+                freshness
+            });
+    observation.metadata.velocity_freshness =
+        observation
+            .metadata
+            .velocity_freshness
+            .map(|mut freshness| {
+                freshness.identity = identity;
+                freshness
+            });
+    observation
 }
 
 /// Headless pipeline check: feed the scene, project, print the DisplayTracks,
@@ -175,12 +225,12 @@ fn run_selftest(scene: Scene) -> ! {
 
     // Confirm passes (ADS-B + MLAT), then a few MLAT-only passes, mirroring the
     // tier-4 test's warm-up so tracks reach a stable status.
-    for _ in 0..3 {
-        push_scene(&mut app, &scene, true);
+    for pass in 1..=3 {
+        push_scene(&mut app, &scene, true, pass);
         app.update();
     }
-    for _ in 0..4 {
-        push_scene(&mut app, &scene, false);
+    for pass in 4..=7 {
+        push_scene(&mut app, &scene, false, pass);
         app.update();
     }
     for _ in 0..3 {
@@ -246,6 +296,7 @@ fn run_server(ingest: Ingest, port: u16) -> ! {
                 mlat: scene.mlat,
                 timer: Timer::from_seconds(1.0, TimerMode::Repeating),
                 primed: false,
+                sequence: 0,
             })
             .add_systems(Update, feed_observations.before(FusionSet::Drain));
             info!("airjedi-agent starting on udp/{port} (fixture replay)");
@@ -477,15 +528,20 @@ fn feed_observations(
         return;
     }
     feed.primed = true;
+    feed.sequence = feed.sequence.wrapping_add(1);
 
     for c in &feed.adsb {
-        buffer
-            .observations
-            .push(make_observation(c, SensorKind::AdsbReceiver));
+        buffer.observations.push(make_replay_observation(
+            c,
+            SensorKind::AdsbReceiver,
+            feed.sequence,
+        ));
     }
     for c in &feed.mlat {
-        buffer
-            .observations
-            .push(make_observation(c, SensorKind::MlatNetwork));
+        buffer.observations.push(make_replay_observation(
+            c,
+            SensorKind::MlatNetwork,
+            feed.sequence,
+        ));
     }
 }

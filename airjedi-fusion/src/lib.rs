@@ -39,9 +39,10 @@ impl Plugin for FusionPlugin {
             .cloned()
             .unwrap_or_default();
 
-        let initiator = systems::TrackInitiator(track::initiation::MofNInitiator::new(
-            config.initiation.clone(),
-        ));
+        let initiator = systems::TrackInitiator {
+            initiator: track::initiation::MofNInitiator::new(config.initiation.clone()),
+            processed_observations: std::collections::HashSet::new(),
+        };
 
         app.init_resource::<systems::ObservationBuffer>()
             .init_resource::<clock::FusionClock>()

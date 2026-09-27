@@ -1,6 +1,7 @@
 use crate::prelude_imports::*;
 use crate::sensor::SensorObservation;
 use crate::types::{Timestamp, TrackId};
+use airjedi_core::ObservationIdentity;
 use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
 
@@ -9,6 +10,24 @@ pub struct StoredObservation {
     pub observation: SensorObservation,
     pub associated_track: Option<TrackId>,
     pub store_index: usize,
+}
+
+/// Source-aware identity used to consume one decoded report exactly once.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ObservationKey {
+    pub source_id: String,
+    pub identity: ObservationIdentity,
+}
+
+#[must_use]
+pub fn observation_key(observation: &SensorObservation) -> Option<ObservationKey> {
+    observation
+        .metadata
+        .observation_id
+        .map(|identity| ObservationKey {
+            source_id: observation.sensor_id.id.clone(),
+            identity,
+        })
 }
 
 #[derive(Clone, Debug)]
@@ -32,6 +51,7 @@ pub struct TimelineStore {
     unassociated_obs: Vec<StoredObservation>,
     next_index: usize,
     config: StoreConfig,
+    seen_observations: std::collections::HashSet<ObservationKey>,
 }
 
 impl TimelineStore {
@@ -42,10 +62,16 @@ impl TimelineStore {
             unassociated_obs: Vec::new(),
             next_index: 0,
             config,
+            seen_observations: std::collections::HashSet::new(),
         }
     }
 
-    pub fn insert(&mut self, observation: SensorObservation) {
+    pub fn insert(&mut self, observation: SensorObservation) -> bool {
+        if let Some(key) = observation_key(&observation) {
+            if !self.seen_observations.insert(key) {
+                return false;
+            }
+        }
         let stored = StoredObservation {
             observation,
             associated_track: None,
@@ -53,6 +79,7 @@ impl TimelineStore {
         };
         self.next_index += 1;
         self.unassociated_obs.push(stored);
+        true
     }
 
     pub fn associate(&mut self, unassociated_idx: usize, track_id: &TrackId) {
@@ -104,23 +131,51 @@ impl TimelineStore {
         &self.unassociated_obs
     }
 
+    #[must_use]
+    pub fn observations_for_track(&self, track_id: &TrackId) -> Vec<&StoredObservation> {
+        self.by_track
+            .get(track_id)
+            .map(|observations| observations.iter().collect())
+            .unwrap_or_default()
+    }
+
+    fn forget_observation(&mut self, observation: &SensorObservation) {
+        if let Some(key) = observation_key(observation) {
+            self.seen_observations.remove(&key);
+        }
+    }
+
     pub fn evict_old(&mut self, now: Timestamp) {
         let cutoff = now
             - chrono::Duration::from_std(self.config.hot_retention)
                 .unwrap_or(chrono::Duration::seconds(60));
 
+        let mut forgotten = Vec::new();
         for buffer in self.by_track.values_mut() {
             while let Some(front) = buffer.front() {
                 if front.observation.timestamp < cutoff {
-                    buffer.pop_front();
+                    if let Some(observation) = buffer.pop_front() {
+                        if let Some(key) = observation_key(&observation.observation) {
+                            forgotten.push(key);
+                        }
+                    }
                 } else {
                     break;
                 }
             }
         }
+        for key in forgotten {
+            self.seen_observations.remove(&key);
+        }
 
-        self.unassociated_obs
-            .retain(|o| o.observation.timestamp >= cutoff);
+        let (old_unassociated, remaining): (Vec<_>, Vec<_>) = self
+            .unassociated_obs
+            .drain(..)
+            .partition(|observation| observation.observation.timestamp < cutoff);
+        self.unassociated_obs = remaining;
+        for observation in old_unassociated {
+            self.forget_observation(&observation.observation);
+        }
     }
 
     pub fn evict_and_collect(&mut self, now: Timestamp) -> Vec<StoredObservation> {
@@ -130,16 +185,23 @@ impl TimelineStore {
 
         let mut evicted = Vec::new();
 
+        let mut forgotten = Vec::new();
         for buffer in self.by_track.values_mut() {
             while let Some(front) = buffer.front() {
                 if front.observation.timestamp < cutoff {
                     if let Some(obs) = buffer.pop_front() {
+                        if let Some(key) = observation_key(&obs.observation) {
+                            forgotten.push(key);
+                        }
                         evicted.push(obs);
                     }
                 } else {
                     break;
                 }
             }
+        }
+        for key in forgotten {
+            self.seen_observations.remove(&key);
         }
 
         let split_idx = self
@@ -148,6 +210,9 @@ impl TimelineStore {
             .position(|o| o.observation.timestamp >= cutoff)
             .unwrap_or(self.unassociated_obs.len());
         let old_unassociated: Vec<_> = self.unassociated_obs.drain(..split_idx).collect();
+        for observation in &old_unassociated {
+            self.forget_observation(&observation.observation);
+        }
         evicted.extend(old_unassociated);
 
         evicted
@@ -165,7 +230,10 @@ impl TimelineStore {
     }
 
     pub fn clear_unassociated(&mut self) {
-        self.unassociated_obs.clear();
+        let observations = std::mem::take(&mut self.unassociated_obs);
+        for observation in observations {
+            self.forget_observation(&observation.observation);
+        }
     }
 }
 
@@ -175,6 +243,7 @@ mod tests {
     use crate::coord::CoordinateFrame;
     use crate::sensor::*;
     use crate::types::*;
+    use airjedi_core::ObservationIdentity;
     use chrono::Utc;
     use nalgebra::DMatrix;
 
@@ -293,5 +362,29 @@ mod tests {
         let track_id = TrackId::new();
         store.associate(99, &track_id);
         assert_eq!(store.total_observation_count(), 0);
+    }
+
+    #[test]
+    fn deduplicates_by_source_and_observation_identity() {
+        let mut store = TimelineStore::new(StoreConfig::default());
+        let identity = ObservationIdentity {
+            frame_sequence: 42,
+            payload_index: 0,
+        };
+        let timestamp = Utc::now();
+
+        let mut first = make_test_obs("sensor-a");
+        first.timestamp = timestamp;
+        first.receipt_time = timestamp;
+        first.metadata.observation_id = Some(identity);
+        assert!(store.insert(first.clone()));
+        assert!(!store.insert(first));
+
+        let mut independent = make_test_obs("sensor-b");
+        independent.timestamp = timestamp;
+        independent.receipt_time = timestamp;
+        independent.metadata.observation_id = Some(identity);
+        assert!(store.insert(independent));
+        assert_eq!(store.total_observation_count(), 2);
     }
 }

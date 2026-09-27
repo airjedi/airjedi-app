@@ -1,6 +1,6 @@
 use crate::coord::CoordinateFrame;
 use crate::types::{StateVectorType, TargetCategory, TargetId, Timestamp};
-use airjedi_core::{ObservationIdentity, TimeSourceQuality};
+use airjedi_core::{ObservationFreshness, ObservationIdentity, TimeSourceQuality};
 use nalgebra::{DMatrix, DVector};
 
 // `SensorKind` moved to `airjedi-core` so `SensorContributions` can name it
@@ -89,6 +89,31 @@ pub struct ObservationMetadata {
     pub observation_id: Option<ObservationIdentity>,
     /// Quality of the observation timestamp.
     pub time_source: Option<TimeSourceQuality>,
+    /// Freshness of the position field in this observation.
+    pub position_freshness: Option<ObservationFreshness>,
+    /// Freshness of the altitude field in this observation.
+    pub altitude_freshness: Option<ObservationFreshness>,
+    /// Freshness of the velocity/track fields in this observation.
+    pub velocity_freshness: Option<ObservationFreshness>,
+}
+
+impl SensorObservation {
+    /// Whether this observation carries field-level freshness information.
+    #[must_use]
+    pub fn has_field_freshness(&self) -> bool {
+        self.metadata.position_freshness.is_some()
+            || self.metadata.altitude_freshness.is_some()
+            || self.metadata.velocity_freshness.is_some()
+    }
+
+    /// Whether this is a telemetry-only update with no new position fix.
+    #[must_use]
+    pub fn is_telemetry_only(&self) -> bool {
+        self.has_field_freshness()
+            && self.metadata.position_freshness.is_none()
+            && (self.metadata.altitude_freshness.is_some()
+                || self.metadata.velocity_freshness.is_some())
+    }
 }
 
 pub trait SensorSource: Send + Sync + 'static {

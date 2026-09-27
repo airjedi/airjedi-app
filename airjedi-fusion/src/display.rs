@@ -10,7 +10,7 @@
 //! for any sensor that can fill that hint.
 
 use crate::{IdentifierType, StateVectorType, Track, TrackQuality, TrackStatus, TrackerState};
-use airjedi_core::{DisplayTrack, PositionSource};
+use airjedi_core::{DisplayTrack, ObservationFreshness, PositionSource};
 
 /// Below this ground speed the client should not dead-reckon between updates.
 /// Owned here so `DisplayTrack.predicting` and the client interpolation agree.
@@ -36,6 +36,18 @@ pub struct RawObservationHint {
     pub roll_angle: Option<f32>,
     pub track_angle_rate: Option<f32>,
     pub callsign: Option<String>,
+    pub position_freshness: Option<ObservationFreshness>,
+    pub altitude_freshness: Option<ObservationFreshness>,
+    pub velocity_freshness: Option<ObservationFreshness>,
+}
+
+impl RawObservationHint {
+    #[must_use]
+    pub fn has_field_freshness(&self) -> bool {
+        self.position_freshness.is_some()
+            || self.altitude_freshness.is_some()
+            || self.velocity_freshness.is_some()
+    }
 }
 
 /// Human label for the active filter, used in diagnostics UIs.
@@ -77,7 +89,12 @@ pub fn derive_display_track(
 
     let heading = compute_heading_from_ecef(lat, lon, &vel_ecef, speed_mps);
 
-    let alt_ft = hint.and_then(|h| h.altitude_ft).unwrap_or(filter_alt_ft);
+    let field_freshness_known = hint.is_some_and(RawObservationHint::has_field_freshness);
+    let alt_ft = if !field_freshness_known || hint.and_then(|h| h.altitude_freshness).is_some() {
+        hint.and_then(|h| h.altitude_ft).unwrap_or(filter_alt_ft)
+    } else {
+        filter_alt_ft
+    };
     let vrate = hint
         .and_then(|h| h.vertical_rate)
         .or_else(|| compute_vertical_rate(&vel_ecef, lat, lon));
@@ -89,23 +106,31 @@ pub fn derive_display_track(
     // observation wins.
     let heading = if is_coasting {
         heading
-    } else {
+    } else if !field_freshness_known || hint.and_then(|h| h.velocity_freshness).is_some() {
         hint.and_then(|h| h.track_deg).or(heading)
+    } else {
+        heading
     };
     let speed_kts = if is_coasting {
         speed_kts
-    } else {
+    } else if !field_freshness_known || hint.and_then(|h| h.velocity_freshness).is_some() {
         hint.and_then(|h| h.velocity_kts).unwrap_or(speed_kts)
+    } else {
+        speed_kts
     };
     let lat = if is_coasting {
         lat
-    } else {
+    } else if !field_freshness_known || hint.and_then(|h| h.position_freshness).is_some() {
         hint.and_then(|h| h.latitude).unwrap_or(lat)
+    } else {
+        lat
     };
     let lon = if is_coasting {
         lon
-    } else {
+    } else if !field_freshness_known || hint.and_then(|h| h.position_freshness).is_some() {
         hint.and_then(|h| h.longitude).unwrap_or(lon)
+    } else {
+        lon
     };
 
     let squawk = hint.and_then(|h| h.squawk.clone());
@@ -138,6 +163,17 @@ pub fn derive_display_track(
 
     let mode = tracker.mode_info();
 
+    let last_seen = [
+        Some(track.last_update),
+        hint.and_then(|h| h.position_freshness.map(|f| f.receipt_time)),
+        hint.and_then(|h| h.altitude_freshness.map(|f| f.receipt_time)),
+        hint.and_then(|h| h.velocity_freshness.map(|f| f.receipt_time)),
+    ]
+    .into_iter()
+    .flatten()
+    .max()
+    .unwrap_or(track.last_update);
+
     DisplayTrack {
         track_id: track.id.clone(),
         icao,
@@ -145,6 +181,9 @@ pub fn derive_display_track(
         latitude: lat,
         longitude: lon,
         altitude_ft: Some(alt_ft),
+        position_freshness: hint.and_then(|h| h.position_freshness),
+        altitude_freshness: hint.and_then(|h| h.altitude_freshness),
+        velocity_freshness: hint.and_then(|h| h.velocity_freshness),
         heading: heading.map(|h| h as f32),
         velocity_kts: Some(speed_kts),
         vertical_rate: vrate,
@@ -155,7 +194,7 @@ pub fn derive_display_track(
         alert,
         emergency,
         spi,
-        last_seen: track.last_update,
+        last_seen,
         status: quality.status,
         position_source,
         h_uncertainty_m: horizontal_uncertainty_m(tracker),
@@ -203,9 +242,8 @@ fn compute_vertical_rate(vel_ecef: &[f64; 3], lat_deg: f64, lon_deg: f64) -> Opt
     let sin_lon = lon_rad.sin();
     let cos_lon = lon_rad.cos();
 
-    let vu = cos_lat * cos_lon * vel_ecef[0]
-        + cos_lat * sin_lon * vel_ecef[1]
-        + sin_lat * vel_ecef[2];
+    let vu =
+        cos_lat * cos_lon * vel_ecef[0] + cos_lat * sin_lon * vel_ecef[1] + sin_lat * vel_ecef[2];
 
     let vr_fpm = vu / 0.00508;
     if vr_fpm.abs() > 0.1 {
@@ -246,4 +284,105 @@ fn horizontal_uncertainty_m(tracker: &TrackerState) -> Option<f64> {
         - 2.0 * sin_lat * cos_lat * sin_lon * pos_cov[(1, 2)];
 
     Some((var_east.abs() + var_north.abs()).sqrt())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::coord::CoordinateFrame;
+    use crate::sensor::{
+        FusionTier, Measurement, ObservationCovariance, ObservationMetadata, SensorId, SensorKind,
+        SensorObservation,
+    };
+    use crate::types::{IdentifierType, TargetCategory, TargetDomain, TargetId, TrackId};
+    use crate::{FusionConfig, Track};
+    use airjedi_core::{ObservationFreshness, ObservationIdentity, TimeSourceQuality};
+    use chrono::Utc;
+    use nalgebra::DMatrix;
+
+    fn freshness(frame_sequence: u64) -> ObservationFreshness {
+        let time = Utc::now();
+        ObservationFreshness {
+            observation_time: time,
+            receipt_time: time,
+            time_source: TimeSourceQuality::ReceiptTime,
+            identity: ObservationIdentity {
+                frame_sequence,
+                payload_index: 0,
+            },
+        }
+    }
+
+    #[test]
+    fn telemetry_only_hint_updates_telemetry_without_overwriting_position() {
+        let observation = SensorObservation {
+            sensor_id: SensorId {
+                id: "test-adsb".to_string(),
+                kind: SensorKind::AdsbReceiver,
+                tier: FusionTier::Regional,
+                coordinate_frame: CoordinateFrame::Wgs84,
+            },
+            timestamp: Utc::now(),
+            receipt_time: Utc::now(),
+            target_id: Some(TargetId {
+                domain: TargetDomain::Air,
+                id: "ABC123".to_string(),
+                id_type: IdentifierType::Icao,
+            }),
+            measurement: Measurement::PositionVelocity3D {
+                lat_deg: 37.0,
+                lon_deg: -97.0,
+                alt_m: Some(10_000.0),
+                vel_north_mps: Some(100.0),
+                vel_east_mps: Some(0.0),
+                vel_down_mps: Some(0.0),
+                heading_deg: Some(0.0),
+            },
+            covariance: ObservationCovariance {
+                matrix: DMatrix::identity(6, 6) * 100.0,
+            },
+            classification_hint: Some(TargetCategory::FixedWing),
+            metadata: ObservationMetadata::default(),
+        };
+        let mut tracker = FusionConfig::default().create_tracker(&TargetCategory::FixedWing);
+        tracker.variant.initialize(&observation);
+        let expected_position = tracker.position_geodetic();
+        let track = Track {
+            id: TrackId::new(),
+            cooperative_ids: vec![observation.target_id.clone().unwrap()],
+            created_at: observation.timestamp,
+            last_update: observation.timestamp,
+            is_on_ground: false,
+        };
+        let quality = TrackQuality {
+            status: TrackStatus::Confirmed,
+            ..Default::default()
+        };
+        let hint = RawObservationHint {
+            latitude: Some(0.0),
+            longitude: Some(0.0),
+            altitude_ft: Some(35_000),
+            velocity_kts: Some(250.0),
+            position_freshness: None,
+            altitude_freshness: Some(freshness(2)),
+            velocity_freshness: Some(freshness(3)),
+            ..Default::default()
+        };
+
+        let display = derive_display_track(&track, &tracker, &quality, Some(&hint), None);
+
+        assert!((display.latitude - expected_position.0).abs() < 1e-6);
+        assert!((display.longitude - expected_position.1).abs() < 1e-6);
+        assert_eq!(display.altitude_ft, Some(35_000));
+        assert_eq!(display.velocity_kts, Some(250.0));
+        assert!(display.position_freshness.is_none());
+        assert_eq!(
+            display.altitude_freshness.unwrap().identity.frame_sequence,
+            2
+        );
+        assert_eq!(
+            display.velocity_freshness.unwrap().identity.frame_sequence,
+            3
+        );
+    }
 }
