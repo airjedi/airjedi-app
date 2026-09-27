@@ -2,6 +2,7 @@ use crate::associator::gnn::GnnAssociator;
 use crate::associator::spatial_index::SpatialIndex;
 use crate::associator::AssociatorConfig;
 use crate::classification::TargetClassification;
+use crate::clock::FusionClock;
 use crate::config::FusionConfig;
 use crate::filter::{FilterResult, TrackerState};
 use crate::prelude_imports::*;
@@ -10,7 +11,6 @@ use crate::store::TimelineStore;
 use crate::track::initiation::MofNInitiator;
 use crate::track::{LifecycleProfiles, Track, TrackQuality, TrackStatus};
 use crate::types::TrackId;
-use chrono::Utc;
 
 #[derive(Resource)]
 pub struct TrackInitiator(pub MofNInitiator);
@@ -76,13 +76,13 @@ const REACQUIRE_GAP: std::time::Duration = std::time::Duration::from_secs(3);
 pub fn fusion_update_system(
     store: Res<TimelineStore>,
     mut tracks: Query<(&mut Track, &mut TrackerState, &mut TrackQuality)>,
-    time: Res<Time>,
+    clock: Res<FusionClock>,
 ) {
-    let dt = time.delta_secs_f64();
+    let dt = clock.delta_secs_f64();
     if dt <= 0.0 {
         return;
     }
-    let now = Utc::now();
+    let now = clock.now_utc();
 
     for (mut track, mut tracker, mut quality) in &mut tracks {
         // Always predict, even when coasting or lost. Skipping predict() during coasting
@@ -158,13 +158,14 @@ pub fn update_spatial_index(
 }
 
 pub fn track_status_system(
-    time: Res<Time>,
+    clock: Res<FusionClock>,
     lifecycle: Res<LifecycleProfiles>,
     mut tracks: Query<(&mut TrackQuality, &TargetClassification)>,
 ) {
     for (mut quality, classification) in &mut tracks {
         let config = lifecycle.get(&classification.category);
-        let staleness = quality.staleness + time.delta();
+        let staleness =
+            quality.staleness + std::time::Duration::from_secs_f64(clock.delta_secs_f64().max(0.0));
         quality.transition(staleness, config);
     }
 }
@@ -175,6 +176,7 @@ pub fn track_initiation_system(
     existing_tracks: Query<&Track>,
     fusion_config: Res<FusionConfig>,
     mut initiator: ResMut<TrackInitiator>,
+    clock: Res<FusionClock>,
 ) {
     use std::collections::HashSet;
 
@@ -182,7 +184,7 @@ pub fn track_initiation_system(
         return;
     }
 
-    let now = Utc::now();
+    let now = clock.now_utc();
 
     let existing_ids: HashSet<String> = existing_tracks
         .iter()
@@ -205,9 +207,7 @@ pub fn track_initiation_system(
 
         let promote_obs = match decision {
             crate::track::initiation::InitiationDecision::Promote(promoted) => promoted,
-            crate::track::initiation::InitiationDecision::SinglePoint => {
-                obs.observation.clone()
-            }
+            crate::track::initiation::InitiationDecision::SinglePoint => obs.observation.clone(),
             crate::track::initiation::InitiationDecision::Pending => continue,
         };
 
@@ -271,6 +271,6 @@ pub fn track_cleanup_system(
     }
 }
 
-pub fn store_eviction_system(mut store: ResMut<TimelineStore>) {
-    store.evict_old(Utc::now());
+pub fn store_eviction_system(mut store: ResMut<TimelineStore>, clock: Res<FusionClock>) {
+    store.evict_old(clock.now_utc());
 }

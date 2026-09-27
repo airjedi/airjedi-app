@@ -11,12 +11,14 @@ use super::{Frame, FrameType, Framer};
 #[derive(Debug)]
 pub struct SdrFramer {
     frames: VecDeque<Frame>,
+    next_sequence: u64,
 }
 
 impl SdrFramer {
     pub fn new() -> Self {
         Self {
             frames: VecDeque::new(),
+            next_sequence: 0,
         }
     }
 }
@@ -52,7 +54,10 @@ impl Framer for SdrFramer {
             SHORT_MSG_LEN
         };
 
+        let sequence = self.next_sequence;
+        self.next_sequence = self.next_sequence.wrapping_add(1);
         self.frames.push_back(Frame {
+            sequence,
             data: Bytes::copy_from_slice(&mode_s[..frame_len]),
             frame_type,
             timestamp: None,

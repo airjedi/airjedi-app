@@ -75,7 +75,7 @@ fn decode_positioned_contacts() -> Vec<Contact> {
         framer.feed(chunk);
         while let Some(frame) = framer.next_frame() {
             for msg in decoder.decode(&frame) {
-                tracker.process_message(msg);
+                tracker.process_decoded_message(msg);
             }
         }
     }

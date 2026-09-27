@@ -35,7 +35,6 @@ use bevy::prelude::*;
 use bevy::state::app::StatesPlugin;
 use bevy_replicon::prelude::{RepliconChannels, RepliconPlugins};
 use bevy_replicon_renet::RepliconRenetPlugins;
-use chrono::Utc;
 
 use crate::ingest::{Contact, Scene, default_fixture_dir, load_scene, make_observation};
 use crate::replicate_tracks::{MlatSet, TrackEntityMap, sync_replicated_tracks};
@@ -152,19 +151,18 @@ fn add_fusion_and_projection(app: &mut App, mlat_set: std::collections::HashSet<
 
 /// Push the whole scene into the observation buffer at the current instant.
 fn push_scene(app: &mut App, scene: &Scene, include_adsb: bool) {
-    let now = Utc::now();
     let mut buffer = app.world_mut().resource_mut::<ObservationBuffer>();
     if include_adsb {
         for c in &scene.adsb {
             buffer
                 .observations
-                .push(make_observation(c, SensorKind::AdsbReceiver, now));
+                .push(make_observation(c, SensorKind::AdsbReceiver));
         }
     }
     for c in &scene.mlat {
         buffer
             .observations
-            .push(make_observation(c, SensorKind::MlatNetwork, now));
+            .push(make_observation(c, SensorKind::MlatNetwork));
     }
 }
 
@@ -353,12 +351,11 @@ fn feed_live_observations(
     if !timer.0.just_finished() {
         return;
     }
-    let now = Utc::now();
     if let Ok(contacts) = live.0.lock() {
         for c in contacts.iter() {
             buffer
                 .observations
-                .push(make_observation(c, SensorKind::AdsbReceiver, now));
+                .push(make_observation(c, SensorKind::AdsbReceiver));
         }
     }
 }
@@ -481,15 +478,14 @@ fn feed_observations(
     }
     feed.primed = true;
 
-    let now = Utc::now();
     for c in &feed.adsb {
         buffer
             .observations
-            .push(make_observation(c, SensorKind::AdsbReceiver, now));
+            .push(make_observation(c, SensorKind::AdsbReceiver));
     }
     for c in &feed.mlat {
         buffer
             .observations
-            .push(make_observation(c, SensorKind::MlatNetwork, now));
+            .push(make_observation(c, SensorKind::MlatNetwork));
     }
 }

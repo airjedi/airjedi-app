@@ -1,5 +1,6 @@
 use crate::coord::CoordinateFrame;
 use crate::types::{StateVectorType, TargetCategory, TargetId, Timestamp};
+use airjedi_core::{ObservationIdentity, TimeSourceQuality};
 use nalgebra::{DMatrix, DVector};
 
 // `SensorKind` moved to `airjedi-core` so `SensorContributions` can name it
@@ -84,6 +85,10 @@ pub struct ObservationMetadata {
     pub accuracy_category: Option<u8>,
     pub source_label: String,
     pub is_on_ground: Option<bool>,
+    /// Source-local identity used to distinguish repeated polls from reports.
+    pub observation_id: Option<ObservationIdentity>,
+    /// Quality of the observation timestamp.
+    pub time_source: Option<TimeSourceQuality>,
 }
 
 pub trait SensorSource: Send + Sync + 'static {

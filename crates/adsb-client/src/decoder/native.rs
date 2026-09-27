@@ -4,7 +4,8 @@ use crate::framing::{Frame, FrameType};
 use crate::protocol::beast::{adsb, cpr::CprState, modes};
 use crate::protocol::{AircraftMessage, Icao, MessagePayload};
 
-use super::Decoder;
+use super::{decorate_messages, Decoder, ObservationClock};
+use chrono::{DateTime, Utc};
 
 /// Decoder that uses the built-in Mode-S/ADS-B decode pipeline.
 ///
@@ -14,6 +15,7 @@ pub struct NativeDecoder {
     cpr_state: HashMap<Icao, CprState>,
     known_icao: HashSet<Icao>,
     reference_position: Option<(f64, f64)>,
+    clock: ObservationClock,
 }
 
 impl std::fmt::Debug for NativeDecoder {
@@ -32,6 +34,7 @@ impl NativeDecoder {
             cpr_state: HashMap::new(),
             known_icao: HashSet::new(),
             reference_position: None,
+            clock: ObservationClock::default(),
         }
     }
 
@@ -244,8 +247,9 @@ impl Default for NativeDecoder {
 }
 
 impl Decoder for NativeDecoder {
-    fn decode(&mut self, frame: &Frame) -> Vec<AircraftMessage> {
-        match frame.frame_type {
+    fn decode_at(&mut self, frame: &Frame, receipt_time: DateTime<Utc>) -> Vec<super::DecodedMessage> {
+        let (observation_time, time_source) = self.clock.resolve(frame.timestamp, receipt_time);
+        let messages = match frame.frame_type {
             FrameType::ModeAC | FrameType::TextLine => vec![],
             FrameType::ModeSShort => self
                 .decode_short(&frame.data, frame.signal_level)
@@ -255,7 +259,8 @@ impl Decoder for NativeDecoder {
                 .decode_long(&frame.data, frame.signal_level)
                 .into_iter()
                 .collect(),
-        }
+        };
+        decorate_messages(frame, receipt_time, observation_time, time_source, messages)
     }
 
     fn set_reference_position(&mut self, lat: f64, lon: f64) {
@@ -264,6 +269,7 @@ impl Decoder for NativeDecoder {
 
     fn reset(&mut self) {
         self.cpr_state.clear();
+        self.clock.reset();
     }
 }
 
@@ -274,6 +280,7 @@ mod tests {
 
     fn make_frame(data: &[u8], frame_type: FrameType, signal_level: Option<f32>) -> Frame {
         Frame {
+            sequence: 0,
             timestamp: None,
             signal_level,
             data: Bytes::copy_from_slice(data),

@@ -141,8 +141,10 @@ fn adsb_aircraft_to_observation(
             tier: FusionTier::Regional,
             coordinate_frame: CoordinateFrame::Wgs84,
         },
-        timestamp: ac.last_seen,
-        receipt_time: Utc::now(),
+        timestamp: ac
+            .position_observation_time
+            .unwrap_or(ac.last_observation_time),
+        receipt_time: ac.last_seen,
         target_id: Some(TargetId {
             domain: TargetDomain::Air,
             id: ac.icao.to_string(),
@@ -163,6 +165,8 @@ fn adsb_aircraft_to_observation(
             source_label: source_label.to_string(),
             is_on_ground: ac.is_on_ground,
             accuracy_category: enrichment.and_then(|e| e.nic),
+            observation_id: ac.position_observation_id.or(Some(ac.last_observation_id)),
+            time_source: ac.position_time_source.or(Some(ac.last_time_source)),
             ..Default::default()
         },
     })

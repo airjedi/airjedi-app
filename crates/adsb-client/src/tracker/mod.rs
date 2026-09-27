@@ -19,11 +19,13 @@
 
 use std::collections::HashMap;
 
+use airjedi_core::{ObservationIdentity, TimeSourceQuality};
 use chrono::{DateTime, Utc};
+#[cfg(feature = "tracker-jump-detection")]
 use log::{info, warn};
 use tokio::sync::broadcast;
 
-use crate::protocol::{AircraftMessage, Icao, MessagePayload};
+use crate::protocol::{AircraftMessage, DecodedMessage, Icao, MessagePayload, MessageTiming};
 
 // Constants for position validation and tracking
 const NAUTICAL_MILE_CONVERSION: f64 = 1.15078; // 1 nautical mile = 1.15078 statute miles
@@ -120,6 +122,18 @@ pub struct Aircraft {
     pub signal_level: Option<f32>,
     /// Timestamp of last received message.
     pub last_seen: DateTime<Utc>,
+    /// Measurement time of the latest decoded report.
+    pub last_observation_time: DateTime<Utc>,
+    /// Timestamp quality of the latest decoded report.
+    pub last_time_source: TimeSourceQuality,
+    /// Identity of the latest decoded report.
+    pub last_observation_id: ObservationIdentity,
+    /// Measurement time of the latest accepted position report.
+    pub position_observation_time: Option<DateTime<Utc>>,
+    /// Timestamp quality of the latest accepted position report.
+    pub position_time_source: Option<TimeSourceQuality>,
+    /// Identity of the latest accepted position report.
+    pub position_observation_id: Option<ObservationIdentity>,
     /// Timestamp of last accepted position update (for jump detection).
     last_position_time: Option<DateTime<Utc>>,
     /// Position history for trail rendering.
@@ -129,7 +143,7 @@ pub struct Aircraft {
 }
 
 impl Aircraft {
-    fn new(icao: Icao) -> Self {
+    fn new(icao: Icao, receipt_time: DateTime<Utc>) -> Self {
         Self {
             icao,
             callsign: None,
@@ -155,7 +169,16 @@ impl Aircraft {
             wind_direction: None,
             temperature: None,
             signal_level: None,
-            last_seen: Utc::now(),
+            last_seen: receipt_time,
+            last_observation_time: receipt_time,
+            last_time_source: TimeSourceQuality::ReceiptTime,
+            last_observation_id: ObservationIdentity {
+                frame_sequence: 0,
+                payload_index: 0,
+            },
+            position_observation_time: None,
+            position_time_source: None,
+            position_observation_id: None,
             last_position_time: None,
             position_history: Vec::new(),
             #[cfg(feature = "tracker-jump-detection")]
@@ -181,6 +204,7 @@ impl Aircraft {
         center_lat: f64,
         center_lon: f64,
         max_distance: f64,
+        observation_time: DateTime<Utc>,
     ) -> bool {
         // Check if position is within max distance from center
         let distance_from_center = haversine_distance(center_lat, center_lon, lat, lon);
@@ -191,10 +215,9 @@ impl Aircraft {
         // Redundant with rs1090 CPR validation; enable for hardware decoders that bypass it.
         #[cfg(feature = "tracker-jump-detection")]
         if let (Some(last_lat), Some(last_lon)) = (self.latitude, self.longitude) {
-            let now = Utc::now();
             let time_since_last_position = self
                 .last_position_time
-                .map(|t| (now - t).num_seconds())
+                .map(|t| (observation_time - t).num_seconds())
                 .unwrap_or(i64::MAX);
 
             if time_since_last_position <= JUMP_DETECTION_TIME_WINDOW_SECONDS {
@@ -231,13 +254,13 @@ impl Aircraft {
                 lat,
                 lon,
                 altitude: self.altitude,
-                timestamp: Utc::now(),
+                timestamp: observation_time,
             });
         }
 
         self.latitude = Some(lat);
         self.longitude = Some(lon);
-        self.last_position_time = Some(Utc::now());
+        self.last_position_time = Some(observation_time);
         #[cfg(feature = "tracker-jump-detection")]
         {
             self.consecutive_rejections = 0;
@@ -246,8 +269,7 @@ impl Aircraft {
         true
     }
 
-    fn cleanup_old_history(&mut self, max_age_seconds: i64) {
-        let now = Utc::now();
+    fn cleanup_old_history_at(&mut self, now: DateTime<Utc>, max_age_seconds: i64) {
         self.position_history
             .retain(|point| (now - point.timestamp).num_seconds() < max_age_seconds);
     }
@@ -344,15 +366,35 @@ impl AircraftTracker {
 
     /// Process an incoming aircraft message.
     pub fn process_message(&mut self, msg: AircraftMessage) {
+        let now = Utc::now();
+        self.process_decoded_message(DecodedMessage::new(
+            msg,
+            MessageTiming::receipt_time(
+                now,
+                ObservationIdentity {
+                    frame_sequence: 0,
+                    payload_index: 0,
+                },
+            ),
+        ));
+    }
+
+    /// Process a decoded message without replacing its observation timing.
+    pub fn process_decoded_message(&mut self, decoded: DecodedMessage) {
+        let timing = decoded.timing;
+        let msg = decoded.message;
         let icao = msg.icao();
         let is_new = !self.aircraft.contains_key(&icao);
 
         let aircraft = self
             .aircraft
             .entry(icao)
-            .or_insert_with(|| Aircraft::new(icao));
+            .or_insert_with(|| Aircraft::new(icao, timing.receipt_time));
 
-        aircraft.last_seen = Utc::now();
+        aircraft.last_seen = timing.receipt_time;
+        aircraft.last_observation_time = timing.observation_time;
+        aircraft.last_time_source = timing.time_source;
+        aircraft.last_observation_id = timing.identity;
 
         if let Some(sl) = msg.signal_level {
             aircraft.signal_level = Some(sl);
@@ -401,8 +443,12 @@ impl AircraftTracker {
                     self.center_lat,
                     self.center_lon,
                     self.max_distance_miles,
+                    timing.observation_time,
                 );
                 if updated {
+                    aircraft.position_observation_time = Some(timing.observation_time);
+                    aircraft.position_time_source = Some(timing.time_source);
+                    aircraft.position_observation_id = Some(timing.identity);
                     let _ = self.event_tx.send(TrackerEvent::PositionUpdated(icao));
                 }
             }
@@ -542,11 +588,14 @@ impl AircraftTracker {
 
     /// Remove stale aircraft and clean up old position history.
     pub fn cleanup_stale(&mut self) {
-        let now = Utc::now();
+        self.cleanup_stale_at(Utc::now());
+    }
 
+    /// Remove stale aircraft using an injected receipt-time clock.
+    pub fn cleanup_stale_at(&mut self, now: DateTime<Utc>) {
         // Clean up old position history
         for aircraft in self.aircraft.values_mut() {
-            aircraft.cleanup_old_history(self.position_history_secs);
+            aircraft.cleanup_old_history_at(now, self.position_history_secs);
         }
 
         // Remove aircraft that haven't been seen recently
@@ -567,6 +616,25 @@ impl AircraftTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn position_message(timing: MessageTiming, latitude: f64) -> DecodedMessage {
+        DecodedMessage::new(
+            AircraftMessage {
+                icao: Icao(0xA1B2C3),
+                signal_level: None,
+                payload: MessagePayload::Position {
+                    latitude,
+                    longitude: -118.5,
+                    altitude: Some(35000),
+                    ground_speed: None,
+                    track: None,
+                    is_on_ground: None,
+                    altitude_gnss: None,
+                },
+            },
+            timing,
+        )
+    }
 
     #[test]
     fn test_haversine_distance() {
@@ -620,6 +688,56 @@ mod tests {
         assert_eq!(aircraft.altitude, Some(35000));
         assert_eq!(tracker.positioned_len(), 1);
         assert_eq!(tracker.position_history_len(), 1);
+    }
+
+    #[test]
+    fn repeated_cached_position_keeps_measurement_time() {
+        let observation_time = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        let receipt_time = observation_time + chrono::Duration::seconds(10);
+        let timing = MessageTiming {
+            observation_time,
+            receipt_time,
+            time_source: TimeSourceQuality::ReceiverClock,
+            identity: ObservationIdentity {
+                frame_sequence: 7,
+                payload_index: 0,
+            },
+        };
+        let mut tracker = AircraftTracker::new(TrackerConfig {
+            center: Some((33.9425, -118.4081)),
+            ..Default::default()
+        });
+
+        tracker.process_decoded_message(position_message(timing, 34.0));
+        tracker.process_decoded_message(position_message(timing, 34.0));
+
+        let aircraft = tracker.get_by_icao(Icao(0xA1B2C3)).unwrap();
+        assert_eq!(aircraft.last_seen, receipt_time);
+        assert_eq!(aircraft.position_observation_time, Some(observation_time));
+        assert_eq!(aircraft.position_observation_id, Some(timing.identity));
+        assert_eq!(aircraft.position_history.len(), 1);
+        assert_eq!(aircraft.position_history[0].timestamp, observation_time);
+    }
+
+    #[test]
+    fn silent_feed_ages_from_receipt_time() {
+        let receipt_time = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        let timing = MessageTiming::receipt_time(
+            receipt_time,
+            ObservationIdentity {
+                frame_sequence: 1,
+                payload_index: 0,
+            },
+        );
+        let mut tracker = AircraftTracker::new(TrackerConfig {
+            aircraft_timeout_secs: 5,
+            ..Default::default()
+        });
+
+        tracker.process_decoded_message(position_message(timing, 34.0));
+        tracker.cleanup_stale_at(receipt_time + chrono::Duration::seconds(6));
+
+        assert!(tracker.is_empty());
     }
 
     #[test]

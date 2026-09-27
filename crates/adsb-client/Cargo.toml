@@ -47,6 +47,7 @@ soapy = ["sdr", "desperado/soapy"]
 
 [dependencies]
 async-trait = "0.1"
+airjedi-core = { path = "../../airjedi-core" }
 bytes = "1"
 tokio = { version = "1", features = ["net", "io-util", "sync", "time", "rt", "macros"] }
 tokio-util = "0.7"

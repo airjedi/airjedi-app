@@ -15,12 +15,14 @@
 
 pub mod display;
 pub mod ids;
+pub mod observation;
 pub mod sensor_kind;
 pub mod source;
 pub mod status;
 
 pub use display::*;
 pub use ids::*;
+pub use observation::*;
 pub use sensor_kind::*;
 pub use source::*;
 pub use status::*;

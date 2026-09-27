@@ -1,5 +1,6 @@
 pub mod associator;
 pub mod classification;
+pub mod clock;
 pub mod config;
 pub mod coord;
 pub mod display;
@@ -14,6 +15,7 @@ pub mod transport;
 pub mod types;
 
 pub use classification::TargetClassification;
+pub use clock::FusionClock;
 pub use config::FusionConfig;
 pub use display::{derive_display_track, filter_type_label, RawObservationHint};
 pub use filter::{ModeInfo, TrackerState};
@@ -37,11 +39,12 @@ impl Plugin for FusionPlugin {
             .cloned()
             .unwrap_or_default();
 
-        let initiator = systems::TrackInitiator(
-            track::initiation::MofNInitiator::new(config.initiation.clone()),
-        );
+        let initiator = systems::TrackInitiator(track::initiation::MofNInitiator::new(
+            config.initiation.clone(),
+        ));
 
         app.init_resource::<systems::ObservationBuffer>()
+            .init_resource::<clock::FusionClock>()
             .insert_resource(TimelineStore::new(config.store.clone()))
             .insert_resource(config.lifecycle.clone())
             .insert_resource(config.associator.clone())
@@ -60,6 +63,7 @@ impl Plugin for FusionPlugin {
                 )
                     .chain(),
             )
+            .add_systems(Update, clock::advance_fusion_clock.before(FusionSet::Drain))
             .add_systems(Update, systems::drain_observations.in_set(FusionSet::Drain))
             .add_systems(
                 Update,

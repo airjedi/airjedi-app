@@ -25,6 +25,7 @@ use adsb_client::{
     AircraftTracker, BeastFramer, Decoder, Framer, Icao, MessagePayload, Rs1090Decoder,
     TrackerConfig,
 };
+use chrono::{DateTime, Utc};
 
 // Surveyed receiver location from infra/k3s-pi/configmap.yaml (FEEDER_LAT/LONG),
 // used for CPR local decode fallback and distance filtering.
@@ -89,6 +90,7 @@ fn replay_beast(beast_fixture: &str) -> ReplayResult {
         position_history_secs: 3600,
         event_channel_capacity: 1024,
     });
+    let replay_receipt = DateTime::<Utc>::from_timestamp(0, 0).expect("Unix epoch is valid");
 
     let mut frames = 0usize;
     let mut counts = PayloadCounts::default();
@@ -96,7 +98,7 @@ fn replay_beast(beast_fixture: &str) -> ReplayResult {
         framer.feed(chunk);
         while let Some(frame) = framer.next_frame() {
             frames += 1;
-            for msg in decoder.decode(&frame) {
+            for msg in decoder.decode_at(&frame, replay_receipt) {
                 match &msg.payload {
                     MessagePayload::Identification { .. } => counts.identification += 1,
                     MessagePayload::Position { .. } => counts.position += 1,
@@ -104,7 +106,7 @@ fn replay_beast(beast_fixture: &str) -> ReplayResult {
                     MessagePayload::Altitude { .. } => counts.altitude += 1,
                     _ => counts.other += 1,
                 }
-                tracker.process_message(msg);
+                tracker.process_decoded_message(msg);
             }
         }
     }
