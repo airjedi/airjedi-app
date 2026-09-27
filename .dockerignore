@@ -1,0 +1,16 @@
+# Keep the Docker build context small. The agent build only needs the workspace
+# crate sources + Cargo manifests/lock; everything below is irrelevant to it.
+.git
+target
+**/target
+macos/build
+macos/tmp
+tmp
+docs
+# Large binary test fixtures (raw I/Q + gzipped captures) - the agent image runs
+# against a live feed (--feed), never the fixtures.
+**/*.bin
+**/tests/fixtures/ingest
+# Web client build artifacts
+airjedi-web/client/node_modules
+airjedi-web/client/dist

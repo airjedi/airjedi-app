@@ -1,0 +1,65 @@
+# Headless AirJedi fusion agent (design-b): ingests readsb's BEAST feed, runs the
+# multi-sensor fusion + display projection, and replicates render-ready
+# DisplayTracks to thin clients (the desktop app built with `--features
+# thin-client`). See infra/k3s-pi/README.md for build/deploy and <PI_HOST>.
+#
+# hostNetwork so:
+#   - the renet/UDP transport (5599) is reachable at <PI_HOST>:5599 with no
+#     port-forward (netcode uses Unsecure auth on this trusted homelab LAN), and
+#   - the agent reaches readsb's BEAST output at localhost:30005 (readsb also
+#     runs hostNetwork on this node).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: airjedi-agent
+  namespace: feeders
+  labels:
+    app: airjedi-agent
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate # hostNetwork binds a fixed UDP port; only one pod at a time
+  selector:
+    matchLabels:
+      app: airjedi-agent
+  template:
+    metadata:
+      labels:
+        app: airjedi-agent
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      nodeSelector:
+        kubernetes.io/hostname: airjedi # same node as readsb (the BEAST source)
+      containers:
+        - name: airjedi-agent
+          # Locally imported image (see README: build -> k3s ctr images import).
+          # For a registry, use ghcr.io/<owner>/airjedi-agent:0.1.2 instead.
+          image: airjedi-agent:0.1.2
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--feed"
+            # IPv4 loopback explicitly: `localhost` can resolve to IPv6 [::1],
+            # and readsb's BEAST output over that path did not deliver frames to
+            # a long-lived client here. 127.0.0.1 matches the working path.
+            - "127.0.0.1:30005" # readsb BEAST, same host (hostNetwork)
+            - "--port"
+            - "5599"
+          env:
+            - name: RUST_LOG
+              value: "info,airjedi_agent=info"
+            - name: RUST_BACKTRACE
+              value: "1"
+            - name: AIRJEDI_AGENT_PUBLIC_ADDR
+              value: "192.168.1.10:5599"
+          terminationMessagePolicy: FallbackToLogsOnError
+          ports:
+            - name: replicon
+              containerPort: 5599
+              protocol: UDP
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              memory: "512Mi"

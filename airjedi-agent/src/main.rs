@@ -28,8 +28,8 @@ use std::time::{Duration, Instant};
 use airjedi_core::{DisplayEstimate, DisplayTrack, PositionSource, SensorContributions};
 use airjedi_fusion::sensor::SensorKind;
 use airjedi_fusion::systems::{FusionSet, ObservationBuffer};
-use airjedi_fusion::{FusionConfig, FusionPlugin};
-use airjedi_net::{create_client, create_server, register_replicated, DEFAULT_PORT};
+use airjedi_fusion::{FusionConfig, FusionPlugin, TimelineStore, Track};
+use airjedi_net::{DEFAULT_PORT, create_client, create_server, register_replicated};
 use bevy::app::ScheduleRunnerPlugin;
 use bevy::prelude::*;
 use bevy::state::app::StatesPlugin;
@@ -37,8 +37,8 @@ use bevy_replicon::prelude::{RepliconChannels, RepliconPlugins};
 use bevy_replicon_renet::RepliconRenetPlugins;
 use chrono::Utc;
 
-use crate::ingest::{default_fixture_dir, load_scene, make_observation, Contact, Scene};
-use crate::replicate_tracks::{sync_replicated_tracks, MlatSet, TrackEntityMap};
+use crate::ingest::{Contact, Scene, default_fixture_dir, load_scene, make_observation};
+use crate::replicate_tracks::{MlatSet, TrackEntityMap, sync_replicated_tracks};
 
 /// Where the agent gets observations from.
 enum Ingest {
@@ -52,9 +52,16 @@ enum Ingest {
 #[derive(Resource)]
 struct ServerPort(u16);
 
+#[derive(Resource)]
+struct ServerPublicAddr(SocketAddr);
+
 /// Throttle for draining the live-feed snapshot into fusion observations.
 #[derive(Resource)]
 struct LiveFeedTimer(Timer);
+
+/// Periodic counters for diagnosing growth in the long-running agent.
+#[derive(Resource)]
+struct DiagnosticsTimer(Timer);
 
 /// The replay scene as a resource, re-emitted on a timer to keep tracks alive.
 #[derive(Resource)]
@@ -72,7 +79,13 @@ fn main() {
     // and print the DisplayTracks it replicates. No fixture needed.
     if args.iter().any(|a| a == "--probe") {
         let connect = flag_value(&args, "--connect")
-            .and_then(|s| s.parse::<SocketAddr>().ok())
+            .and_then(|s| {
+                s.parse::<SocketAddr>().ok().or_else(|| {
+                    use std::net::ToSocketAddrs;
+
+                    s.to_socket_addrs().ok().and_then(|mut addrs| addrs.next())
+                })
+            })
             .unwrap_or_else(|| SocketAddr::from((Ipv4Addr::LOCALHOST, DEFAULT_PORT)));
         let secs = flag_value(&args, "--secs")
             .and_then(|s| s.parse::<u64>().ok())
@@ -98,7 +111,10 @@ fn main() {
     let scene = match load_scene(&dir) {
         Ok(scene) => scene,
         Err(e) => {
-            eprintln!("[agent] failed to load fixture scene from {}: {e}", dir.display());
+            eprintln!(
+                "[agent] failed to load fixture scene from {}: {e}",
+                dir.display()
+            );
             std::process::exit(1);
         }
     };
@@ -244,16 +260,86 @@ fn run_server(ingest: Ingest, port: u16) -> ! {
                     0.5,
                     TimerMode::Repeating,
                 )))
+                .insert_resource(DiagnosticsTimer(Timer::from_seconds(
+                    30.0,
+                    TimerMode::Repeating,
+                )))
                 .add_systems(Update, feed_live_observations.before(FusionSet::Drain));
             info!("airjedi-agent starting on udp/{port} (live BEAST feed {addr})");
         }
     }
 
     app.insert_resource(ServerPort(port))
-        .add_systems(Startup, setup_server);
+        .insert_resource(ServerPublicAddr(public_addr(port)))
+        .add_systems(Startup, setup_server)
+        .add_systems(Update, log_diagnostics);
 
     app.run();
     unreachable!("ScheduleRunnerPlugin loop never returns")
+}
+
+fn public_addr(port: u16) -> SocketAddr {
+    std::env::var("AIRJEDI_AGENT_PUBLIC_ADDR")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or_else(|| SocketAddr::from((Ipv4Addr::LOCALHOST, port)))
+}
+
+fn log_diagnostics(
+    time: Res<Time>,
+    timer: Option<ResMut<DiagnosticsTimer>>,
+    buffer: Res<ObservationBuffer>,
+    store: Res<TimelineStore>,
+    tracks: Query<&Track>,
+    displays: Query<(), With<DisplayTrack>>,
+    estimates: Query<&DisplayEstimate>,
+    contributions: Query<&SensorContributions>,
+    entity_map: Res<TrackEntityMap>,
+    live: Option<Res<live_ingest::LiveAircraft>>,
+) {
+    let Some(mut timer) = timer else {
+        return;
+    };
+    timer.0.tick(time.delta());
+    if !timer.0.just_finished() {
+        return;
+    }
+
+    let live_contacts = live
+        .as_ref()
+        .and_then(|live| live.0.lock().ok().map(|contacts| contacts.len()));
+    let estimate_samples: usize = estimates
+        .iter()
+        .map(|estimate| estimate.samples.len())
+        .sum();
+    let sensor_sources: usize = contributions.iter().map(|value| value.sources.len()).sum();
+
+    info!(
+        "agent diag: rss_bytes={:?} live_contacts={live_contacts:?} observation_buffer={} stored_observations={} tracks={} display_entities={} entity_map={} estimate_samples={} sensor_sources={}",
+        process_rss_bytes(),
+        buffer.observations.len(),
+        store.total_observation_count(),
+        tracks.iter().count(),
+        displays.iter().count(),
+        entity_map.0.len(),
+        estimate_samples,
+        sensor_sources,
+    );
+}
+
+fn process_rss_bytes() -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        let status = std::fs::read_to_string("/proc/self/status").ok()?;
+        let line = status.lines().find(|line| line.starts_with("VmRSS:"))?;
+        let kib = line.split_whitespace().nth(1)?.parse::<u64>().ok()?;
+        return Some(kib * 1024);
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
 }
 
 /// Drain the live-feed snapshot into fusion observations on a timer.
@@ -365,8 +451,13 @@ fn report_probe(app: &mut App) {
     }
 }
 
-fn setup_server(mut commands: Commands, channels: Res<RepliconChannels>, port: Res<ServerPort>) {
-    match create_server(&channels, port.0) {
+fn setup_server(
+    mut commands: Commands,
+    channels: Res<RepliconChannels>,
+    port: Res<ServerPort>,
+    public_addr: Res<ServerPublicAddr>,
+) {
+    match create_server(&channels, port.0, public_addr.0) {
         Ok((server, transport)) => {
             commands.insert_resource(server);
             commands.insert_resource(transport);

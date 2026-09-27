@@ -254,6 +254,152 @@ Document each capture (sizes, sha256, source-type breakdown, aircraft count) in
 `crates/adsb-client/tests/fixtures/ingest/README.md` - kept separate from the
 raw I/Q fixtures README.
 
+## AirJedi fusion agent
+
+`airjedi-agent-deployment.yaml` runs the headless design-b fusion agent on the
+`airjedi` node: it ingests readsb's BEAST output (`localhost:30005`), runs the
+multi-sensor fusion + display projection, and replicates render-ready
+`DisplayTrack`s over renet/UDP `5599` to thin clients (the desktop app built
+`--features thin-client`). `hostNetwork` means it reaches readsb locally and is
+reachable at `<PI_HOST>:5599` with no port-forward.
+
+### Build the image (arm64 - the node is arm64)
+
+From the repo root:
+
+```bash
+docker buildx build --platform linux/arm64 \
+  -f airjedi-agent/Dockerfile -t airjedi-agent:0.1.2 --load .
+```
+
+The build compiles only the agent's dependency graph (no desktop app / egui /
+libgit2), so it stays lean.
+
+### Get it onto the node
+
+**Option A - local import (no registry).** The image is a few hundred MB; over
+the flaky home WAN prefer a LAN transfer if you have one, and always verify the
+transfer (see the scp/rsync caveats under "Transferring the capture" above).
+
+```bash
+docker save airjedi-agent:0.1.2 | gzip > /tmp/airjedi-agent.tar.gz
+scp /tmp/airjedi-agent.tar.gz <PI_SSH_USER>@<PI_HOST>:/tmp/
+ssh <PI_SSH_USER>@<PI_HOST> \
+  "gunzip -c /tmp/airjedi-agent.tar.gz | sudo k3s ctr images import -"
+```
+
+The manifest uses `image: airjedi-agent:0.1.2` with `imagePullPolicy:
+IfNotPresent`, so k3s uses the imported image without trying to pull.
+
+**Option B - registry (avoids the WAN transfer).** Push to a registry the node
+can pull from, and set `image:` in the manifest accordingly:
+
+```bash
+docker buildx build --platform linux/arm64 \
+  -f airjedi-agent/Dockerfile -t ghcr.io/<owner>/airjedi-agent:0.1.2 --push .
+# then edit airjedi-agent-deployment.yaml: image: ghcr.io/<owner>/airjedi-agent:0.1.2
+# (add an imagePullSecret if the package is private)
+```
+
+### Apply and verify
+
+```bash
+kubectl apply -f airjedi-agent-deployment.yaml
+kubectl -n feeders rollout status deploy/airjedi-agent
+# Expect: "live ingest connected to localhost:30005" and "listening ... udp/5599"
+kubectl -n feeders logs deploy/airjedi-agent
+
+# The UDP port is bound on the host (hostNetwork):
+ssh <PI_SSH_USER>@<PI_HOST> "ss -ulnp | grep 5599"
+
+# End-to-end from any machine on the LAN, using the built-in probe client
+# (same replicon transport the app uses):
+cargo run -p airjedi-agent -- --probe --connect <PI_HOST>:5599 --secs 8
+# Expect a growing DisplayTrack count.
+```
+
+### Point the desktop thin client at it
+
+Edit the installed bundle's agent address (no rebuild needed):
+
+```bash
+/usr/libexec/PlistBuddy -c "Set :LSEnvironment:AIRJEDI_THIN_AGENT <PI_HOST>:5599" \
+  /Applications/AirJedi.app/Contents/Info.plist
+```
+
+or launch with `AIRJEDI_THIN_AGENT=<PI_HOST>:5599 open -a AirJedi`. On a code
+change, bump the tag (`0.1.3`, ...), rebuild/import, update the manifest image,
+and `kubectl -n feeders rollout restart deploy/airjedi-agent`.
+
+### Diagnostics and troubleshooting
+
+The agent emits diagnostic lines every 30 seconds. Monitor these fields when
+investigating memory growth:
+
+- `rss_bytes`: Linux process RSS.
+- `position_history`: retained aircraft position samples.
+- `stored_observations`: fusion timeline observations, retained for 60 seconds.
+- `tracks` and `display_entities`: active fused and replicated tracks.
+
+The deployment enables `RUST_BACKTRACE=1` and
+`terminationMessagePolicy: FallbackToLogsOnError`, so panic backtraces and the
+tail of a failed container's output remain available in pod status even when
+the container is restarted.
+
+The live ingest tracker evicts stale aircraft every five seconds and retains
+position history for 120 seconds. The agent deployment also sets
+`AIRJEDI_AGENT_PUBLIC_ADDR` so netcode advertises the LAN address rather than
+loopback.
+
+The client transport must bind its UDP socket to `0.0.0.0:0`; binding to
+`127.0.0.1:0` prevents replies from a remote agent from reaching the client.
+The corresponding server and client fixes are included in `airjedi-agent:0.1.2`.
+
+The observed steady-state baseline on `airjedi.custine.com` is approximately
+`0.4` CPU cores, `43Mi` Kubernetes memory, and `55.8MiB` process RSS, with no
+restarts. Track and observation counts vary with local traffic.
+
+### Persistent crash logs
+
+The device's default `/var/log` is a small `tmpfs`, so its journal and k3s
+container logs disappear after a reboot. Install `airjedi-journald.conf` into
+the device's journald drop-in directory, remove the volatile `/var/log` mount,
+and let `/var/log` use the persistent NVMe-backed root filesystem:
+
+```bash
+ssh <PI_SSH_USER>@<PI_HOST> 'sudo mkdir -p /etc/systemd/journald.conf.d'
+scp infra/k3s-pi/airjedi-journald.conf <PI_SSH_USER>@<PI_HOST>:/tmp/airjedi-journald.conf
+ssh <PI_SSH_USER>@<PI_HOST> \
+  'sudo install -o root -g systemd-journal -m 0644 /tmp/airjedi-journald.conf /etc/systemd/journald.conf.d/airjedi.conf && \
+   sudo cp -a /etc/fstab /etc/fstab.airjedi-before-persistent-logs && \
+   sudo sed -i "\\|^tmpfs /var/log tmpfs |s|^|# AirJedi persistent logging: |" /etc/fstab && \
+   sudo systemctl daemon-reload'
+```
+
+Reboot once to apply the `/var/log` mount change. The backup at
+`/etc/fstab.airjedi-before-persistent-logs` allows the mount change to be
+reversed if needed. After the reboot, verify journald is persistent and the
+k3s container log paths are on the root filesystem:
+
+```bash
+ssh <PI_SSH_USER>@<PI_HOST> \
+  'mount | grep " /var/log " && \
+   sudo journalctl --flush && \
+   sudo journalctl --disk-usage && \
+   sudo find /var/log/pods -type f -maxdepth 3 -printf "%p %s bytes\\n"'
+```
+
+After installation, collect the previous boot and workload evidence with:
+
+```bash
+ssh <PI_SSH_USER>@<PI_HOST> \
+  'sudo journalctl --list-boots; \
+   sudo journalctl -b -1 -k --no-pager; \
+   sudo journalctl -b -1 -u k3s --no-pager; \
+   sudo k3s kubectl -n feeders describe pod -l app=airjedi-agent; \
+   sudo k3s kubectl -n feeders logs deploy/airjedi-agent --previous --timestamps'
+```
+
 ## Notes
 
 - Both deployments use `hostNetwork: true` and are pinned to node `airjedi`

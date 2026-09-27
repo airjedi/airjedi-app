@@ -484,9 +484,7 @@ impl AircraftTracker {
                 aircraft.wind_direction = wind_direction;
                 aircraft.temperature = Some(temperature);
             }
-            MessagePayload::MeteorologicalHazard {
-                temperature, ..
-            } => {
+            MessagePayload::MeteorologicalHazard { temperature, .. } => {
                 if let Some(t) = temperature {
                     aircraft.temperature = Some(t);
                 }
@@ -510,6 +508,24 @@ impl AircraftTracker {
     #[must_use]
     pub fn len(&self) -> usize {
         self.aircraft.len()
+    }
+
+    /// Count aircraft with a currently known position.
+    #[must_use]
+    pub fn positioned_len(&self) -> usize {
+        self.aircraft
+            .values()
+            .filter(|aircraft| aircraft.latitude.is_some() && aircraft.longitude.is_some())
+            .count()
+    }
+
+    /// Count retained position samples across all aircraft.
+    #[must_use]
+    pub fn position_history_len(&self) -> usize {
+        self.aircraft
+            .values()
+            .map(|aircraft| aircraft.position_history.len())
+            .sum()
     }
 
     /// Check if there are no tracked aircraft.
@@ -602,6 +618,34 @@ mod tests {
         assert_eq!(aircraft.latitude, Some(34.0));
         assert_eq!(aircraft.longitude, Some(-118.5));
         assert_eq!(aircraft.altitude, Some(35000));
+        assert_eq!(tracker.positioned_len(), 1);
+        assert_eq!(tracker.position_history_len(), 1);
+    }
+
+    #[test]
+    fn test_cleanup_removes_stale_aircraft() {
+        let mut tracker = AircraftTracker::new(TrackerConfig {
+            aircraft_timeout_secs: 1,
+            ..Default::default()
+        });
+
+        tracker.process_message(AircraftMessage {
+            icao: Icao(0xA1B2C3),
+            signal_level: None,
+            payload: MessagePayload::Identification {
+                callsign: "UAL123".to_string(),
+                category: None,
+            },
+        });
+        tracker
+            .aircraft
+            .get_mut(&Icao(0xA1B2C3))
+            .expect("aircraft was inserted")
+            .last_seen = Utc::now() - chrono::Duration::seconds(2);
+
+        tracker.cleanup_stale();
+
+        assert!(tracker.is_empty());
     }
 
     #[test]

@@ -58,6 +58,7 @@ pub fn register_replicated(app: &mut App) {
 pub fn create_server(
     channels: &RepliconChannels,
     port: u16,
+    public_addr: SocketAddr,
 ) -> Result<(RenetServer, NetcodeServerTransport), Box<dyn Error>> {
     let server = RenetServer::new(ConnectionConfig {
         server_channels_config: channels.server_configs(),
@@ -67,7 +68,6 @@ pub fn create_server(
 
     let current_time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?;
     let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, port))?;
-    let public_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let server_config = ServerConfig {
         current_time,
         max_clients: 64,
@@ -97,7 +97,9 @@ pub fn create_client(
 
     let current_time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?;
     let client_id = current_time.as_millis() as u64;
-    let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))?;
+    // Bind on all local interfaces so replies from a remote agent can reach the
+    // client. Binding to loopback only works for the in-process round-trip test.
+    let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))?;
     let authentication = ClientAuthentication::Unsecure {
         client_id,
         protocol_id: PROTOCOL_ID,

@@ -31,7 +31,7 @@
     <key>LSEnvironment</key>
     <dict>
         <key>AIRJEDI_THIN_AGENT</key>
-        <string>127.0.0.1:5599</string>
+        <string>airjedi.custine.com:5599</string>
     </dict>
 </dict>
 </plist>

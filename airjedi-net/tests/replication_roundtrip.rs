@@ -51,14 +51,23 @@ fn sample_track() -> DisplayTrack {
 
 fn base_app() -> App {
     let mut app = App::new();
-    app.add_plugins((MinimalPlugins, StatesPlugin, RepliconPlugins, RepliconRenetPlugins));
+    app.add_plugins((
+        MinimalPlugins,
+        StatesPlugin,
+        RepliconPlugins,
+        RepliconRenetPlugins,
+    ));
     register_replicated(&mut app);
     app
 }
 
 fn setup_server(mut commands: Commands, channels: Res<RepliconChannels>) {
-    let (server, transport) =
-        create_server(&channels, TEST_PORT).expect("server transport should start");
+    let (server, transport) = create_server(
+        &channels,
+        TEST_PORT,
+        SocketAddr::from((Ipv4Addr::LOCALHOST, TEST_PORT)),
+    )
+    .expect("server transport should start");
     commands.insert_resource(server);
     commands.insert_resource(transport);
     commands.spawn((Replicated, sample_track()));
@@ -94,17 +103,27 @@ fn display_track_replicates_agent_to_client() {
         server.update();
         client.update();
         std::thread::sleep(Duration::from_millis(8));
-        received = client.world_mut().query::<&DisplayTrack>().iter(client.world()).count();
+        received = client
+            .world_mut()
+            .query::<&DisplayTrack>()
+            .iter(client.world())
+            .count();
         if received >= 1 {
             break;
         }
     }
 
-    assert!(received >= 1, "client never received the replicated DisplayTrack");
+    assert!(
+        received >= 1,
+        "client never received the replicated DisplayTrack"
+    );
 
     let world = client.world_mut();
     let mut q = world.query::<&DisplayTrack>();
-    let dt = q.iter(world).next().expect("replicated DisplayTrack present");
+    let dt = q
+        .iter(world)
+        .next()
+        .expect("replicated DisplayTrack present");
     assert_eq!(dt.icao, "ae5e13", "icao should round-trip");
     assert_eq!(
         dt.position_source,

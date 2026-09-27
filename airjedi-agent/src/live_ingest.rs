@@ -22,22 +22,24 @@ pub struct LiveAircraft(pub Arc<Mutex<Vec<Contact>>>);
 
 /// Spawn the reader thread. `addr` is `host:port` for a BEAST feed.
 pub fn spawn_beast_reader(addr: String, shared: Arc<Mutex<Vec<Contact>>>) {
-    std::thread::spawn(move || loop {
-        match TcpStream::connect(&addr) {
-            Ok(stream) => {
-                info!("live ingest connected to {addr}");
-                run_reader(stream, &shared);
-                warn!("live ingest disconnected from {addr}; reconnecting in 3s");
+    std::thread::spawn(move || {
+        loop {
+            match TcpStream::connect(&addr) {
+                Ok(stream) => {
+                    info!("live ingest connected to {addr}");
+                    run_reader(stream, &shared);
+                    warn!("live ingest disconnected from {addr}; reconnecting in 3s");
+                }
+                Err(e) => {
+                    warn!("live ingest connect to {addr} failed: {e}; retrying in 3s");
+                }
             }
-            Err(e) => {
-                warn!("live ingest connect to {addr} failed: {e}; retrying in 3s");
+            // Drop stale contacts while disconnected so the client doesn't show ghosts.
+            if let Ok(mut guard) = shared.lock() {
+                guard.clear();
             }
+            std::thread::sleep(Duration::from_secs(3));
         }
-        // Drop stale contacts while disconnected so the client doesn't show ghosts.
-        if let Ok(mut guard) = shared.lock() {
-            guard.clear();
-        }
-        std::thread::sleep(Duration::from_secs(3));
     });
 }
 
@@ -56,17 +58,38 @@ fn run_reader(mut stream: TcpStream, shared: &Arc<Mutex<Vec<Contact>>>) {
 
     let mut buf = [0u8; 8192];
     let mut last_snapshot = Instant::now();
+    let mut last_log = Instant::now();
+    let mut last_cleanup = Instant::now();
+    let mut frames: u64 = 0;
+    let mut msgs: u64 = 0;
+    let mut bytes: u64 = 0;
     loop {
         let n = match stream.read(&mut buf) {
             Ok(0) => return, // clean EOF
             Ok(n) => n,
             Err(_) => return, // treat any error as disconnect -> reconnect
         };
+        bytes += n as u64;
         framer.feed(&buf[..n]);
         while let Some(frame) = framer.next_frame() {
+            frames += 1;
             for msg in decoder.decode(&frame) {
+                msgs += 1;
                 tracker.process_message(msg);
             }
+        }
+        if last_cleanup.elapsed() >= Duration::from_secs(5) {
+            tracker.cleanup_stale();
+            last_cleanup = Instant::now();
+        }
+        if last_log.elapsed() >= Duration::from_secs(30) {
+            info!(
+                "live ingest diag: bytes={bytes} frames={frames} msgs={msgs} aircraft={} positioned={} position_history={}",
+                tracker.len(),
+                tracker.positioned_len(),
+                tracker.position_history_len(),
+            );
+            last_log = Instant::now();
         }
         if last_snapshot.elapsed() >= Duration::from_millis(500) {
             let contacts: Vec<Contact> = tracker
