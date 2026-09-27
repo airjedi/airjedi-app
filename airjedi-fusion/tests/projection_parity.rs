@@ -109,10 +109,12 @@ fn equivalent_timestamped_observations_project_identically_in_both_modes() {
     let at = Utc.timestamp_opt(1_700_000_000, 0).single().unwrap();
     let raw = observation(at, 37.5, -97.5);
     let (track, tracker, quality, embedded_store) = fixture_state(at, raw.clone());
-    let (mut headless_track, headless_tracker, headless_quality, mut headless_store) =
+    let (mut headless_track, headless_tracker, headless_quality, _) =
         fixture_state(at, raw.clone());
     headless_track.id = track.id.clone();
+    let mut headless_store = TimelineStore::new(FusionConfig::default().store);
     headless_store.insert(raw);
+    headless_store.associate(0, &track.id);
 
     let embedded = project(&track, &tracker, &quality, &embedded_store);
     let headless = project(
@@ -238,8 +240,9 @@ fn reacquisition_applies_a_new_timestamped_raw_observation() {
     let old = observation(old_at, 37.5, -97.5);
     let new = observation(new_at, 38.5, -98.5);
     let (track, tracker, mut quality, _) = fixture_state(new_at, old);
-    let (_, _, _, mut new_store) = fixture_state(new_at, new.clone());
+    let mut new_store = TimelineStore::new(FusionConfig::default().store);
     new_store.insert(new);
+    new_store.associate(0, &track.id);
     quality.staleness = Duration::ZERO;
 
     let reacquired = project(&track, &tracker, &quality, &new_store);
