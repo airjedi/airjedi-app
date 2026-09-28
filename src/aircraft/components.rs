@@ -72,6 +72,7 @@ pub struct HistoryMaterialized {
     pub session_id: Option<HistorySessionId>,
     pub revision: u64,
     pub full: bool,
+    pub sample_count: usize,
 }
 
 #[derive(Component, Debug, Default)]

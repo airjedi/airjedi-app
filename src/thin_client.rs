@@ -424,10 +424,13 @@ fn materialize_client_history(
             (preview.session_id, preview.history_revision, false),
             |history| (history.session_id, history.history_revision, true),
         );
+        let sample_count =
+            full_history.map_or(preview.samples.len(), |history| history.samples.len());
         let unchanged = marker.is_some_and(|marker| {
             marker.session_id == Some(session_id)
                 && marker.revision == revision
                 && marker.full == full
+                && marker.sample_count == sample_count
         });
         if unchanged {
             continue;
@@ -442,6 +445,7 @@ fn materialize_client_history(
             session_id: Some(session_id),
             revision,
             full,
+            sample_count,
         });
     }
 }

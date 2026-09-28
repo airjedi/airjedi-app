@@ -1,10 +1,14 @@
-use airjedi_core::DisplayTrail;
+use airjedi_core::{
+    AltitudeReference, DisplayHistorySample, DisplayProvenance, DisplayTrail, HistoryBreakReason,
+};
 use bevy::prelude::*;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::fmt;
 use std::time::Instant;
+
+const TRAIL_DISCONTINUITY_SECS: i64 = 10;
 
 /// Which renderer to use for aircraft trails.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,6 +51,9 @@ pub struct TrailPoint {
     pub lat: f64,
     pub lon: f64,
     pub altitude: Option<i32>,
+    /// Reference for the altitude when one is present.
+    #[serde(default = "default_altitude_reference")]
+    pub altitude_reference: AltitudeReference,
     /// Seconds since session start (serializable replacement for Instant)
     pub timestamp: f64,
     /// True when this point was generated from EKF prediction rather than a real observation
@@ -62,6 +69,57 @@ pub struct TrailPoint {
     pub sample_sequence: Option<u64>,
     #[serde(default)]
     pub segment_id: u32,
+    /// Why this point starts a new authoritative continuity segment.
+    #[serde(default)]
+    pub break_reason: Option<HistoryBreakReason>,
+    /// Field-level source metadata retained for render adapters and diagnostics.
+    #[serde(default)]
+    pub provenance: DisplayProvenance,
+}
+
+fn default_altitude_reference() -> AltitudeReference {
+    AltitudeReference::Unknown
+}
+
+impl TrailPoint {
+    fn from_history_sample(
+        sample: &DisplayHistorySample,
+        server_time: DateTime<Utc>,
+        local_now_secs: f64,
+    ) -> Self {
+        Self {
+            lat: sample.latitude,
+            lon: sample.longitude,
+            altitude: sample.altitude_ft,
+            altitude_reference: sample.altitude_reference,
+            timestamp: local_timestamp_for_server_time(
+                local_now_secs,
+                server_time,
+                sample.state_time,
+            ),
+            estimated: sample.estimated,
+            timestamp_utc: Some(sample.state_time),
+            sample_sequence: Some(sample.sample_sequence),
+            segment_id: sample.segment_id,
+            break_reason: sample.break_reason,
+            provenance: sample.provenance.clone(),
+        }
+    }
+
+    /// True when the authoritative record says there is no drawable segment
+    /// between these points. The timestamp fallback protects older playback
+    /// data that predates explicit segment metadata.
+    #[must_use]
+    pub fn starts_new_segment(&self, previous: &Self) -> bool {
+        self.segment_id != previous.segment_id
+            || self.break_reason.is_some()
+            || self
+                .timestamp_utc
+                .zip(previous.timestamp_utc)
+                .is_some_and(|(current, previous)| {
+                    (current - previous).num_seconds() > TRAIL_DISCONTINUITY_SECS
+                })
+    }
 }
 
 /// Component storing trail history for an aircraft
@@ -128,11 +186,14 @@ impl TrailHistory {
             lat,
             lon,
             altitude,
+            altitude_reference: AltitudeReference::Unknown,
             timestamp: clock.now_secs(),
             estimated,
             timestamp_utc: None,
             sample_sequence: None,
             segment_id: 0,
+            break_reason: None,
+            provenance: DisplayProvenance::default(),
         });
     }
 
@@ -143,18 +204,11 @@ impl TrailHistory {
         let now = clock.now_secs();
         self.points.clear();
         for sample in &preview.samples {
-            let age_secs =
-                (preview.server_time - sample.state_time).num_milliseconds() as f64 / 1000.0;
-            self.points.push_back(TrailPoint {
-                lat: sample.latitude,
-                lon: sample.longitude,
-                altitude: sample.altitude_ft,
-                timestamp: now - age_secs,
-                estimated: sample.estimated,
-                timestamp_utc: Some(sample.state_time),
-                sample_sequence: Some(sample.sample_sequence),
-                segment_id: sample.segment_id,
-            });
+            self.points.push_back(TrailPoint::from_history_sample(
+                sample,
+                preview.server_time,
+                now,
+            ));
         }
     }
 
@@ -170,17 +224,8 @@ impl TrailHistory {
         let now = clock.now_secs();
         self.points.clear();
         for sample in samples {
-            let age_secs = (server_time - sample.state_time).num_milliseconds() as f64 / 1000.0;
-            self.points.push_back(TrailPoint {
-                lat: sample.latitude,
-                lon: sample.longitude,
-                altitude: sample.altitude_ft,
-                timestamp: now - age_secs,
-                estimated: sample.estimated,
-                timestamp_utc: Some(sample.state_time),
-                sample_sequence: Some(sample.sample_sequence),
-                segment_id: sample.segment_id,
-            });
+            self.points
+                .push_back(TrailPoint::from_history_sample(sample, server_time, now));
         }
     }
 
@@ -197,9 +242,85 @@ impl TrailHistory {
     }
 }
 
+/// Convert an authoritative server-time age to the local monotonic trail clock.
+/// Keeping this calculation independent from message arrival time prevents a
+/// delayed snapshot or correction from making old points appear newly observed.
+#[must_use]
+pub fn local_timestamp_for_server_time(
+    local_now_secs: f64,
+    server_time: DateTime<Utc>,
+    state_time: DateTime<Utc>,
+) -> f64 {
+    local_now_secs - (server_time - state_time).num_milliseconds() as f64 / 1000.0
+}
+
+/// Return the age-based opacity for one point using the local monotonic clock.
+#[must_use]
+pub fn point_opacity(
+    point: &TrailPoint,
+    clock: &SessionClock,
+    config: &TrailConfig,
+    selected: bool,
+) -> f32 {
+    let age = clock.age_secs(point.timestamp);
+    if selected {
+        age_opacity(
+            age,
+            config.solid_duration_seconds,
+            config.fade_duration_seconds,
+        )
+        .max(0.3)
+    } else if age > config.max_age_seconds as f64 {
+        0.0
+    } else {
+        age_opacity(
+            age,
+            config.solid_duration_seconds,
+            config.fade_duration_seconds,
+        )
+    }
+}
+
+/// Iterate only the drawable, contiguous pairs shared by both trail renderers.
+/// A missing 3D altitude is a hard break because drawing it at zero would imply
+/// an observed sea-level measurement.
+pub fn contiguous_trail_pairs<'a>(
+    points: &'a VecDeque<TrailPoint>,
+    clock: &SessionClock,
+    config: &TrailConfig,
+    selected: bool,
+    is_3d: bool,
+) -> Vec<(&'a TrailPoint, &'a TrailPoint)> {
+    let mut pairs = Vec::new();
+    let mut previous = None;
+
+    for point in points {
+        if point_opacity(point, clock, config, selected) <= 0.0
+            || (is_3d && point.altitude.is_none())
+        {
+            previous = None;
+            continue;
+        }
+
+        if let Some(previous_point) = previous {
+            if !point.starts_new_segment(previous_point) {
+                pairs.push((previous_point, point));
+            }
+        }
+        previous = Some(point);
+    }
+
+    pairs
+}
+
 /// Get color for altitude (cyan at low, purple at high)
 pub fn altitude_color(altitude: Option<i32>) -> Color {
-    let alt = altitude.unwrap_or(0).max(0) as f32;
+    let Some(altitude) = altitude else {
+        // Unknown altitude is intentionally neutral rather than the low-altitude
+        // cyan used for an observed value of exactly zero feet.
+        return Color::srgb(0.45, 0.48, 0.55);
+    };
+    let alt = altitude.max(0) as f32;
 
     // Altitude ranges: 0-10k cyan, 10k-20k green, 20k-30k yellow, 30k-40k orange, 40k+ purple
     let t = (alt / 40000.0).clamp(0.0, 1.0);
@@ -285,5 +406,128 @@ pub fn record_trail_points(
             estimated,
             &clock,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use airjedi_core::{
+        DisplayHistorySample, DisplayProvenance, HeadingReference, TrackStatus,
+        VerticalRateReference,
+    };
+    use chrono::{TimeZone, Utc};
+
+    fn sample(
+        sequence: u64,
+        state_time: DateTime<Utc>,
+        segment_id: u32,
+        break_reason: Option<HistoryBreakReason>,
+        altitude_ft: Option<i32>,
+    ) -> DisplayHistorySample {
+        DisplayHistorySample {
+            sample_sequence: sequence,
+            state_time,
+            latitude: 37.0 + sequence as f64 * 0.01,
+            longitude: -97.0,
+            altitude_ft,
+            altitude_reference: AltitudeReference::Barometric,
+            ground_speed_kts: Some(120.0),
+            heading: Some(90.0),
+            heading_reference: HeadingReference::GroundTrack,
+            vertical_rate: None,
+            vertical_rate_reference: VerticalRateReference::FeetPerMinute,
+            position_source: None,
+            status: TrackStatus::Confirmed,
+            estimated: false,
+            provenance: DisplayProvenance::default(),
+            segment_id,
+            break_reason,
+        }
+    }
+
+    #[test]
+    fn server_time_age_is_independent_of_delivery_delay() {
+        let server_time = Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap();
+        let state_time = server_time - chrono::Duration::seconds(45);
+        let local_timestamp = local_timestamp_for_server_time(100.0, server_time, state_time);
+
+        assert_eq!(local_timestamp, 55.0);
+    }
+
+    #[test]
+    fn correction_replaces_a_sample_without_duplicate_points() {
+        let server_time = Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap();
+        let original = sample(
+            1,
+            server_time - chrono::Duration::seconds(20),
+            0,
+            None,
+            Some(10_000),
+        );
+        let corrected = sample(1, original.state_time, 0, None, Some(12_000));
+        let mut history = TrailHistory::default();
+        let clock = SessionClock::default();
+
+        history.replace_from_samples(&[original], server_time, &clock);
+        history.replace_from_samples(&[corrected], server_time, &clock);
+
+        assert_eq!(history.points.len(), 1);
+        assert_eq!(history.points[0].altitude, Some(12_000));
+        assert_eq!(history.points[0].sample_sequence, Some(1));
+    }
+
+    #[test]
+    fn contiguous_pairs_break_on_gap_segment_and_missing_3d_altitude() {
+        let server_time = Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap();
+        let points = [
+            sample(
+                1,
+                server_time - chrono::Duration::seconds(6),
+                0,
+                None,
+                Some(10_000),
+            ),
+            sample(
+                2,
+                server_time - chrono::Duration::seconds(4),
+                0,
+                None,
+                Some(10_000),
+            ),
+            sample(
+                3,
+                server_time - chrono::Duration::seconds(2),
+                1,
+                Some(HistoryBreakReason::Reacquired),
+                Some(11_000),
+            ),
+            sample(4, server_time, 1, None, None),
+            sample(
+                5,
+                server_time + chrono::Duration::seconds(2),
+                1,
+                None,
+                Some(11_000),
+            ),
+        ];
+        let mut history = TrailHistory::default();
+        let clock = SessionClock::default();
+        history.replace_from_samples(&points, server_time, &clock);
+        let config = TrailConfig::default();
+
+        assert_eq!(
+            contiguous_trail_pairs(&history.points, &clock, &config, true, false).len(),
+            3
+        );
+        assert_eq!(
+            contiguous_trail_pairs(&history.points, &clock, &config, true, true).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn missing_altitude_has_distinct_color_from_observed_zero() {
+        assert_ne!(altitude_color(None), altitude_color(Some(0)));
     }
 }

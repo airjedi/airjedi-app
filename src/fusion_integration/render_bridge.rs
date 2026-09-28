@@ -5,7 +5,7 @@ use crate::aircraft::components::{
     Aircraft, AuthoritativeHistory, FusionDiagnostics, FusionTrackLink,
 };
 use crate::aircraft::picking::{on_aircraft_click, on_aircraft_hover, on_aircraft_out};
-use crate::aircraft::{InterpolationState, TrailHistory};
+use crate::aircraft::{AircraftListState, InterpolationState, TrailHistory};
 use crate::constants;
 use crate::geo;
 use crate::map::MapState;
@@ -44,6 +44,7 @@ pub fn sync_tracks_to_visuals(
     fusion_clock: Res<FusionClock>,
     clock: Res<super::clock::SimClock>,
     session_clock: Res<crate::aircraft::SessionClock>,
+    list_state: Res<AircraftListState>,
     map_state: Res<MapState>,
     local_origin: Res<LocalOrigin>,
     view3d_state: Res<view3d::View3DState>,
@@ -69,6 +70,9 @@ pub fn sync_tracks_to_visuals(
         let hint = raw_observation_hint_for(&timeline_store, track);
         let dt = derive_display_track(track, tracker, quality, hint.as_ref(), position_source);
         let preview = history.preview(&track.id, fusion_clock.now_utc());
+        let selected_history = (list_state.selected_icao.as_deref() == Some(dt.icao.as_str()))
+            .then(|| history.snapshot(&track.id, fusion_clock.now_utc()))
+            .flatten();
         let is_coasting = dt.status == TrackStatus::Coasting;
         commands
             .entity(track_entity)
@@ -107,7 +111,15 @@ pub fn sync_tracks_to_visuals(
                     aircraft.roll_last_seen = Some(dt.last_seen);
                 }
                 aircraft.last_seen = dt.last_seen;
-                trail.replace_from_display(&preview, &session_clock);
+                if let Some(snapshot) = selected_history.as_ref() {
+                    trail.replace_from_samples(
+                        &snapshot.samples,
+                        snapshot.server_time,
+                        &session_clock,
+                    );
+                } else {
+                    trail.replace_from_display(&preview, &session_clock);
+                }
                 if dt.squawk.is_some() {
                     aircraft.squawk = dt.squawk.clone();
                 }
