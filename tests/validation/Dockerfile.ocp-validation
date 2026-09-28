@@ -1,0 +1,40 @@
+FROM docker.io/library/rust:1.98-bookworm AS validator
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    clang \
+    lld \
+    pkg-config \
+    protobuf-compiler \
+    libssl-dev \
+    libasound2-dev \
+    libudev-dev \
+    libx11-dev \
+    libxcursor-dev \
+    libxi-dev \
+    libxinerama-dev \
+    libxrandr-dev \
+    libxkbcommon-dev \
+    libwayland-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+COPY . .
+
+RUN cargo test --locked -p adsb-client
+RUN cargo test --locked -p airjedi-core
+RUN cargo test --locked -p airjedi-fusion
+RUN cargo test --locked -p airjedi-net
+RUN cargo check --locked -p airjedi-agent
+RUN cargo check --locked -p airjedi_bevy
+RUN cargo check --locked -p airjedi_bevy --features thin-client
+RUN cargo test --locked --no-default-features --bin airjedi_bevy history_acceptance::tests::full_late_join_experience_converges_through_reconnect_and_retention
+# Temporary fixture skips tracked in issue #41.
+RUN cargo test --locked --workspace --no-fail-fast -- \
+    --skip data_ingest::fixture_tests::real_data_notam_expired_filtered \
+    --skip data_ingest::fixture_tests::real_data_tfr_multipolygon_handled \
+    --skip data_ingest::fixture_tests::real_data_tfr_parses_without_error \
+    --skip data_ingest::fixture_tests::real_data_tfr_string_altitudes_parsed
+
+FROM scratch

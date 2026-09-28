@@ -85,3 +85,6 @@ The completed host checks for this revision were:
 - Touched Rust files pass targeted rustfmt and `git diff --check`. A
   repository-wide `cargo fmt --all -- --check` still reports unrelated
   pre-existing formatting drift outside this change.
+
+The reproducible OKD `gpu-0` validation profile for these checks is documented
+in `docs/history-okd-validation.md`.
