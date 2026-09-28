@@ -22,14 +22,16 @@ use bevy::prelude::*;
 use bevy_replicon::prelude::{ClientState, RepliconChannels, RepliconPlugins};
 use bevy_replicon_renet::{netcode::NetcodeClientTransport, RenetClient, RepliconRenetPlugins};
 
-use airjedi_core::{DisplayEstimate, DisplayTrack, SensorContributions, TrackStatus};
+use airjedi_core::{DisplayEstimate, DisplayTrack, DisplayTrail, SensorContributions, TrackStatus};
 use airjedi_net::{create_client, register_replicated, DEFAULT_PORT};
 
 use crate::adsb::sync::AircraftModelRegistry;
+use crate::aircraft::components::AuthoritativeHistory;
 use crate::aircraft::interpolation::update_interpolation_on_adsb;
 use crate::aircraft::picking::{on_aircraft_click, on_aircraft_hover, on_aircraft_out};
 use crate::aircraft::{
-    AircraftListState, AircraftTypeDatabase, CameraFollowState, InterpolationState, TrailHistory,
+    AircraftListState, AircraftTypeDatabase, CameraFollowState, InterpolationState, SessionClock,
+    TrailHistory,
 };
 use crate::config::AppConfig;
 use crate::fusion_integration::estimated_track::EstimatedTrackConfig;
@@ -91,6 +93,7 @@ impl Plugin for ThinClientPlugin {
                     update_thin_status,
                     hydrate_new_tracks,
                     update_hydrated_tracks,
+                    materialize_history_preview,
                 )
                     .chain(),
             )
@@ -266,6 +269,7 @@ fn hydrate_new_tracks(
             Transform::from_xyz(pos.x, pos.y, crate::constants::AIRCRAFT_Z_LAYER),
             Pickable::default(),
             aircraft_from_display(dt),
+            AuthoritativeHistory,
             TrailHistory::default(),
             InterpolationState::new(
                 dt.latitude,
@@ -288,11 +292,26 @@ fn hydrate_new_tracks(
     }
 }
 
+/// Convert the replicated bounded preview into the local trail component. This
+/// is a rendering adapter only; it never records a new live sample.
+fn materialize_history_preview(
+    previews: Query<(&DisplayTrail, &mut TrailHistory), Changed<DisplayTrail>>,
+    clock: Res<SessionClock>,
+) {
+    for (preview, mut trail) in previews {
+        trail.replace_from_display(preview, &clock);
+    }
+}
+
 /// Push each replicated `DisplayTrack` change into its `Aircraft` view and
 /// refresh the interpolation baseline (mirrors the fat-mode render bridge).
 fn update_hydrated_tracks(
     mut query: Query<
-        (&DisplayTrack, &mut Aircraft, Option<&mut InterpolationState>),
+        (
+            &DisplayTrack,
+            &mut Aircraft,
+            Option<&mut InterpolationState>,
+        ),
         Changed<DisplayTrack>,
     >,
     time: Res<Time<Real>>,
@@ -369,7 +388,12 @@ fn draw_estimated_cones(
     list_state: Res<AircraftListState>,
     follow_state: Res<CameraFollowState>,
     local_origin: Res<LocalOrigin>,
-    tracks: Query<(&DisplayEstimate, &DisplayTrack, &Aircraft, Option<&InterpolationState>)>,
+    tracks: Query<(
+        &DisplayEstimate,
+        &DisplayTrack,
+        &Aircraft,
+        Option<&InterpolationState>,
+    )>,
 ) {
     if !config.enabled {
         return;
@@ -447,7 +471,11 @@ fn draw_estimated_cones(
         gizmos.line_2d(left, right, cross);
 
         if i == n - 1 {
-            gizmos.circle_2d(pos, radius.max(200.0), cone_center_color(maneuver_prob, 0.55));
+            gizmos.circle_2d(
+                pos,
+                radius.max(200.0),
+                cone_center_color(maneuver_prob, 0.55),
+            );
         }
 
         prev_center = pos;

@@ -39,7 +39,9 @@ use bevy_replicon::prelude::{RepliconChannels, RepliconPlugins};
 use bevy_replicon_renet::RepliconRenetPlugins;
 
 use crate::ingest::{default_fixture_dir, load_scene, make_observation, Contact, Scene};
-use crate::replicate_tracks::{sync_replicated_tracks, MlatSet, TrackEntityMap};
+use crate::replicate_tracks::{
+    sync_replicated_history, sync_replicated_tracks, MlatSet, TrackEntityMap,
+};
 
 /// Where the agent gets observations from.
 enum Ingest {
@@ -149,7 +151,13 @@ fn add_fusion_and_projection(app: &mut App, mlat_set: std::collections::HashSet<
     app.add_plugins(FusionPlugin)
         .init_resource::<TrackEntityMap>()
         .insert_resource(MlatSet(mlat_set))
-        .add_systems(Update, sync_replicated_tracks.after(FusionSet::Lifecycle));
+        .add_systems(
+            Update,
+            (
+                sync_replicated_tracks.after(FusionSet::Lifecycle),
+                sync_replicated_history.after(sync_replicated_tracks),
+            ),
+        );
 }
 
 /// Push the whole scene into the observation buffer at the current instant.

@@ -9,12 +9,12 @@
 use std::collections::{HashMap, HashSet};
 
 use airjedi_core::{
-    DisplayEstimate, DisplayTrack, PositionSource, PredictedSample, SensorContributions,
-    SensorReport, TrackId,
+    DisplayEstimate, DisplayTrack, DisplayTrail, PositionSource, PredictedSample,
+    SensorContributions, SensorReport, TrackId,
 };
 use airjedi_fusion::{
-    derive_display_track, raw_observation_hint_for, IdentifierType, Measurement, SensorObservation,
-    TimelineStore, Track, TrackQuality, TrackStatus, TrackerState,
+    derive_display_track, raw_observation_hint_for, FusionClock, HistoryRecorder, IdentifierType,
+    Measurement, SensorObservation, TimelineStore, Track, TrackQuality, TrackStatus, TrackerState,
 };
 use bevy::prelude::*;
 use bevy_replicon::prelude::Replicated;
@@ -52,6 +52,8 @@ pub fn sync_replicated_tracks(
     all_tracks: Query<&Track>,
     existing: Query<(), With<DisplayTrack>>,
     timeline_store: Res<TimelineStore>,
+    history: Res<HistoryRecorder>,
+    fusion_clock: Res<FusionClock>,
     mut map: ResMut<TrackEntityMap>,
     mlat: Res<MlatSet>,
 ) {
@@ -78,6 +80,7 @@ pub fn sync_replicated_tracks(
         //  - SensorContributions: latest per-sensor raw positions from the store.
         let hint = raw_observation_hint_for(&timeline_store, track);
         let dt = derive_display_track(track, tracker, quality, hint.as_ref(), position_source);
+        let trail = history.preview(&track_id, fusion_clock.now_utc());
         let estimate = sample_estimate(tracker);
         let contributions = contributions_for(&timeline_store, track);
 
@@ -85,11 +88,11 @@ pub fn sync_replicated_tracks(
             Some(entity) if existing.contains(entity) => {
                 commands
                     .entity(entity)
-                    .insert((dt, estimate, contributions));
+                    .insert((dt, trail, estimate, contributions));
             }
             _ => {
                 let entity = commands
-                    .spawn((Replicated, dt, estimate, contributions))
+                    .spawn((Replicated, dt, trail, estimate, contributions))
                     .id();
                 map.0.insert(track_id, entity);
             }
@@ -108,6 +111,31 @@ pub fn sync_replicated_tracks(
     for track_id in stale {
         if let Some(entity) = map.0.remove(&track_id) {
             commands.entity(entity).despawn();
+        }
+    }
+}
+
+/// Refresh only the bounded preview when the recorder advances. Current display
+/// projection remains on the tracker-change path above; history must not depend
+/// on clients, interpolation, or a track changing on this particular frame.
+pub fn sync_replicated_history(
+    mut commands: Commands,
+    history: Res<HistoryRecorder>,
+    fusion_clock: Res<FusionClock>,
+    map: Res<TrackEntityMap>,
+    tracks: Query<&Track>,
+    existing: Query<&DisplayTrail>,
+) {
+    let live: HashSet<TrackId> = tracks.iter().map(|track| track.id.clone()).collect();
+    for (track_id, entity) in &map.0 {
+        if !live.contains(track_id) {
+            continue;
+        }
+        let preview = history.preview(track_id, fusion_clock.now_utc());
+        if existing.get(*entity).map_or(true, |current| {
+            current.history_revision != preview.history_revision
+        }) {
+            commands.entity(*entity).insert(preview);
         }
     }
 }

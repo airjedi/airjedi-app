@@ -57,6 +57,11 @@ pub struct FusionTrackLink {
     pub track_id: airjedi_fusion::TrackId,
 }
 
+/// Marks a live track whose trail is owned by the agent-side history recorder.
+/// Playback entities deliberately do not carry this marker.
+#[derive(Component, Debug, Default)]
+pub struct AuthoritativeHistory;
+
 #[derive(Component, Debug, Default)]
 pub struct FusionDiagnostics {
     pub filter_type: &'static str,

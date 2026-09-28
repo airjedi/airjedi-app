@@ -1,4 +1,6 @@
+use airjedi_core::DisplayTrail;
 use bevy::prelude::*;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::fmt;
@@ -50,6 +52,16 @@ pub struct TrailPoint {
     /// True when this point was generated from EKF prediction rather than a real observation
     #[serde(default)]
     pub estimated: bool,
+    /// Original agent timestamp, retained even though the current renderer
+    /// adapts it to the local session clock for opacity calculations.
+    #[serde(default)]
+    pub timestamp_utc: Option<DateTime<Utc>>,
+    /// Stable authoritative sample identity when this point came from the
+    /// agent history preview. Playback points have no sequence.
+    #[serde(default)]
+    pub sample_sequence: Option<u64>,
+    #[serde(default)]
+    pub segment_id: u32,
 }
 
 /// Component storing trail history for an aircraft
@@ -118,7 +130,32 @@ impl TrailHistory {
             altitude,
             timestamp: clock.now_secs(),
             estimated,
+            timestamp_utc: None,
+            sample_sequence: None,
+            segment_id: 0,
         });
+    }
+
+    /// Materialize a bounded agent preview for rendering. The exact timestamp
+    /// remains on each point; `timestamp` is only a local opacity-coordinate
+    /// derived from the server time carried by the preview.
+    pub fn replace_from_display(&mut self, preview: &DisplayTrail, clock: &SessionClock) {
+        let now = clock.now_secs();
+        self.points.clear();
+        for sample in &preview.samples {
+            let age_secs =
+                (preview.server_time - sample.state_time).num_milliseconds() as f64 / 1000.0;
+            self.points.push_back(TrailPoint {
+                lat: sample.latitude,
+                lon: sample.longitude,
+                altitude: sample.altitude_ft,
+                timestamp: now - age_secs,
+                estimated: sample.estimated,
+                timestamp_utc: Some(sample.state_time),
+                sample_sequence: Some(sample.sample_sequence),
+                segment_id: sample.segment_id,
+            });
+        }
     }
 
     /// Remove points older than max_age
@@ -196,7 +233,10 @@ pub fn record_trail_points(
     mut timer: ResMut<TrailRecordTimer>,
     config: Res<TrailConfig>,
     clock: Res<SessionClock>,
-    mut query: Query<(&crate::Aircraft, &mut TrailHistory)>,
+    mut query: Query<
+        (&crate::Aircraft, &mut TrailHistory),
+        Without<super::components::AuthoritativeHistory>,
+    >,
 ) {
     if !config.enabled {
         return;

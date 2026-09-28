@@ -5,6 +5,7 @@ pub mod config;
 pub mod coord;
 pub mod display;
 pub mod filter;
+pub mod history;
 pub mod metrics;
 pub mod prelude_imports;
 pub mod sensor;
@@ -21,6 +22,7 @@ pub use display::{
     derive_display_track, filter_type_label, raw_observation_hint_for, RawObservationHint,
 };
 pub use filter::{ModeInfo, TrackerState};
+pub use history::{record_history_system, HistoryConfig, HistoryRecorder};
 pub use sensor::{Measurement, SensorObservation};
 pub use store::TimelineStore;
 pub use track::{Track, TrackQuality, TrackStatus};
@@ -49,6 +51,7 @@ impl Plugin for FusionPlugin {
         app.init_resource::<systems::ObservationBuffer>()
             .init_resource::<clock::FusionClock>()
             .insert_resource(TimelineStore::new(config.store.clone()))
+            .insert_resource(HistoryRecorder::new(config.history.clone()))
             .insert_resource(config.lifecycle.clone())
             .insert_resource(config.associator.clone())
             .insert_resource(initiator)
@@ -97,6 +100,12 @@ impl Plugin for FusionPlugin {
             .add_systems(
                 Update,
                 systems::store_eviction_system.in_set(FusionSet::Lifecycle),
+            )
+            .add_systems(
+                Update,
+                history::record_history_system
+                    .in_set(FusionSet::Lifecycle)
+                    .after(systems::track_cleanup_system),
             );
 
         // Conditionally add NATS transport systems when feature is enabled

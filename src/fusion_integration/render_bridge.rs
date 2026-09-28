@@ -1,7 +1,9 @@
 use crate::adsb::connection::FeedConnectionManager;
 use crate::adsb::enrichment::{EnrichmentConnectionManager, PositionSource};
 use crate::adsb::sync::AircraftModelRegistry;
-use crate::aircraft::components::{Aircraft, FusionDiagnostics, FusionTrackLink};
+use crate::aircraft::components::{
+    Aircraft, AuthoritativeHistory, FusionDiagnostics, FusionTrackLink,
+};
 use crate::aircraft::picking::{on_aircraft_click, on_aircraft_hover, on_aircraft_out};
 use crate::aircraft::{InterpolationState, TrailHistory};
 use crate::constants;
@@ -11,8 +13,9 @@ use crate::tiles::LocalOrigin;
 use crate::view3d;
 use airjedi_fusion::types::{IdentifierType, TargetCategory};
 use airjedi_fusion::{
-    derive_display_track, filter_type_label, raw_observation_hint_for, TargetClassification,
-    TimelineStore, Track, TrackQuality, TrackStatus, TrackerState,
+    derive_display_track, filter_type_label, raw_observation_hint_for, FusionClock,
+    HistoryRecorder, TargetClassification, TimelineStore, Track, TrackQuality, TrackStatus,
+    TrackerState,
 };
 use bevy::prelude::*;
 
@@ -30,21 +33,21 @@ pub fn sync_tracks_to_visuals(
         &mut Aircraft,
         Option<&mut InterpolationState>,
         Option<&mut FusionDiagnostics>,
+        &mut TrailHistory,
     )>,
     visual_lookup: Query<(Entity, &FusionTrackLink)>,
     model_registry: Option<Res<AircraftModelRegistry>>,
     type_db: Option<Res<crate::aircraft::AircraftTypeDatabase>>,
     enrichment_mgr: Option<Res<EnrichmentConnectionManager>>,
     timeline_store: Res<TimelineStore>,
+    history: Res<HistoryRecorder>,
+    fusion_clock: Res<FusionClock>,
     clock: Res<super::clock::SimClock>,
+    session_clock: Res<crate::aircraft::SessionClock>,
     map_state: Res<MapState>,
     local_origin: Res<LocalOrigin>,
     view3d_state: Res<view3d::View3DState>,
 ) {
-    let Some(model_registry) = model_registry else {
-        return;
-    };
-
     for (track_entity, track, tracker, quality, classification) in &fusion_tracks {
         let track_icao = track
             .cooperative_ids
@@ -65,8 +68,11 @@ pub fn sync_tracks_to_visuals(
         // the hint from the same timestamped TimelineStore observations.
         let hint = raw_observation_hint_for(&timeline_store, track);
         let dt = derive_display_track(track, tracker, quality, hint.as_ref(), position_source);
+        let preview = history.preview(&track.id, fusion_clock.now_utc());
         let is_coasting = dt.status == TrackStatus::Coasting;
-        commands.entity(track_entity).insert(dt.clone());
+        commands
+            .entity(track_entity)
+            .insert((dt.clone(), preview.clone()));
 
         let existing_visual = visual_lookup
             .iter()
@@ -79,7 +85,9 @@ pub fn sync_tracks_to_visuals(
         }
 
         if let Some((visual_entity, _)) = existing_visual {
-            if let Ok((_, mut aircraft, interp_opt, diag_opt)) = visuals.get_mut(visual_entity) {
+            if let Ok((_, mut aircraft, interp_opt, diag_opt, mut trail)) =
+                visuals.get_mut(visual_entity)
+            {
                 let position_changed = (dt.latitude - aircraft.latitude).abs() > f64::EPSILON
                     || (dt.longitude - aircraft.longitude).abs() > f64::EPSILON;
 
@@ -99,6 +107,7 @@ pub fn sync_tracks_to_visuals(
                     aircraft.roll_last_seen = Some(dt.last_seen);
                 }
                 aircraft.last_seen = dt.last_seen;
+                trail.replace_from_display(&preview, &session_clock);
                 if dt.squawk.is_some() {
                     aircraft.squawk = dt.squawk.clone();
                 }
@@ -133,6 +142,9 @@ pub fn sync_tracks_to_visuals(
                 }
             }
         } else if is_air_target(classification.category) && !is_coasting {
+            let Some(model_registry) = model_registry.as_ref() else {
+                continue;
+            };
             // Don't spawn new visual entities for coasting tracks. A coasting track
             // with no existing visual means its visual was cleaned up because
             // aircraft.last_seen exceeded the timeout. Spawning a new one would set
@@ -204,6 +216,7 @@ pub fn sync_tracks_to_visuals(
                     track_entity,
                     track_id: track.id.clone(),
                 },
+                AuthoritativeHistory,
                 make_diagnostics(tracker, quality, position_source),
                 TrailHistory::default(),
                 InterpolationState::new(

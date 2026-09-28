@@ -227,24 +227,10 @@ pub struct SensorReport {
     pub kind: SensorKind,
 }
 
-/// Bounded position history for connecting a track's recent path. Kept bounded
-/// (e.g. ~200 points) so it stays cheap to replicate.
-#[derive(Component, Debug, Clone, Default, Serialize, Deserialize)]
-pub struct DisplayTrail {
-    pub points: Vec<TrailPoint>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TrailPoint {
-    pub lat: f64,
-    pub lon: f64,
-    pub alt_ft: Option<i32>,
-    pub ts: DateTime<Utc>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::history::DisplayTrail;
 
     #[test]
     fn display_track_round_trips_through_json() {
@@ -298,6 +284,6 @@ mod tests {
     fn estimate_and_contributions_default_empty() {
         assert!(DisplayEstimate::default().samples.is_empty());
         assert!(SensorContributions::default().sources.is_empty());
-        assert!(DisplayTrail::default().points.is_empty());
+        assert!(DisplayTrail::default().samples.is_empty());
     }
 }

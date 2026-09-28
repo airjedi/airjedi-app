@@ -5,6 +5,7 @@ use crate::filter::surface::{Surface4Dof, SurfaceConfig};
 use crate::filter::transition::{ConstantVelocity3D, TransitionModel};
 use crate::filter::ukf::{Ukf, UkfConfig};
 use crate::filter::{FilterVariant, OosmConfig, TrackFilter, TrackerState};
+use crate::history::HistoryConfig;
 use crate::prelude_imports::*;
 use crate::sensor::FusionTier;
 use crate::store::StoreConfig;
@@ -25,6 +26,7 @@ pub enum FilterStrategy {
 #[derive(Resource, Debug, Clone)]
 pub struct FusionConfig {
     pub store: StoreConfig,
+    pub history: HistoryConfig,
     pub lifecycle: LifecycleProfiles,
     pub associator: AssociatorConfig,
     pub filter_defaults: ProcessNoiseConfig,
@@ -40,6 +42,7 @@ impl Default for FusionConfig {
     fn default() -> Self {
         Self {
             store: StoreConfig::default(),
+            history: HistoryConfig::default(),
             lifecycle: LifecycleProfiles::default(),
             associator: AssociatorConfig::default(),
             filter_defaults: ProcessNoiseConfig::default(),
