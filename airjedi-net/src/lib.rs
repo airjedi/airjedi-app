@@ -30,6 +30,17 @@ use bevy_replicon_renet::{RenetChannelsExt, RenetClient, RenetServer};
 
 use airjedi_core::{DisplayEstimate, DisplayTrack, DisplayTrail, SensorContributions};
 
+pub mod history;
+
+pub use history::{
+    register_history_messages, ClientHistoryStore, ClientTrackHistory, HistoryApplyResult,
+    HistoryCancel, HistoryClientMessage, HistoryLoadingState, HistoryOperationMessage,
+    HistoryRejectionReason, HistoryRequest, HistoryRequestPlan, HistoryRequestPriority,
+    HistoryRequestRejection, HistoryServerMessage, HistorySnapshotChunk, HistorySnapshotComplete,
+    HISTORY_CHUNK_SAMPLES, HISTORY_MAX_BUFFERED_OPERATIONS, HISTORY_MAX_CLIENT_SAMPLES,
+    HISTORY_MAX_SNAPSHOT_SAMPLES,
+};
+
 /// Default UDP port the fusion agent listens on for thin clients.
 pub const DEFAULT_PORT: u16 = 5599;
 
@@ -49,6 +60,7 @@ pub fn register_replicated(app: &mut App) {
     app.replicate::<DisplayEstimate>();
     app.replicate::<SensorContributions>();
     app.replicate::<DisplayTrail>();
+    register_history_messages(app);
 }
 
 /// Build the renet server resources (the [`RenetServer`] and its

@@ -158,6 +158,32 @@ impl TrailHistory {
         }
     }
 
+    /// Materialize the stable client read model without requiring a display
+    /// component. This is used when selected-track chunks finish after the
+    /// aircraft visual has already been created.
+    pub fn replace_from_samples(
+        &mut self,
+        samples: &[airjedi_core::DisplayHistorySample],
+        server_time: DateTime<Utc>,
+        clock: &SessionClock,
+    ) {
+        let now = clock.now_secs();
+        self.points.clear();
+        for sample in samples {
+            let age_secs = (server_time - sample.state_time).num_milliseconds() as f64 / 1000.0;
+            self.points.push_back(TrailPoint {
+                lat: sample.latitude,
+                lon: sample.longitude,
+                altitude: sample.altitude_ft,
+                timestamp: now - age_secs,
+                estimated: sample.estimated,
+                timestamp_utc: Some(sample.state_time),
+                sample_sequence: Some(sample.sample_sequence),
+                segment_id: sample.segment_id,
+            });
+        }
+    }
+
     /// Remove points older than max_age
     pub fn prune(&mut self, max_age_seconds: u64, clock: &SessionClock) {
         let cutoff = clock.now_secs() - max_age_seconds as f64;

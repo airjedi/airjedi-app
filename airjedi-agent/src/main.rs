@@ -17,6 +17,7 @@
 //!                                        DisplayTracks from a running agent.
 //! - `--fixture <dir>`                  - override the capture directory.
 
+mod history_transport;
 mod ingest;
 mod live_ingest;
 mod replicate_tracks;
@@ -38,6 +39,9 @@ use bevy::state::app::StatesPlugin;
 use bevy_replicon::prelude::{RepliconChannels, RepliconPlugins};
 use bevy_replicon_renet::RepliconRenetPlugins;
 
+use crate::history_transport::{
+    pump_history_transfers, receive_history_requests, HistoryTransferServer,
+};
 use crate::ingest::{default_fixture_dir, load_scene, make_observation, Contact, Scene};
 use crate::replicate_tracks::{
     sync_replicated_history, sync_replicated_tracks, MlatSet, TrackEntityMap,
@@ -150,6 +154,7 @@ fn add_fusion_and_projection(app: &mut App, mlat_set: std::collections::HashSet<
     }
     app.add_plugins(FusionPlugin)
         .init_resource::<TrackEntityMap>()
+        .init_resource::<HistoryTransferServer>()
         .insert_resource(MlatSet(mlat_set))
         .add_systems(
             Update,
@@ -296,6 +301,13 @@ fn run_server(ingest: Ingest, port: u16) -> ! {
         Ingest::Live(_) => Default::default(),
     };
     add_fusion_and_projection(&mut app, mlat_set);
+    app.add_systems(
+        Update,
+        (
+            receive_history_requests.after(FusionSet::Lifecycle),
+            pump_history_transfers.after(sync_replicated_history),
+        ),
+    );
 
     match ingest {
         Ingest::Fixture(scene) => {

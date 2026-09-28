@@ -2,7 +2,8 @@ use std::time::Duration;
 
 use airjedi_core::{
     AltitudeReference, DisplayProvenance, DisplayTrack, HeadingReference, HistoryBreakReason,
-    HistorySessionId, RawOverride, TrackId, TrackStatus, VerticalRateReference,
+    HistoryOperationKind, HistorySessionId, RawOverride, TrackId, TrackStatus,
+    VerticalRateReference,
 };
 use airjedi_fusion::{HistoryConfig, HistoryRecorder};
 use chrono::{Duration as ChronoDuration, TimeZone, Utc};
@@ -288,6 +289,68 @@ fn corrections_preserve_sample_identity_and_advance_revision_with_a_bounded_hori
         start + ChronoDuration::seconds(31),
     ));
     assert_eq!(recorder.history_revision(), revision);
+}
+
+#[test]
+fn snapshot_watermark_exposes_later_append_and_correction_operations() {
+    let track_id = TrackId::new();
+    let start = start();
+    let mut recorder = recorder(HistoryConfig {
+        max_operation_log: 8,
+        ..Default::default()
+    });
+    for index in 0..2 {
+        let at = start + ChronoDuration::seconds(index * 2);
+        recorder.record_display_track(
+            &display(
+                &track_id,
+                at,
+                37.0 + index as f64,
+                TrackStatus::Confirmed,
+                false,
+            ),
+            at,
+        );
+    }
+
+    let watermark = recorder.history_revision();
+    let snapshot = recorder
+        .snapshot(&track_id, start + ChronoDuration::seconds(2))
+        .expect("track snapshot");
+    assert_eq!(snapshot.revision, watermark);
+    assert_eq!(snapshot.sample_cutoff, Some(2));
+    assert_eq!(snapshot.samples.len(), 2);
+
+    recorder.record_display_track(
+        &display(
+            &track_id,
+            start + ChronoDuration::seconds(4),
+            39.0,
+            TrackStatus::Confirmed,
+            false,
+        ),
+        start + ChronoDuration::seconds(4),
+    );
+    let corrected = display(&track_id, start, 41.0, TrackStatus::Confirmed, false);
+    assert!(recorder.correct_sample(
+        &track_id,
+        1,
+        airjedi_core::DisplayHistoryInput::from(&corrected),
+        start + ChronoDuration::seconds(4),
+    ));
+
+    let operations = recorder
+        .operations_since(watermark)
+        .expect("watermark remains in operation log");
+    assert_eq!(operations.len(), 2);
+    assert!(matches!(
+        operations[0].kind,
+        HistoryOperationKind::Append(ref sample) if sample.sample_sequence == 3
+    ));
+    assert!(matches!(
+        operations[1].kind,
+        HistoryOperationKind::Correction(ref sample) if sample.sample_sequence == 1
+    ));
 }
 
 #[test]

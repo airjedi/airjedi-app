@@ -10,7 +10,8 @@ use std::time::Duration;
 
 use airjedi_core::{
     DisplayHistoryInput, DisplayHistorySample, DisplayTrail, HistoryBreakReason, HistoryCoverage,
-    HistorySessionId, HistoryTruncationReason, TrackId, TrackStatus,
+    HistoryOperation, HistoryOperationKind, HistorySessionId, HistorySnapshot,
+    HistoryTruncationReason, TrackId, TrackStatus,
 };
 use bevy_ecs::prelude::{Query, Res, ResMut, Resource};
 use chrono::{DateTime, Utc};
@@ -31,6 +32,7 @@ pub struct HistoryConfig {
     pub max_samples_per_track: usize,
     pub max_samples_global: usize,
     pub max_preview_samples: usize,
+    pub max_operation_log: usize,
     /// Matches the fusion OOSM default. Older samples are retained as history,
     /// but the pipeline cannot reconstruct them safely as corrections.
     pub correction_horizon: Duration,
@@ -46,6 +48,7 @@ impl Default for HistoryConfig {
             max_samples_per_track: 901,
             max_samples_global: 100_000,
             max_preview_samples: 256,
+            max_operation_log: 4_096,
             correction_horizon: Duration::from_secs(30),
             discontinuity_gap: Duration::from_secs(10),
         }
@@ -78,6 +81,7 @@ pub struct HistoryRecorder {
     config: HistoryConfig,
     history_revision: u64,
     tracks: HashMap<TrackId, TrackHistory>,
+    operations: VecDeque<HistoryOperation>,
 }
 
 impl HistoryRecorder {
@@ -88,6 +92,7 @@ impl HistoryRecorder {
             config,
             history_revision: 0,
             tracks: HashMap::new(),
+            operations: VecDeque::new(),
         }
     }
 
@@ -132,6 +137,48 @@ impl HistoryRecorder {
     #[must_use]
     pub fn contains_track(&self, track_id: &TrackId) -> bool {
         self.tracks.contains_key(track_id)
+    }
+
+    /// Capture a bounded, internally consistent copy for a selected-track
+    /// transfer. The caller supplies the current fusion/server time reference;
+    /// it is not used to change any sample timestamps.
+    #[must_use]
+    pub fn snapshot(
+        &self,
+        track_id: &TrackId,
+        server_time: DateTime<Utc>,
+    ) -> Option<HistorySnapshot> {
+        let history = self.tracks.get(track_id)?;
+        Some(HistorySnapshot {
+            session_id: self.session_id,
+            track_id: track_id.clone(),
+            server_time,
+            sample_cutoff: history.samples.back().map(|sample| sample.sample_sequence),
+            revision: self.history_revision,
+            coverage: coverage_for(history, self.config.sampling_interval),
+            samples: history.samples.iter().cloned().collect(),
+        })
+    }
+
+    /// Return all retained operations newer than `revision`. `None` means the
+    /// bounded operation log no longer covers the requested watermark and the
+    /// client must retry with a fresh snapshot.
+    #[must_use]
+    pub fn operations_since(&self, revision: u64) -> Option<Vec<HistoryOperation>> {
+        if revision == self.history_revision {
+            return Some(Vec::new());
+        }
+        let first_revision = self.operations.front()?.revision;
+        if revision.saturating_add(1) < first_revision {
+            return None;
+        }
+        Some(
+            self.operations
+                .iter()
+                .filter(|operation| operation.revision > revision)
+                .cloned()
+                .collect(),
+        )
     }
 
     /// Record a projected state when the configured cadence is due. The caller
@@ -201,13 +248,11 @@ impl HistoryRecorder {
 
         let sequence = history.next_sequence;
         history.next_sequence = history.next_sequence.saturating_add(1);
-        history.samples.push_back(DisplayHistorySample::from_input(
-            sequence,
-            &input,
-            segment_id,
-            break_reason,
-        ));
+        let sample = DisplayHistorySample::from_input(sequence, &input, segment_id, break_reason);
+        history.samples.push_back(sample.clone());
+        let coverage = coverage_for(history, self.config.sampling_interval);
         self.history_revision = self.history_revision.saturating_add(1);
+        self.record_operation(track_id, coverage, HistoryOperationKind::Append(sample));
         true
     }
 
@@ -248,7 +293,14 @@ impl HistoryRecorder {
         let break_reason = sample.break_reason;
         *sample =
             DisplayHistorySample::from_input(sample_sequence, &input, segment_id, break_reason);
+        let corrected = sample.clone();
+        let coverage = coverage_for(history, self.config.sampling_interval);
         self.history_revision = self.history_revision.saturating_add(1);
+        self.record_operation(
+            track_id,
+            coverage,
+            HistoryOperationKind::Correction(corrected),
+        );
         true
     }
 
@@ -258,22 +310,22 @@ impl HistoryRecorder {
             .unwrap_or_else(|_| chrono::Duration::minutes(30));
         let cutoff = now - retention;
         let per_track_limit = self.config.max_samples_per_track.max(1);
-        let mut changed = false;
+        let mut pruned = Vec::new();
 
-        for history in self.tracks.values_mut() {
+        for (track_id, history) in &mut self.tracks {
             while history
                 .samples
                 .front()
                 .is_some_and(|sample| sample.state_time < cutoff)
             {
-                history.samples.pop_front();
+                let removed = history.samples.pop_front().expect("front exists");
                 history.truncation_reason = Some(HistoryTruncationReason::Retention);
-                changed = true;
+                pruned.push((track_id.clone(), removed.sample_sequence));
             }
             while history.samples.len() > per_track_limit {
-                history.samples.pop_front();
+                let removed = history.samples.pop_front().expect("limit exceeded");
                 history.truncation_reason = Some(HistoryTruncationReason::PerTrackLimit);
-                changed = true;
+                pruned.push((track_id.clone(), removed.sample_sequence));
             }
         }
 
@@ -291,14 +343,34 @@ impl HistoryRecorder {
                 break;
             };
             if let Some(history) = self.tracks.get_mut(&track_id) {
-                history.samples.pop_front();
+                let removed = history.samples.pop_front().expect("front exists");
                 history.truncation_reason = Some(HistoryTruncationReason::GlobalLimit);
-                changed = true;
+                pruned.push((track_id, removed.sample_sequence));
             }
         }
 
-        if changed {
+        let mut highest_removed: HashMap<TrackId, u64> = HashMap::new();
+        for (track_id, sequence) in pruned {
+            highest_removed
+                .entry(track_id)
+                .and_modify(|highest| *highest = (*highest).max(sequence))
+                .or_insert(sequence);
+        }
+        let mut pruned_tracks: Vec<(TrackId, u64)> = highest_removed.into_iter().collect();
+        pruned_tracks.sort_by(|(left, _), (right, _)| left.0.as_bytes().cmp(right.0.as_bytes()));
+        for (track_id, sequence) in pruned_tracks {
+            let Some(history) = self.tracks.get(&track_id) else {
+                continue;
+            };
+            let coverage = coverage_for(history, self.config.sampling_interval);
             self.history_revision = self.history_revision.saturating_add(1);
+            self.record_operation(
+                &track_id,
+                coverage,
+                HistoryOperationKind::Prune {
+                    through_sequence: sequence,
+                },
+            );
         }
     }
 
@@ -307,6 +379,11 @@ impl HistoryRecorder {
         let removed = self.tracks.remove(track_id).is_some();
         if removed {
             self.history_revision = self.history_revision.saturating_add(1);
+            self.record_operation(
+                track_id,
+                HistoryCoverage::default(),
+                HistoryOperationKind::Remove,
+            );
         }
         removed
     }
@@ -370,6 +447,33 @@ impl HistoryRecorder {
             preview_truncated,
             sample_sequence_start,
             sample_sequence_end,
+        }
+    }
+
+    fn record_operation(
+        &mut self,
+        track_id: &TrackId,
+        coverage: HistoryCoverage,
+        kind: HistoryOperationKind,
+    ) {
+        let sample_cutoff = if matches!(&kind, HistoryOperationKind::Remove) {
+            None
+        } else {
+            self.tracks
+                .get(track_id)
+                .and_then(|history| history.samples.back())
+                .map(|sample| sample.sample_sequence)
+        };
+        self.operations.push_back(HistoryOperation {
+            session_id: self.session_id,
+            track_id: track_id.clone(),
+            sample_cutoff,
+            revision: self.history_revision,
+            coverage,
+            kind,
+        });
+        while self.operations.len() > self.config.max_operation_log.max(1) {
+            self.operations.pop_front();
         }
     }
 }

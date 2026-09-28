@@ -223,6 +223,7 @@ dependencies = [
  "bevy_replicon",
  "bevy_replicon_renet",
  "chrono",
+ "serde",
 ]
 
 [[package]]

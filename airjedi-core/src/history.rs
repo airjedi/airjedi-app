@@ -170,6 +170,58 @@ pub enum HistoryTruncationReason {
     GlobalLimit,
 }
 
+/// Identifies one selected-history transfer. Request IDs are scoped by the
+/// server session and are never reused by a client while a request is active.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct HistoryRequestId(pub Uuid);
+
+impl HistoryRequestId {
+    #[must_use]
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+}
+
+impl Default for HistoryRequestId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A consistent copy of one track's retained samples. The revision and sample
+/// cutoff form the watermark for the live operation stream.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HistorySnapshot {
+    pub session_id: HistorySessionId,
+    pub track_id: TrackId,
+    pub server_time: Timestamp,
+    pub sample_cutoff: Option<u64>,
+    pub revision: u64,
+    pub coverage: HistoryCoverage,
+    pub samples: Vec<DisplayHistorySample>,
+}
+
+/// One authoritative change after a snapshot watermark. `revision` is global
+/// to the server session, while the sample sequence is stable per track.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HistoryOperation {
+    pub session_id: HistorySessionId,
+    pub track_id: TrackId,
+    /// Highest retained sample sequence after this operation.
+    pub sample_cutoff: Option<u64>,
+    pub revision: u64,
+    pub coverage: HistoryCoverage,
+    pub kind: HistoryOperationKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum HistoryOperationKind {
+    Append(DisplayHistorySample),
+    Correction(DisplayHistorySample),
+    Prune { through_sequence: u64 },
+    Remove,
+}
+
 /// Bounded initial history replicated with a display track. This is deliberately
 /// a preview, not T5's selected-track snapshot/chunk/live operation stream.
 #[derive(Component, Debug, Clone, PartialEq, Serialize, Deserialize)]

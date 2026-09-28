@@ -1,6 +1,8 @@
 use bevy::prelude::*;
 use chrono::{DateTime, Utc};
 
+use airjedi_core::HistorySessionId;
+
 use crate::adsb::enrichment::PositionSource;
 
 /// Component for aircraft entities
@@ -61,6 +63,16 @@ pub struct FusionTrackLink {
 /// Playback entities deliberately do not carry this marker.
 #[derive(Component, Debug, Default)]
 pub struct AuthoritativeHistory;
+
+/// Records which history source is currently materialized into the visual.
+/// Keeping this marker on the entity makes delayed asset initialization and
+/// selection changes retryable without losing the received history.
+#[derive(Component, Debug, Default)]
+pub struct HistoryMaterialized {
+    pub session_id: Option<HistorySessionId>,
+    pub revision: u64,
+    pub full: bool,
+}
 
 #[derive(Component, Debug, Default)]
 pub struct FusionDiagnostics {
