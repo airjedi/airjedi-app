@@ -750,9 +750,21 @@ impl ClientHistoryStore {
             .get_mut(&track_id)
             .expect("preview must precede history request");
         let preview_revision = history.history_revision;
-        if complete.snapshot_revision >= preview_revision {
+        let preview_is_newer = preview_revision > complete.snapshot_revision;
+        if !preview_is_newer {
+            // A complete snapshot is authoritative for the retained range. In
+            // particular, it must remove samples pruned while this client was
+            // disconnected rather than merging those stale samples forever.
+            history.samples.clear();
             history.server_time = complete.server_time;
             history.coverage = complete.coverage.clone();
+        } else if let Some(retained_from) = complete.coverage.retained_from {
+            // A newer preview may contain appends or corrections that happened
+            // after the snapshot watermark. Preserve those, but discard samples
+            // that the snapshot proves are outside the current retention range.
+            history
+                .samples
+                .retain(|sample| sample.state_time >= retained_from);
         }
         history.history_revision = preview_revision.max(complete.snapshot_revision);
         history.loading = HistoryLoadingState::Complete;
@@ -770,7 +782,12 @@ impl ClientHistoryStore {
             active.last_applied_revision = baseline_revision;
         }
         for sample in snapshot_samples {
-            upsert_sample(&mut history.samples, sample);
+            // If the preview is newer, it may already contain a correction for
+            // this sequence. Do not overwrite that newer value with the older
+            // snapshot copy.
+            if !preview_is_newer || history.sample(sample.sample_sequence).is_none() {
+                upsert_sample(&mut history.samples, sample);
+            }
         }
 
         for (_, operation) in buffered {
