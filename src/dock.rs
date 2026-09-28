@@ -9,8 +9,8 @@ use egui_tiles::{Behavior, SimplificationOptions, TabState, TileId, Tiles, UiRes
 use crate::aircraft::{
     components::FusionDiagnostics, list_panel::render_aircraft_list_pane_content,
     stats_panel::render_stats_pane_content, AircraftDisplayList, AircraftListState,
-    AircraftTypeInfo, CameraFollowState, DetailPanelState, SessionClock, StatsPanelState,
-    TrailHistory,
+    AircraftTypeInfo, CameraFollowState, DetailPanelState, HistoryChartActions,
+    HistoryChartState, SessionClock, StatsPanelState, TrailHistory,
 };
 use crate::airspace::{AirspaceData, AirspaceDisplayState};
 use crate::bookmarks::{self, BookmarksPanelState};
@@ -374,6 +374,8 @@ impl<'a> Behavior<DockPane> for DockBehavior<'a> {
                             Option<&'static crate::aircraft::components::FusionDiagnostics>,
                         )>,
                         Res<AppTheme>,
+                        ResMut<HistoryChartState>,
+                        ResMut<HistoryChartActions>,
                     )>::new(world);
                     let (
                         mut list,
@@ -385,6 +387,8 @@ impl<'a> Behavior<DockPane> for DockBehavior<'a> {
                         clock,
                         query,
                         theme,
+                        mut history_chart,
+                        mut history_actions,
                     ) = state.get_mut(world).unwrap();
                     render_aircraft_list_pane_content(
                         ui,
@@ -397,6 +401,8 @@ impl<'a> Behavior<DockPane> for DockBehavior<'a> {
                         &clock,
                         &query,
                         &theme,
+                        &mut history_chart,
+                        &mut history_actions,
                     );
                 });
             }

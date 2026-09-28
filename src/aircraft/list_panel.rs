@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 
 use super::altitude::{format_altitude, format_altitude_with_indicator};
+use super::history_chart::{render_history_charts, HistoryChartActions, HistoryChartState};
 use super::typeinfo::AircraftTypeInfo;
 use super::staleness::{aircraft_age_secs, format_last_seen};
 use super::{CameraFollowState, DetailPanelState, SessionClock, TrailHistory};
@@ -358,6 +359,8 @@ pub fn render_aircraft_list_panel(
     clock: Res<SessionClock>,
     aircraft_query: Query<(&crate::Aircraft, &TrailHistory, Option<&AircraftTypeInfo>, Option<&super::components::FusionDiagnostics>)>,
     theme: Res<AppTheme>,
+    mut history_chart: ResMut<HistoryChartState>,
+    mut history_actions: ResMut<HistoryChartActions>,
 ) {
     if !list_state.expanded {
         return;
@@ -800,6 +803,8 @@ pub fn render_aircraft_list_panel(
                                     &clock,
                                     &aircraft_query,
                                     &theme,
+                                    &mut history_chart,
+                                    &mut history_actions,
                                 );
                             }
                         });
@@ -837,6 +842,8 @@ pub fn render_aircraft_list_pane_content(
     clock: &SessionClock,
     aircraft_query: &Query<(&crate::Aircraft, &TrailHistory, Option<&AircraftTypeInfo>, Option<&crate::aircraft::components::FusionDiagnostics>)>,
     theme: &AppTheme,
+    history_chart: &mut HistoryChartState,
+    history_actions: &mut HistoryChartActions,
 ) {
     let header_color = egui::Color32::from_rgb(150, 150, 150);
     let metrics_color = egui::Color32::from_rgb(170, 170, 170);
@@ -1231,6 +1238,8 @@ pub fn render_aircraft_list_pane_content(
                             clock,
                             aircraft_query,
                             theme,
+                            history_chart,
+                            history_actions,
                         );
                     }
                 });
@@ -1268,6 +1277,8 @@ fn render_inline_detail(
     clock: &SessionClock,
     aircraft_query: &Query<(&crate::Aircraft, &TrailHistory, Option<&AircraftTypeInfo>, Option<&crate::aircraft::components::FusionDiagnostics>)>,
     theme: &AppTheme,
+    history_chart: &mut HistoryChartState,
+    history_actions: &mut HistoryChartActions,
 ) {
     let Some((aircraft, trail, type_info, fusion_diag)) = aircraft_query
         .iter()
@@ -1294,7 +1305,7 @@ fn render_inline_detail(
     let detail_id = ui.id().with(selected_icao).with("detail_content");
     let full_height = ui
         .ctx()
-        .memory(|mem| mem.data.get_temp::<f32>(detail_id).unwrap_or(200.0));
+        .memory(|mem| mem.data.get_temp::<f32>(detail_id).unwrap_or(430.0));
     let visible_height = full_height * expand_t;
 
     ui.add_space(4.0);
@@ -1512,6 +1523,15 @@ fn render_inline_detail(
                     );
                 });
             });
+
+            render_history_charts(
+                ui,
+                history_chart,
+                history_actions,
+                wt.text,
+                wt.text_dim,
+                wt.accent,
+            );
         },
     );
 

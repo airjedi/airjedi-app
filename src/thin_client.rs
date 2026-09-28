@@ -32,6 +32,9 @@ use airjedi_net::{
 
 use crate::adsb::sync::AircraftModelRegistry;
 use crate::aircraft::components::{AuthoritativeHistory, HistoryMaterialized};
+use crate::aircraft::history_chart::{
+    ChartTransferProgress, HistoryChartActions, HistoryChartLoading, HistoryChartState,
+};
 use crate::aircraft::interpolation::update_interpolation_on_adsb;
 use crate::aircraft::picking::{on_aircraft_click, on_aircraft_hover, on_aircraft_out};
 use crate::aircraft::{
@@ -107,6 +110,7 @@ impl Plugin for ThinClientPlugin {
                     hydrate_new_tracks,
                     update_hydrated_tracks,
                     materialize_client_history,
+                    sync_thin_history_chart,
                 )
                     .chain(),
             )
@@ -330,6 +334,7 @@ fn request_history_transfers(
     mut selected: ResMut<SelectedHistoryTrack>,
     mut store: ResMut<ClientHistoryStore>,
     mut messages: MessageWriter<HistoryClientMessage>,
+    mut chart_actions: ResMut<HistoryChartActions>,
 ) {
     let live_tracks: std::collections::HashSet<TrackId> = tracks
         .iter()
@@ -356,6 +361,13 @@ fn request_history_transfers(
     }
 
     if let Some(track_id) = selected_track.as_ref() {
+        if chart_actions.retry.as_ref() == Some(track_id) {
+            send_request_plan(
+                store.retry(track_id, HistoryRequestPriority::Selected),
+                &mut messages,
+            );
+            chart_actions.retry = None;
+        }
         send_request_plan(
             store.prepare_request(track_id, HistoryRequestPriority::Selected),
             &mut messages,
@@ -383,6 +395,51 @@ fn request_history_transfers(
         }
         send_request_plan(plan, &mut messages);
     }
+}
+
+fn sync_thin_history_chart(
+    list_state: Res<AircraftListState>,
+    tracks: Query<&DisplayTrack>,
+    store: Res<ClientHistoryStore>,
+    mut chart: ResMut<HistoryChartState>,
+) {
+    let selected = list_state.selected_icao.as_ref().and_then(|icao| {
+        tracks
+            .iter()
+            .find(|track| &track.icao == icao)
+            .map(|track| track.track_id.clone())
+    });
+    chart.select(selected.clone());
+
+    let Some(track_id) = selected else {
+        return;
+    };
+    let Some(history) = store.track(&track_id) else {
+        chart.set_waiting();
+        return;
+    };
+    let loading = match history.loading {
+        HistoryLoadingState::Preview => HistoryChartLoading::Preview,
+        HistoryLoadingState::Loading => HistoryChartLoading::Loading,
+        HistoryLoadingState::Partial => HistoryChartLoading::Partial,
+        HistoryLoadingState::Complete => HistoryChartLoading::Complete,
+        HistoryLoadingState::RetryableError => HistoryChartLoading::RetryableError,
+    };
+    let transfer = history.transfer.map(|progress| ChartTransferProgress {
+        received_chunks: progress.received_chunks,
+        total_chunks: progress.total_chunks,
+        received_samples: progress.received_samples,
+        expected_samples: progress.expected_samples,
+    });
+    chart.set_history(
+        history.session_id,
+        history.server_time,
+        history.history_revision,
+        history.coverage.clone(),
+        loading,
+        transfer,
+        &history.samples,
+    );
 }
 
 fn send_request_plan(

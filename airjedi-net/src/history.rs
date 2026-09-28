@@ -148,8 +148,17 @@ pub struct ClientTrackHistory {
     pub history_revision: u64,
     pub coverage: HistoryCoverage,
     pub loading: HistoryLoadingState,
+    pub transfer: Option<HistoryTransferProgress>,
     pub request_id: Option<HistoryRequestId>,
     pub samples: Vec<DisplayHistorySample>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct HistoryTransferProgress {
+    pub received_chunks: u16,
+    pub total_chunks: u16,
+    pub received_samples: usize,
+    pub expected_samples: Option<usize>,
 }
 
 impl ClientTrackHistory {
@@ -469,8 +478,15 @@ impl ClientHistoryStore {
         assembly
             .chunks
             .insert(chunk.chunk_index, chunk.samples.clone());
+        let transfer = HistoryTransferProgress {
+            received_chunks: assembly.chunks.len() as u16,
+            total_chunks: assembly.chunk_count,
+            received_samples: assembly.sample_count,
+            expected_samples: None,
+        };
         if let Some(history) = self.histories.get_mut(&chunk.track_id) {
             history.loading = HistoryLoadingState::Loading;
+            history.transfer = Some(transfer);
         }
         HistoryApplyResult::Applied
     }
@@ -522,6 +538,7 @@ impl ClientHistoryStore {
         for samples in assembly.chunks.into_values() {
             snapshot_samples.extend(samples);
         }
+        let snapshot_sample_count = snapshot_samples.len();
         let buffered = std::mem::take(&mut active.buffered_operations);
         active.completed = true;
         active.last_applied_revision = complete.snapshot_revision;
@@ -540,6 +557,12 @@ impl ClientHistoryStore {
         }
         history.history_revision = preview_revision.max(complete.snapshot_revision);
         history.loading = HistoryLoadingState::Complete;
+        history.transfer = Some(HistoryTransferProgress {
+            received_chunks: complete.chunk_count,
+            total_chunks: complete.chunk_count,
+            received_samples: snapshot_sample_count,
+            expected_samples: Some(snapshot_sample_count),
+        });
         history.request_id = Some(request_id);
         for sample in snapshot_samples {
             upsert_sample(&mut history.samples, sample);
@@ -685,6 +708,7 @@ impl ClientHistoryStore {
                 history_revision: 0,
                 coverage,
                 loading: HistoryLoadingState::Preview,
+                transfer: None,
                 request_id: None,
                 samples: Vec::new(),
             })

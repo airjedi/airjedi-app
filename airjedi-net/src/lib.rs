@@ -37,8 +37,8 @@ pub use history::{
     HistoryCancel, HistoryClientMessage, HistoryLoadingState, HistoryOperationMessage,
     HistoryRejectionReason, HistoryRequest, HistoryRequestPlan, HistoryRequestPriority,
     HistoryRequestRejection, HistoryServerMessage, HistorySnapshotChunk, HistorySnapshotComplete,
-    HISTORY_CHUNK_SAMPLES, HISTORY_MAX_BUFFERED_OPERATIONS, HISTORY_MAX_CLIENT_SAMPLES,
-    HISTORY_MAX_SNAPSHOT_SAMPLES,
+    HistoryTransferProgress, HISTORY_CHUNK_SAMPLES, HISTORY_MAX_BUFFERED_OPERATIONS,
+    HISTORY_MAX_CLIENT_SAMPLES, HISTORY_MAX_SNAPSHOT_SAMPLES,
 };
 
 /// Default UDP port the fusion agent listens on for thin clients.
