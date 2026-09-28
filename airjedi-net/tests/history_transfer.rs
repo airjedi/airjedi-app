@@ -4,8 +4,9 @@ use airjedi_core::{
     TrackId, TrackStatus, VerticalRateReference,
 };
 use airjedi_net::{
-    ClientHistoryStore, HistoryApplyResult, HistoryOperationMessage, HistoryRequestPriority,
-    HistoryServerMessage, HistorySnapshotChunk, HistorySnapshotComplete,
+    ClientHistoryStore, HistoryApplyResult, HistoryOperationMessage, HistoryRejectionReason,
+    HistoryRequestPriority, HistoryRequestRejection, HistoryServerMessage, HistorySnapshotChunk,
+    HistorySnapshotComplete, HISTORY_MAX_CLIENT_SAMPLES,
 };
 use chrono::{Duration, TimeZone, Utc};
 
@@ -278,6 +279,37 @@ fn correction_to_pre_cutoff_sample_survives_snapshot_handoff() {
 }
 
 #[test]
+fn retention_during_transfer_is_applied_after_snapshot_installation() {
+    let session = HistorySessionId::nil();
+    let track = TrackId::new();
+    let samples = vec![sample(1, 0, 30_000, 400.0), sample(2, 2, 30_500, 410.0)];
+    let mut store = ClientHistoryStore::default();
+    let request = begin(&mut store, session, &track, samples.clone());
+    assert_eq!(
+        store.apply(&chunk(&request, samples, 0, 1, 5)),
+        HistoryApplyResult::Applied
+    );
+    assert_eq!(
+        store.apply(&operation(
+            &request,
+            6,
+            HistoryOperationKind::Prune {
+                through_sequence: 1
+            },
+        )),
+        HistoryApplyResult::Applied
+    );
+    assert_eq!(
+        store.apply(&complete(&request, 1, 5)),
+        HistoryApplyResult::Applied
+    );
+
+    let history = store.track(&track).expect("history after retention");
+    assert!(history.sample(1).is_none());
+    assert!(history.sample(2).is_some());
+}
+
+#[test]
 fn stale_request_and_session_responses_are_rejected() {
     let session = HistorySessionId::nil();
     let track = TrackId::new();
@@ -356,4 +388,155 @@ fn history_received_before_visual_initialization_remains_retryable_and_readable(
     let history = store.track(&track).expect("history outlives visual setup");
     assert!(!history.samples.is_empty());
     assert_eq!(history.request_id, Some(request.request_id));
+}
+
+#[test]
+fn reconnect_keeps_received_history_and_reissues_a_fresh_request() {
+    let session = HistorySessionId::nil();
+    let track = TrackId::new();
+    let first = sample(1, 0, 30_000, 400.0);
+    let mut store = ClientHistoryStore::default();
+    let request = begin(&mut store, session, &track, vec![first.clone()]);
+    store.apply(&chunk(&request, vec![first], 0, 1, 2));
+    store.apply(&complete(&request, 1, 2));
+
+    store.invalidate_active_requests();
+    assert_eq!(store.active_request_count(), 0);
+    assert_eq!(store.track(&track).unwrap().samples.len(), 1);
+
+    let retry = store
+        .prepare_request(&track, HistoryRequestPriority::Selected)
+        .request
+        .expect("reconnect request");
+    assert_ne!(retry.request_id, request.request_id);
+    assert_eq!(store.diagnostics().retained_samples, 1);
+}
+
+#[test]
+fn snapshot_gap_rejection_is_retryable_and_counted() {
+    let session = HistorySessionId::nil();
+    let track = TrackId::new();
+    let mut store = ClientHistoryStore::default();
+    let request = begin(
+        &mut store,
+        session,
+        &track,
+        vec![sample(1, 0, 30_000, 400.0)],
+    );
+
+    assert_eq!(
+        store.apply(&HistoryServerMessage::Rejected(HistoryRequestRejection {
+            session_id: session,
+            track_id: track.clone(),
+            request_id: request.request_id,
+            reason: HistoryRejectionReason::SnapshotGap,
+            retryable: true,
+        })),
+        HistoryApplyResult::Rejected
+    );
+    assert_eq!(
+        store.track(&track).unwrap().loading,
+        airjedi_net::HistoryLoadingState::RetryableError
+    );
+    assert!(store
+        .retry(&track, HistoryRequestPriority::Selected)
+        .request
+        .is_some());
+    assert_eq!(store.diagnostics().retries, 1);
+    assert_eq!(store.diagnostics().rejected_responses, 1);
+}
+
+#[test]
+fn duplicate_sample_identity_across_chunks_forces_resync() {
+    let session = HistorySessionId::nil();
+    let track = TrackId::new();
+    let first = sample(1, 0, 30_000, 400.0);
+    let mut store = ClientHistoryStore::default();
+    let request = begin(&mut store, session, &track, vec![first.clone()]);
+
+    assert_eq!(
+        store.apply(&chunk(&request, vec![first.clone()], 0, 2, 2)),
+        HistoryApplyResult::Applied
+    );
+    assert_eq!(
+        store.apply(&chunk(&request, vec![first], 1, 2, 2)),
+        HistoryApplyResult::Rejected
+    );
+    assert_eq!(
+        store.track(&track).unwrap().loading,
+        airjedi_net::HistoryLoadingState::RetryableError
+    );
+}
+
+#[test]
+fn completed_background_requests_are_released_for_fair_cache_fill() {
+    let session = HistorySessionId::nil();
+    let track = TrackId::new();
+    let first = sample(1, 0, 30_000, 400.0);
+    let mut store = ClientHistoryStore::default();
+    store.install_preview(&preview(session, track.clone(), vec![first.clone()], 1));
+    let request = store
+        .prepare_request(&track, HistoryRequestPriority::Background)
+        .request
+        .expect("background request");
+    store.apply(&chunk(&request, vec![first], 0, 1, 2));
+    store.apply(&complete(&request, 1, 2));
+
+    let cancellations = store.release_completed_background_requests();
+    assert_eq!(cancellations.len(), 1);
+    assert_eq!(store.active_request_count(), 0);
+    assert_eq!(
+        store.track(&track).unwrap().loading,
+        airjedi_net::HistoryLoadingState::Complete
+    );
+}
+
+#[test]
+fn declared_track_profiles_keep_client_cache_bounded() {
+    for profile in [100, 500, 1_000] {
+        let session = HistorySessionId::nil();
+        let mut store = ClientHistoryStore::new(HISTORY_MAX_CLIENT_SAMPLES, 4);
+        for index in 0..profile {
+            let track = TrackId::new();
+            store.install_preview(&preview(
+                session,
+                track,
+                vec![sample(1, index as i64, 30_000, 400.0)],
+                1,
+            ));
+        }
+        assert_eq!(store.track_count(), profile);
+        assert!(store.total_sample_count() <= HISTORY_MAX_CLIENT_SAMPLES);
+        assert!(store.diagnostics().retained_bytes > 0);
+    }
+}
+
+#[test]
+fn client_request_limit_allows_selected_history_to_displace_background_work() {
+    let session = HistorySessionId::nil();
+    let tracks: Vec<_> = (0..5).map(|_| TrackId::new()).collect();
+    let mut store = ClientHistoryStore::default();
+    for track in &tracks {
+        store.install_preview(&preview(
+            session,
+            track.clone(),
+            vec![sample(1, 0, 30_000, 400.0)],
+            1,
+        ));
+    }
+    for track in tracks.iter().take(4) {
+        assert!(store
+            .prepare_request(track, HistoryRequestPriority::Background)
+            .request
+            .is_some());
+    }
+    assert!(store
+        .prepare_request(&tracks[4], HistoryRequestPriority::Background)
+        .request
+        .is_none());
+
+    let selected = store.prepare_request(&tracks[4], HistoryRequestPriority::Selected);
+    assert!(selected.request.is_some());
+    assert!(selected.cancel.is_some());
+    assert_eq!(store.active_request_count(), 4);
 }

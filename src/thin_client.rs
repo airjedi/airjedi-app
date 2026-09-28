@@ -329,6 +329,7 @@ fn receive_history_messages(
 }
 
 fn request_history_transfers(
+    state: Res<State<ClientState>>,
     list_state: Res<AircraftListState>,
     tracks: Query<(&DisplayTrack, Option<&DisplayTrail>)>,
     mut selected: ResMut<SelectedHistoryTrack>,
@@ -336,9 +337,14 @@ fn request_history_transfers(
     mut messages: MessageWriter<HistoryClientMessage>,
     mut chart_actions: ResMut<HistoryChartActions>,
 ) {
+    if *state.get() != ClientState::Connected {
+        store.invalidate_active_requests();
+        return;
+    }
+
     let live_tracks: std::collections::HashSet<TrackId> = tracks
         .iter()
-        .filter_map(|(track, preview)| preview.map(|_| track.track_id.clone()))
+        .map(|(track, _)| track.track_id.clone())
         .collect();
     for cancel in store.retain_tracks(&live_tracks) {
         messages.write(HistoryClientMessage::Cancel(cancel));
@@ -372,6 +378,10 @@ fn request_history_transfers(
             store.prepare_request(track_id, HistoryRequestPriority::Selected),
             &mut messages,
         );
+    }
+
+    for cancel in store.release_completed_background_requests() {
+        messages.write(HistoryClientMessage::Cancel(cancel));
     }
 
     let mut background_count = store.active_request_count_for(HistoryRequestPriority::Background);

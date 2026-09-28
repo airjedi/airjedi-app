@@ -9,9 +9,10 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Duration;
 
 use airjedi_core::{
-    DisplayHistoryInput, DisplayHistorySample, DisplayTrail, HistoryBreakReason, HistoryCoverage,
-    HistoryOperation, HistoryOperationKind, HistorySessionId, HistorySnapshot,
-    HistoryTruncationReason, TrackId, TrackStatus,
+    estimate_history_operation_bytes, estimate_history_sample_bytes, DisplayHistoryInput,
+    DisplayHistorySample, DisplayTrail, HistoryBreakReason, HistoryCoverage, HistoryOperation,
+    HistoryOperationKind, HistorySessionId, HistorySnapshot, HistoryTruncationReason, TrackId,
+    TrackStatus,
 };
 use bevy_ecs::prelude::{Query, Res, ResMut, Resource};
 use chrono::{DateTime, Utc};
@@ -37,6 +38,19 @@ pub struct HistoryConfig {
     /// but the pipeline cannot reconstruct them safely as corrections.
     pub correction_horizon: Duration,
     pub discontinuity_gap: Duration,
+}
+
+/// Bounded recorder accounting exposed to the agent and diagnostics surfaces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HistoryRecorderDiagnostics {
+    pub session_id: HistorySessionId,
+    pub history_revision: u64,
+    pub track_count: usize,
+    pub retained_samples: usize,
+    pub retained_sample_bytes: usize,
+    pub operation_count: usize,
+    pub operation_bytes: usize,
+    pub truncation_events: usize,
 }
 
 impl Default for HistoryConfig {
@@ -82,6 +96,7 @@ pub struct HistoryRecorder {
     history_revision: u64,
     tracks: HashMap<TrackId, TrackHistory>,
     operations: VecDeque<HistoryOperation>,
+    truncation_events: usize,
 }
 
 impl HistoryRecorder {
@@ -93,6 +108,7 @@ impl HistoryRecorder {
             history_revision: 0,
             tracks: HashMap::new(),
             operations: VecDeque::new(),
+            truncation_events: 0,
         }
     }
 
@@ -132,6 +148,29 @@ impl HistoryRecorder {
             .values()
             .map(|history| history.samples.len())
             .sum()
+    }
+
+    #[must_use]
+    pub fn diagnostics(&self) -> HistoryRecorderDiagnostics {
+        HistoryRecorderDiagnostics {
+            session_id: self.session_id,
+            history_revision: self.history_revision,
+            track_count: self.tracks.len(),
+            retained_samples: self.total_sample_count(),
+            retained_sample_bytes: self
+                .tracks
+                .values()
+                .flat_map(|history| history.samples.iter())
+                .map(estimate_history_sample_bytes)
+                .sum(),
+            operation_count: self.operations.len(),
+            operation_bytes: self
+                .operations
+                .iter()
+                .map(estimate_history_operation_bytes)
+                .sum(),
+            truncation_events: self.truncation_events,
+        }
     }
 
     #[must_use]
@@ -371,6 +410,7 @@ impl HistoryRecorder {
                     through_sequence: sequence,
                 },
             );
+            self.truncation_events = self.truncation_events.saturating_add(1);
         }
     }
 

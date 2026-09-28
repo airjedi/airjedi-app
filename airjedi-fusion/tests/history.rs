@@ -354,6 +354,43 @@ fn snapshot_watermark_exposes_later_append_and_correction_operations() {
 }
 
 #[test]
+fn exhausted_operation_log_requires_a_fresh_snapshot() {
+    let track_id = TrackId::new();
+    let start = start();
+    let mut recorder = recorder(HistoryConfig {
+        max_operation_log: 1,
+        ..Default::default()
+    });
+    recorder.record_display_track(
+        &display(&track_id, start, 37.0, TrackStatus::Confirmed, false),
+        start,
+    );
+    let watermark = recorder.history_revision();
+    recorder.record_display_track(
+        &display(
+            &track_id,
+            start + ChronoDuration::seconds(2),
+            38.0,
+            TrackStatus::Confirmed,
+            false,
+        ),
+        start + ChronoDuration::seconds(2),
+    );
+    recorder.record_display_track(
+        &display(
+            &track_id,
+            start + ChronoDuration::seconds(4),
+            39.0,
+            TrackStatus::Confirmed,
+            false,
+        ),
+        start + ChronoDuration::seconds(4),
+    );
+
+    assert!(recorder.operations_since(watermark).is_none());
+}
+
+#[test]
 fn equivalent_embedded_and_headless_inputs_have_identical_history() {
     let track_id = TrackId::new();
     let start = start();
@@ -383,4 +420,61 @@ fn equivalent_embedded_and_headless_inputs_have_identical_history() {
         embedded.preview(&track_id, start + ChronoDuration::seconds(6)),
         headless.preview(&track_id, start + ChronoDuration::seconds(6))
     );
+}
+
+#[test]
+fn declared_track_profiles_keep_recorder_bounds_and_report_memory() {
+    for profile in [100, 500, 1_000] {
+        let start = start();
+        let mut recorder = recorder(HistoryConfig {
+            max_samples_global: profile,
+            ..Default::default()
+        });
+        for index in 0..profile {
+            let track_id = TrackId::new();
+            assert!(recorder.record_display_track(
+                &display(
+                    &track_id,
+                    start,
+                    37.0 + index as f64 / 100.0,
+                    TrackStatus::Confirmed,
+                    false,
+                ),
+                start,
+            ));
+        }
+
+        let diagnostics = recorder.diagnostics();
+        assert_eq!(diagnostics.track_count, profile);
+        assert_eq!(diagnostics.retained_samples, profile);
+        assert!(diagnostics.retained_sample_bytes > 0);
+        assert_eq!(diagnostics.operation_count, profile);
+        assert!(diagnostics.operation_bytes > 0);
+    }
+}
+
+#[test]
+fn global_profile_limit_reports_truncation_without_exceeding_the_cap() {
+    let start = start();
+    let mut recorder = recorder(HistoryConfig {
+        max_samples_global: 2,
+        ..Default::default()
+    });
+    for index in 0..3 {
+        let track_id = TrackId::new();
+        recorder.record_display_track(
+            &display(
+                &track_id,
+                start + ChronoDuration::seconds(index),
+                37.0,
+                TrackStatus::Confirmed,
+                false,
+            ),
+            start + ChronoDuration::seconds(index),
+        );
+    }
+
+    let diagnostics = recorder.diagnostics();
+    assert_eq!(diagnostics.retained_samples, 2);
+    assert!(diagnostics.truncation_events > 0);
 }

@@ -1,10 +1,13 @@
+use std::mem::size_of;
+
 use bevy_ecs::prelude::Component;
 use chrono::Duration;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::display::{
-    AltitudeReference, DisplayProvenance, DisplayTrack, HeadingReference, VerticalRateReference,
+    AltitudeReference, DisplayProvenance, DisplayTrack, FieldProvenance, HeadingReference,
+    VerticalRateReference,
 };
 use crate::{PositionSource, Timestamp, TrackId, TrackStatus};
 
@@ -104,6 +107,26 @@ pub struct DisplayHistorySample {
     pub provenance: DisplayProvenance,
     pub segment_id: u32,
     pub break_reason: Option<HistoryBreakReason>,
+}
+
+/// Estimate the heap footprint of one retained history sample.
+///
+/// The fixed-size part includes the vector-owned value and the variable part
+/// accounts for provenance sensor identifiers. This is intentionally an
+/// allocation budget estimate, not a serialized wire-size calculation.
+#[must_use]
+pub fn estimate_history_sample_bytes(sample: &DisplayHistorySample) -> usize {
+    size_of::<DisplayHistorySample>()
+        + estimate_field_provenance_bytes(&sample.provenance.position)
+        + estimate_field_provenance_bytes(&sample.provenance.altitude)
+        + estimate_field_provenance_bytes(&sample.provenance.ground_speed)
+        + estimate_field_provenance_bytes(&sample.provenance.airspeed)
+        + estimate_field_provenance_bytes(&sample.provenance.vertical_rate)
+        + estimate_field_provenance_bytes(&sample.provenance.heading)
+}
+
+fn estimate_field_provenance_bytes(provenance: &FieldProvenance) -> usize {
+    size_of::<FieldProvenance>() + provenance.sensor_id.as_ref().map_or(0, String::capacity)
 }
 
 impl DisplayHistorySample {
@@ -220,6 +243,18 @@ pub enum HistoryOperationKind {
     Correction(DisplayHistorySample),
     Prune { through_sequence: u64 },
     Remove,
+}
+
+/// Estimate the in-memory footprint of one retained operation.
+#[must_use]
+pub fn estimate_history_operation_bytes(operation: &HistoryOperation) -> usize {
+    size_of::<HistoryOperation>()
+        + match &operation.kind {
+            HistoryOperationKind::Append(sample) | HistoryOperationKind::Correction(sample) => {
+                estimate_history_sample_bytes(sample)
+            }
+            HistoryOperationKind::Prune { .. } | HistoryOperationKind::Remove => 0,
+        }
 }
 
 /// Bounded initial history replicated with a display track. This is deliberately

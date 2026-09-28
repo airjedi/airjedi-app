@@ -22,7 +22,9 @@ pub use display::{
     derive_display_track, filter_type_label, raw_observation_hint_for, RawObservationHint,
 };
 pub use filter::{ModeInfo, TrackerState};
-pub use history::{record_history_system, HistoryConfig, HistoryRecorder};
+pub use history::{
+    record_history_system, HistoryConfig, HistoryRecorder, HistoryRecorderDiagnostics,
+};
 pub use sensor::{Measurement, SensorObservation};
 pub use store::TimelineStore;
 pub use track::{Track, TrackQuality, TrackStatus};

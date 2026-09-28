@@ -7,10 +7,12 @@
 //! consume one stable source in later tickets.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::time::Instant;
 
 use airjedi_core::{
-    DisplayHistorySample, DisplayTrail, HistoryCoverage, HistoryOperation, HistoryOperationKind,
-    HistoryRequestId, HistorySessionId, Timestamp, TrackId,
+    estimate_history_operation_bytes, estimate_history_sample_bytes, DisplayHistorySample,
+    DisplayTrail, HistoryCoverage, HistoryOperation, HistoryOperationKind, HistoryRequestId,
+    HistorySessionId, Timestamp, TrackId,
 };
 use bevy::prelude::{Message, Resource};
 use bevy_replicon::prelude::{Channel, ClientMessageAppExt, ServerMessageAppExt};
@@ -19,7 +21,11 @@ use serde::{Deserialize, Serialize};
 pub const HISTORY_CHUNK_SAMPLES: usize = 64;
 pub const HISTORY_MAX_SNAPSHOT_SAMPLES: usize = 901;
 pub const HISTORY_MAX_CLIENT_SAMPLES: usize = 4 * HISTORY_MAX_SNAPSHOT_SAMPLES;
+pub const HISTORY_MAX_CLIENT_TRACKS: usize = 1_000;
+pub const HISTORY_MAX_CLIENT_REQUESTS: usize = 4;
 pub const HISTORY_MAX_BUFFERED_OPERATIONS: usize = 256;
+pub const HISTORY_MAX_CHUNKS: u16 =
+    ((HISTORY_MAX_SNAPSHOT_SAMPLES + HISTORY_CHUNK_SAMPLES - 1) / HISTORY_CHUNK_SAMPLES) as u16;
 
 /// Selected history is always serviced before background fill.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -183,6 +189,24 @@ pub struct HistoryRequestPlan {
     pub request: Option<HistoryRequest>,
 }
 
+/// Client-side synchronization accounting for diagnostics and load tests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ClientHistoryDiagnostics {
+    pub session_id: Option<HistorySessionId>,
+    pub tracks: usize,
+    pub retained_samples: usize,
+    pub retained_bytes: usize,
+    pub active_requests: usize,
+    pub buffered_operations: usize,
+    pub buffered_operation_bytes: usize,
+    pub retries: usize,
+    pub cancellations: usize,
+    pub stale_responses: usize,
+    pub rejected_responses: usize,
+    pub coverage_truncations: usize,
+    pub last_sync_latency_ms: Option<u64>,
+}
+
 #[derive(Debug, Clone)]
 struct SnapshotAssembly {
     session_id: HistorySessionId,
@@ -194,6 +218,7 @@ struct SnapshotAssembly {
     coverage: HistoryCoverage,
     chunk_count: u16,
     chunks: BTreeMap<u16, Vec<DisplayHistorySample>>,
+    sample_sequences: HashSet<u64>,
     sample_count: usize,
 }
 
@@ -204,6 +229,7 @@ struct ActiveRequest {
     buffered_operations: BTreeMap<u64, HistoryOperationMessage>,
     completed: bool,
     last_applied_revision: u64,
+    started_at: Instant,
 }
 
 /// Client-owned bounded cache and one stable read interface for trails/charts.
@@ -214,6 +240,14 @@ pub struct ClientHistoryStore {
     active: HashMap<TrackId, ActiveRequest>,
     max_samples: usize,
     max_buffered_operations: usize,
+    retries: usize,
+    cancellations: usize,
+    stale_responses: usize,
+    rejected_responses: usize,
+    last_sync_latency_ms: Option<u64>,
+    retry_after: HashMap<TrackId, Instant>,
+    retry_attempts: HashMap<TrackId, u32>,
+    permanent_errors: HashSet<TrackId>,
 }
 
 impl Default for ClientHistoryStore {
@@ -231,6 +265,14 @@ impl ClientHistoryStore {
             active: HashMap::new(),
             max_samples: max_samples.max(1),
             max_buffered_operations: max_buffered_operations.max(1),
+            retries: 0,
+            cancellations: 0,
+            stale_responses: 0,
+            rejected_responses: 0,
+            last_sync_latency_ms: None,
+            retry_after: HashMap::new(),
+            retry_attempts: HashMap::new(),
+            permanent_errors: HashSet::new(),
         }
     }
 
@@ -277,6 +319,43 @@ impl ClientHistoryStore {
             .map(|active| active.request.priority)
     }
 
+    #[must_use]
+    pub fn diagnostics(&self) -> ClientHistoryDiagnostics {
+        ClientHistoryDiagnostics {
+            session_id: self.session_id,
+            tracks: self.histories.len(),
+            retained_samples: self.total_sample_count(),
+            retained_bytes: self
+                .histories
+                .values()
+                .flat_map(|history| history.samples.iter())
+                .map(estimate_history_sample_bytes)
+                .sum(),
+            active_requests: self.active.len(),
+            buffered_operations: self
+                .active
+                .values()
+                .map(|active| active.buffered_operations.len())
+                .sum(),
+            buffered_operation_bytes: self
+                .active
+                .values()
+                .flat_map(|active| active.buffered_operations.values())
+                .map(|message| estimate_history_operation_bytes(&message.operation))
+                .sum(),
+            retries: self.retries,
+            cancellations: self.cancellations,
+            stale_responses: self.stale_responses,
+            rejected_responses: self.rejected_responses,
+            coverage_truncations: self
+                .histories
+                .values()
+                .filter(|history| history.coverage.truncation_reason.is_some())
+                .count(),
+            last_sync_latency_ms: self.last_sync_latency_ms,
+        }
+    }
+
     pub fn install_preview(&mut self, preview: &DisplayTrail) -> HistoryApplyResult {
         if !self.accept_session(preview.session_id) {
             return HistoryApplyResult::Rejected;
@@ -304,6 +383,7 @@ impl ClientHistoryStore {
             history.request_id = None;
         }
         self.enforce_sample_bound();
+        self.enforce_track_bound();
         HistoryApplyResult::Applied
     }
 
@@ -318,31 +398,67 @@ impl ClientHistoryStore {
         let Some(session_id) = self.session_id else {
             return HistoryRequestPlan::default();
         };
-        let Some(history) = self.histories.get(track_id) else {
+        let Some((history_loading, sample_cutoff)) = self.histories.get(track_id).map(|history| {
+            (
+                history.loading,
+                history.samples.last().map(|sample| sample.sample_sequence),
+            )
+        }) else {
             return HistoryRequestPlan::default();
         };
 
+        if self.permanent_errors.contains(track_id)
+            || self
+                .retry_after
+                .get(track_id)
+                .is_some_and(|retry_after| Instant::now() < *retry_after)
+        {
+            return HistoryRequestPlan::default();
+        }
+
         if let Some(active) = self.active.get(track_id) {
             if active.request.priority == priority
-                && !matches!(history.loading, HistoryLoadingState::RetryableError)
+                && !matches!(history_loading, HistoryLoadingState::RetryableError)
             {
                 return HistoryRequestPlan::default();
             }
         }
 
-        let cancel = self.active.remove(track_id).map(|active| HistoryCancel {
+        let mut cancel = self.active.remove(track_id).map(|active| HistoryCancel {
             session_id: active.request.session_id,
             track_id: active.request.track_id,
             request_id: active.request.request_id,
         });
+        if cancel.is_none() && self.active.len() >= HISTORY_MAX_CLIENT_REQUESTS {
+            if priority == HistoryRequestPriority::Selected {
+                let background_track = self
+                    .active
+                    .iter()
+                    .filter(|(_, active)| {
+                        active.request.priority == HistoryRequestPriority::Background
+                    })
+                    .min_by_key(|(_, active)| active.started_at)
+                    .map(|(track_id, _)| track_id.clone());
+                if let Some(background_track) = background_track {
+                    cancel = self.cancel_request(&background_track);
+                }
+            }
+            if cancel.is_none() && self.active.len() >= HISTORY_MAX_CLIENT_REQUESTS {
+                return HistoryRequestPlan::default();
+            }
+        }
+        if matches!(history_loading, HistoryLoadingState::RetryableError) {
+            self.retries = self.retries.saturating_add(1);
+        }
         let request = HistoryRequest {
             session_id,
             track_id: track_id.clone(),
             request_id: HistoryRequestId::new(),
-            sample_cutoff: history.samples.last().map(|sample| sample.sample_sequence),
+            sample_cutoff,
             priority,
             max_samples: HISTORY_MAX_SNAPSHOT_SAMPLES as u16,
         };
+        self.retry_after.remove(track_id);
         self.active.insert(
             track_id.clone(),
             ActiveRequest {
@@ -351,6 +467,7 @@ impl ClientHistoryStore {
                 buffered_operations: BTreeMap::new(),
                 completed: false,
                 last_applied_revision: 0,
+                started_at: Instant::now(),
             },
         );
         let history = self
@@ -373,11 +490,14 @@ impl ClientHistoryStore {
         track_id: &TrackId,
         priority: HistoryRequestPriority,
     ) -> HistoryRequestPlan {
+        self.retry_after.remove(track_id);
+        self.permanent_errors.remove(track_id);
         self.prepare_request(track_id, priority)
     }
 
     pub fn cancel_request(&mut self, track_id: &TrackId) -> Option<HistoryCancel> {
         let active = self.active.remove(track_id)?;
+        self.cancellations = self.cancellations.saturating_add(1);
         if let Some(history) = self.histories.get_mut(track_id) {
             history.request_id = None;
             if !active.completed {
@@ -389,6 +509,53 @@ impl ClientHistoryStore {
             track_id: active.request.track_id,
             request_id: active.request.request_id,
         })
+    }
+
+    /// Drop in-flight requests after a transport disconnect while retaining
+    /// already received samples. A reconnect can merge a fresh preview and
+    /// issue a new request without losing the disconnected interval.
+    pub fn invalidate_active_requests(&mut self) {
+        let active = std::mem::take(&mut self.active);
+        for (track_id, request) in active {
+            self.retry_after.remove(&track_id);
+            if let Some(history) = self.histories.get_mut(&track_id) {
+                history.request_id = None;
+                if !request.completed {
+                    history.loading = HistoryLoadingState::Preview;
+                }
+            }
+        }
+    }
+
+    /// Background hydration is a cache fill, not a permanent live subscription.
+    /// Release completed background requests so the bounded scheduler can move
+    /// on to the next visible track. A selected request remains subscribed for
+    /// correction and prune operations.
+    pub fn release_completed_background_requests(&mut self) -> Vec<HistoryCancel> {
+        let completed: Vec<TrackId> = self
+            .active
+            .iter()
+            .filter(|(_, active)| {
+                active.completed && active.request.priority == HistoryRequestPriority::Background
+            })
+            .map(|(track_id, _)| track_id.clone())
+            .collect();
+        let mut cancellations = Vec::with_capacity(completed.len());
+        for track_id in completed {
+            if let Some(active) = self.active.remove(&track_id) {
+                self.cancellations = self.cancellations.saturating_add(1);
+                self.retry_after.remove(&track_id);
+                if let Some(history) = self.histories.get_mut(&track_id) {
+                    history.request_id = None;
+                }
+                cancellations.push(HistoryCancel {
+                    session_id: active.request.session_id,
+                    track_id: active.request.track_id,
+                    request_id: active.request.request_id,
+                });
+            }
+        }
+        cancellations
     }
 
     /// Remove histories and return cancellations for tracks no longer present
@@ -406,23 +573,38 @@ impl ClientHistoryStore {
                 cancellations.push(cancel);
             }
             self.histories.remove(&track_id);
+            self.retry_after.remove(&track_id);
+            self.retry_attempts.remove(&track_id);
+            self.permanent_errors.remove(&track_id);
         }
         cancellations
     }
 
     pub fn apply(&mut self, message: &HistoryServerMessage) -> HistoryApplyResult {
-        match message {
+        let result = match message {
             HistoryServerMessage::SnapshotChunk(chunk) => self.apply_chunk(chunk),
             HistoryServerMessage::SnapshotComplete(complete) => self.apply_complete(complete),
             HistoryServerMessage::Operation(operation) => self.apply_operation(operation),
             HistoryServerMessage::Rejected(rejection) => self.apply_rejection(rejection),
+        };
+        match result {
+            HistoryApplyResult::IgnoredStale => {
+                self.stale_responses = self.stale_responses.saturating_add(1);
+            }
+            HistoryApplyResult::Rejected => {
+                self.rejected_responses = self.rejected_responses.saturating_add(1);
+            }
+            HistoryApplyResult::Applied => {}
         }
+        result
     }
 
     fn apply_chunk(&mut self, chunk: &HistorySnapshotChunk) -> HistoryApplyResult {
         if self.session_id != Some(chunk.session_id)
-            || chunk.chunk_count > HISTORY_MAX_SNAPSHOT_SAMPLES as u16
+            || chunk.chunk_count == 0
+            || chunk.chunk_count > HISTORY_MAX_CHUNKS
             || chunk.chunk_index >= chunk.chunk_count
+            || chunk.samples.len() > HISTORY_CHUNK_SAMPLES
         {
             return HistoryApplyResult::Rejected;
         }
@@ -455,6 +637,7 @@ impl ClientHistoryStore {
             coverage: chunk.coverage.clone(),
             chunk_count: chunk.chunk_count,
             chunks: BTreeMap::new(),
+            sample_sequences: HashSet::new(),
             sample_count: 0,
         });
         if assembly.session_id != chunk.session_id
@@ -470,11 +653,24 @@ impl ClientHistoryStore {
         if assembly.chunks.contains_key(&chunk.chunk_index) {
             return HistoryApplyResult::IgnoredStale;
         }
+        let mut chunk_sequences = HashSet::with_capacity(chunk.samples.len());
+        if chunk
+            .samples
+            .iter()
+            .any(|sample| !chunk_sequences.insert(sample.sample_sequence))
+            || chunk
+                .samples
+                .iter()
+                .any(|sample| assembly.sample_sequences.contains(&sample.sample_sequence))
+        {
+            return self.reject_active(&chunk.track_id);
+        }
         let new_count = assembly.sample_count.saturating_add(chunk.samples.len());
-        if new_count > HISTORY_MAX_SNAPSHOT_SAMPLES {
+        if new_count > usize::from(active.request.max_samples) {
             return self.reject_active(&chunk.track_id);
         }
         assembly.sample_count = new_count;
+        assembly.sample_sequences.extend(chunk_sequences);
         assembly
             .chunks
             .insert(chunk.chunk_index, chunk.samples.clone());
@@ -492,7 +688,8 @@ impl ClientHistoryStore {
     }
 
     fn apply_complete(&mut self, complete: &HistorySnapshotComplete) -> HistoryApplyResult {
-        if self.session_id != Some(complete.session_id) {
+        if self.session_id != Some(complete.session_id) || complete.chunk_count > HISTORY_MAX_CHUNKS
+        {
             return HistoryApplyResult::Rejected;
         }
         let Some(active) = self.active.get_mut(&complete.track_id) else {
@@ -520,6 +717,7 @@ impl ClientHistoryStore {
                     coverage: complete.coverage.clone(),
                     chunk_count: 0,
                     chunks: BTreeMap::new(),
+                    sample_sequences: HashSet::new(),
                     sample_count: 0,
                 }
             }
@@ -544,6 +742,7 @@ impl ClientHistoryStore {
         active.last_applied_revision = complete.snapshot_revision;
         let request_id = active.request.request_id;
         let track_id = active.request.track_id.clone();
+        let sync_latency_ms = active.started_at.elapsed().as_millis() as u64;
         let _ = active;
 
         let history = self
@@ -564,12 +763,18 @@ impl ClientHistoryStore {
             expected_samples: Some(snapshot_sample_count),
         });
         history.request_id = Some(request_id);
+        self.last_sync_latency_ms = Some(sync_latency_ms);
+
+        let baseline_revision = preview_revision.max(complete.snapshot_revision);
+        if let Some(active) = self.active.get_mut(&track_id) {
+            active.last_applied_revision = baseline_revision;
+        }
         for sample in snapshot_samples {
             upsert_sample(&mut history.samples, sample);
         }
 
         for (_, operation) in buffered {
-            if operation.operation.revision > complete.snapshot_revision {
+            if operation.operation.revision > baseline_revision {
                 let revision = operation.operation.revision;
                 let removed = matches!(operation.operation.kind, HistoryOperationKind::Remove);
                 self.apply_live_operation(operation);
@@ -581,6 +786,7 @@ impl ClientHistoryStore {
             }
         }
         self.enforce_sample_bound();
+        self.enforce_track_bound();
         HistoryApplyResult::Applied
     }
 
@@ -589,6 +795,7 @@ impl ClientHistoryStore {
             || message.operation.session_id != message.session_id
             || message.operation.track_id != message.track_id
             || message.sample_cutoff != message.operation.sample_cutoff
+            || message.operation.revision == 0
         {
             return HistoryApplyResult::Rejected;
         }
@@ -601,6 +808,12 @@ impl ClientHistoryStore {
             return HistoryApplyResult::Rejected;
         }
         if !active.completed {
+            if active
+                .buffered_operations
+                .contains_key(&message.operation.revision)
+            {
+                return HistoryApplyResult::IgnoredStale;
+            }
             if active.buffered_operations.len() >= self.max_buffered_operations {
                 return self.reject_active(&message.track_id);
             }
@@ -626,6 +839,9 @@ impl ClientHistoryStore {
         if matches!(message.operation.kind, HistoryOperationKind::Remove) {
             self.histories.remove(&track_id);
             self.active.remove(&track_id);
+            self.retry_after.remove(&track_id);
+            self.retry_attempts.remove(&track_id);
+            self.permanent_errors.remove(&track_id);
             return;
         }
         let Some(history) = self.histories.get_mut(&track_id) else {
@@ -664,6 +880,11 @@ impl ClientHistoryStore {
             history.loading = HistoryLoadingState::RetryableError;
             history.request_id = None;
         }
+        if rejection.retryable {
+            self.schedule_retry(&rejection.track_id);
+        } else {
+            self.permanent_errors.insert(rejection.track_id.clone());
+        }
         HistoryApplyResult::Rejected
     }
 
@@ -673,7 +894,19 @@ impl ClientHistoryStore {
             history.loading = HistoryLoadingState::RetryableError;
             history.request_id = None;
         }
+        self.schedule_retry(track_id);
         HistoryApplyResult::Rejected
+    }
+
+    fn schedule_retry(&mut self, track_id: &TrackId) {
+        let attempts = self.retry_attempts.entry(track_id.clone()).or_default();
+        *attempts = attempts.saturating_add(1);
+        let shift = attempts.saturating_sub(1).min(5);
+        let delay_ms = 50_u64.saturating_mul(1_u64 << shift);
+        self.retry_after.insert(
+            track_id.clone(),
+            Instant::now() + std::time::Duration::from_millis(delay_ms.min(2_000)),
+        );
     }
 
     fn accept_session(&mut self, session_id: HistorySessionId) -> bool {
@@ -682,6 +915,9 @@ impl ClientHistoryStore {
                 self.session_id = Some(session_id);
                 self.histories.clear();
                 self.active.clear();
+                self.retry_after.clear();
+                self.retry_attempts.clear();
+                self.permanent_errors.clear();
                 true
             }
             None => {
@@ -741,6 +977,24 @@ impl ClientHistoryStore {
             if matches!(history.loading, HistoryLoadingState::Complete) {
                 history.loading = HistoryLoadingState::Partial;
             }
+        }
+    }
+
+    fn enforce_track_bound(&mut self) {
+        while self.histories.len() > HISTORY_MAX_CLIENT_TRACKS {
+            let Some(track_id) = self
+                .histories
+                .iter()
+                .filter(|(track_id, _)| !self.active.contains_key(*track_id))
+                .min_by_key(|(_, history)| history.server_time)
+                .map(|(track_id, _)| track_id.clone())
+            else {
+                break;
+            };
+            self.histories.remove(&track_id);
+            self.retry_after.remove(&track_id);
+            self.retry_attempts.remove(&track_id);
+            self.permanent_errors.remove(&track_id);
         }
     }
 }

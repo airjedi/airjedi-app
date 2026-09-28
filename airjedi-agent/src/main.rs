@@ -31,7 +31,7 @@ use airjedi_core::{
 };
 use airjedi_fusion::sensor::SensorKind;
 use airjedi_fusion::systems::{FusionSet, ObservationBuffer};
-use airjedi_fusion::{FusionConfig, FusionPlugin, TimelineStore, Track};
+use airjedi_fusion::{FusionConfig, FusionPlugin, HistoryRecorder, TimelineStore, Track};
 use airjedi_net::{create_client, create_server, register_replicated, DEFAULT_PORT};
 use bevy::app::ScheduleRunnerPlugin;
 use bevy::prelude::*;
@@ -318,6 +318,10 @@ fn run_server(ingest: Ingest, port: u16) -> ! {
                 primed: false,
                 sequence: 0,
             })
+            .insert_resource(DiagnosticsTimer(Timer::from_seconds(
+                30.0,
+                TimerMode::Repeating,
+            )))
             .add_systems(Update, feed_observations.before(FusionSet::Drain));
             info!("airjedi-agent starting on udp/{port} (fixture replay)");
         }
@@ -364,6 +368,8 @@ fn log_diagnostics(
     estimates: Query<&DisplayEstimate>,
     contributions: Query<&SensorContributions>,
     entity_map: Res<TrackEntityMap>,
+    history: Res<HistoryRecorder>,
+    transfers: Res<HistoryTransferServer>,
     live: Option<Res<live_ingest::LiveAircraft>>,
 ) {
     let Some(mut timer) = timer else {
@@ -382,9 +388,11 @@ fn log_diagnostics(
         .map(|estimate| estimate.samples.len())
         .sum();
     let sensor_sources: usize = contributions.iter().map(|value| value.sources.len()).sum();
+    let history_diag = history.diagnostics();
+    let transfer_diag = transfers.diagnostics();
 
     info!(
-        "agent diag: rss_bytes={:?} live_contacts={live_contacts:?} observation_buffer={} stored_observations={} tracks={} display_entities={} entity_map={} estimate_samples={} sensor_sources={}",
+        "agent diag: rss_bytes={:?} live_contacts={live_contacts:?} observation_buffer={} stored_observations={} tracks={} display_entities={} entity_map={} estimate_samples={} sensor_sources={} history_tracks={} retained_samples={} retained_sample_bytes={} history_operations={} operation_bytes={} truncation_events={} pending_transfers={} transfer_clients={} selected_transfers={} background_transfers={} snapshot_samples={} snapshot_bytes={} buffered_operations={} retries={} cancellations={} rejected_requests={} revision_gaps={} session_invalidations={} snapshot_truncations={} completed_snapshots={} last_sync_latency_ms={:?}",
         process_rss_bytes(),
         buffer.observations.len(),
         store.total_observation_count(),
@@ -393,6 +401,27 @@ fn log_diagnostics(
         entity_map.0.len(),
         estimate_samples,
         sensor_sources,
+        history_diag.track_count,
+        history_diag.retained_samples,
+        history_diag.retained_sample_bytes,
+        history_diag.operation_count,
+        history_diag.operation_bytes,
+        history_diag.truncation_events,
+        transfer_diag.pending_transfers,
+        transfer_diag.active_clients,
+        transfer_diag.selected_transfers,
+        transfer_diag.background_transfers,
+        transfer_diag.snapshot_samples,
+        transfer_diag.snapshot_bytes,
+        transfer_diag.buffered_operations,
+        transfer_diag.retries,
+        transfer_diag.cancellations,
+        transfer_diag.rejected_requests,
+        transfer_diag.revision_gaps,
+        transfer_diag.session_invalidations,
+        transfer_diag.snapshot_truncations,
+        transfer_diag.completed_snapshots,
+        transfer_diag.last_sync_latency_ms,
     );
 }
 

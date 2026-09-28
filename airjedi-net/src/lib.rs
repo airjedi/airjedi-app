@@ -33,12 +33,14 @@ use airjedi_core::{DisplayEstimate, DisplayTrack, DisplayTrail, SensorContributi
 pub mod history;
 
 pub use history::{
-    register_history_messages, ClientHistoryStore, ClientTrackHistory, HistoryApplyResult,
-    HistoryCancel, HistoryClientMessage, HistoryLoadingState, HistoryOperationMessage,
-    HistoryRejectionReason, HistoryRequest, HistoryRequestPlan, HistoryRequestPriority,
-    HistoryRequestRejection, HistoryServerMessage, HistorySnapshotChunk, HistorySnapshotComplete,
-    HistoryTransferProgress, HISTORY_CHUNK_SAMPLES, HISTORY_MAX_BUFFERED_OPERATIONS,
-    HISTORY_MAX_CLIENT_SAMPLES, HISTORY_MAX_SNAPSHOT_SAMPLES,
+    register_history_messages, ClientHistoryDiagnostics, ClientHistoryStore, ClientTrackHistory,
+    HistoryApplyResult, HistoryCancel, HistoryClientMessage, HistoryLoadingState,
+    HistoryOperationMessage, HistoryRejectionReason, HistoryRequest, HistoryRequestPlan,
+    HistoryRequestPriority, HistoryRequestRejection, HistoryServerMessage, HistorySnapshotChunk,
+    HistorySnapshotComplete, HistoryTransferProgress, HISTORY_CHUNK_SAMPLES,
+    HISTORY_MAX_BUFFERED_OPERATIONS,
+    HISTORY_MAX_CHUNKS, HISTORY_MAX_CLIENT_REQUESTS, HISTORY_MAX_CLIENT_SAMPLES,
+    HISTORY_MAX_CLIENT_TRACKS, HISTORY_MAX_SNAPSHOT_SAMPLES,
 };
 
 /// Default UDP port the fusion agent listens on for thin clients.
@@ -46,15 +48,15 @@ pub const DEFAULT_PORT: u16 = 5599;
 
 /// netcode protocol id. Server and client must agree; bump this if the
 /// replicated component set changes shape in a wire-incompatible way.
-pub const PROTOCOL_ID: u64 = 0xA17E_D100_0002;
+pub const PROTOCOL_ID: u64 = 0xA17E_D100_0003;
 
 /// Register the display components that replicate agent -> client, in a fixed
 /// order. Both the agent (server) and the thin client MUST call this - identical
 /// registration order is what lets `bevy_replicon` line the component sets up.
 ///
 /// The bounded `DisplayTrail` preview replicates with the current display state.
-/// Full selected-track history/chunk/live operations are intentionally deferred
-/// to T5.
+/// Full selected-track history uses the bounded chunk/live-operation protocol
+/// registered below.
 pub fn register_replicated(app: &mut App) {
     app.replicate::<DisplayTrack>();
     app.replicate::<DisplayEstimate>();
