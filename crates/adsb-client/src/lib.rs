@@ -87,7 +87,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use log::warn;
+use chrono::Utc;
 use tokio::sync::broadcast;
 
 pub use decoder::{BaseStationDecoder, Decoder};
@@ -98,7 +98,9 @@ pub use decoder::Rs1090Decoder;
 pub use framing::{BeastFramer, Frame, FrameType, Framer, LineFramer};
 #[cfg(feature = "sdr")]
 pub use framing::SdrFramer;
-pub use protocol::{AircraftMessage, Icao, MessagePayload, ParseError, PayloadKind};
+pub use protocol::{
+    AircraftMessage, DecodedMessage, Icao, MessagePayload, MessageTiming, ParseError, PayloadKind,
+};
 pub use tcp::{Connection, ConnectionConfig, ConnectionEvent, ConnectionState, FrameMode};
 pub use tracker::{Aircraft, AircraftTracker, PositionPoint, TrackerConfig, TrackerEvent};
 pub use transport::{TcpTransport, Transport, TransportEvent};
@@ -333,13 +335,14 @@ impl Client {
 
     fn process_data(&mut self, data: &[u8]) {
         self.framer.feed(data);
+        let receipt_time = Utc::now();
         while let Some(frame) = self.framer.next_frame() {
-            let messages = self.decoder.decode(&frame);
+            let messages = self.decoder.decode_at(&frame, receipt_time);
             for msg in messages {
                 self.messages_processed.fetch_add(1, Ordering::Relaxed);
                 self.payload_counts.increment(msg.payload.kind());
                 if let Ok(mut tracker) = self.tracker.write() {
-                    tracker.process_message(msg);
+                    tracker.process_decoded_message(msg);
                 }
             }
         }

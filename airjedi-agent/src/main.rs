@@ -16,7 +16,10 @@
 //!                                      - verification client: print replicated
 //!                                        DisplayTracks from a running agent.
 //! - `--fixture <dir>`                  - override the capture directory.
+//! - `--history-retention-minutes N`    - retain N minutes of server history.
+//! - `--history-sampling-seconds N`     - sample server history every N seconds.
 
+mod history_transport;
 mod ingest;
 mod live_ingest;
 mod replicate_tracks;
@@ -25,20 +28,28 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use airjedi_core::{DisplayEstimate, DisplayTrack, PositionSource, SensorContributions};
+use airjedi_core::{
+    DisplayEstimate, DisplayTrack, ObservationIdentity, PositionSource, SensorContributions,
+};
 use airjedi_fusion::sensor::SensorKind;
 use airjedi_fusion::systems::{FusionSet, ObservationBuffer};
-use airjedi_fusion::{FusionConfig, FusionPlugin, TimelineStore, Track};
-use airjedi_net::{DEFAULT_PORT, create_client, create_server, register_replicated};
+use airjedi_fusion::{
+    FusionConfig, FusionPlugin, HistoryConfig, HistoryRecorder, TimelineStore, Track,
+};
+use airjedi_net::{create_client, create_server, register_replicated, DEFAULT_PORT};
 use bevy::app::ScheduleRunnerPlugin;
 use bevy::prelude::*;
 use bevy::state::app::StatesPlugin;
 use bevy_replicon::prelude::{RepliconChannels, RepliconPlugins};
 use bevy_replicon_renet::RepliconRenetPlugins;
-use chrono::Utc;
 
-use crate::ingest::{Contact, Scene, default_fixture_dir, load_scene, make_observation};
-use crate::replicate_tracks::{MlatSet, TrackEntityMap, sync_replicated_tracks};
+use crate::history_transport::{
+    pump_history_transfers, receive_history_requests, HistoryTransferServer,
+};
+use crate::ingest::{default_fixture_dir, load_scene, make_observation, Contact, Scene};
+use crate::replicate_tracks::{
+    sync_replicated_history, sync_replicated_tracks, MlatSet, TrackEntityMap,
+};
 
 /// Where the agent gets observations from.
 enum Ingest {
@@ -70,6 +81,7 @@ struct ReplayFeed {
     mlat: Vec<Contact>,
     timer: Timer,
     primed: bool,
+    sequence: u64,
 }
 
 fn main() {
@@ -97,11 +109,12 @@ fn main() {
     let port = flag_value(&args, "--port")
         .and_then(|s| s.parse::<u16>().ok())
         .unwrap_or(DEFAULT_PORT);
+    let history_config = history_config(&args);
 
     // A live BEAST feed replaces fixture replay and needs no capture files.
     if let Some(feed_addr) = flag_value(&args, "--feed") {
         eprintln!("[agent] live BEAST ingest from {feed_addr}");
-        run_server(Ingest::Live(feed_addr), port);
+        run_server(Ingest::Live(feed_addr), port, history_config);
     }
 
     let dir = flag_value(&args, "--fixture")
@@ -128,7 +141,7 @@ fn main() {
     if selftest {
         run_selftest(scene);
     } else {
-        run_server(Ingest::Fixture(scene), port);
+        run_server(Ingest::Fixture(scene), port, history_config);
     }
 }
 
@@ -139,6 +152,26 @@ fn flag_value(args: &[String], flag: &str) -> Option<String> {
         .cloned()
 }
 
+fn history_config(args: &[String]) -> HistoryConfig {
+    let mut config = HistoryConfig::default();
+    if let Some(minutes) = flag_value(args, "--history-retention-minutes")
+        .and_then(|value| value.parse::<u64>().ok())
+    {
+        config.retention = Duration::from_secs(minutes.max(1) * 60);
+    }
+    if let Some(seconds) = flag_value(args, "--history-sampling-seconds")
+        .and_then(|value| value.parse::<u64>().ok())
+    {
+        config.sampling_interval = Duration::from_secs(seconds.max(1));
+    }
+    config.max_samples_per_track = config
+        .retention
+        .as_secs()
+        .div_ceil(config.sampling_interval.as_secs())
+        .saturating_add(1) as usize;
+    config
+}
+
 /// Add the fusion engine + the agent-side projection to `app`.
 fn add_fusion_and_projection(app: &mut App, mlat_set: std::collections::HashSet<u32>) {
     if !app.world().contains_resource::<FusionConfig>() {
@@ -146,26 +179,79 @@ fn add_fusion_and_projection(app: &mut App, mlat_set: std::collections::HashSet<
     }
     app.add_plugins(FusionPlugin)
         .init_resource::<TrackEntityMap>()
+        .init_resource::<HistoryTransferServer>()
         .insert_resource(MlatSet(mlat_set))
-        .add_systems(Update, sync_replicated_tracks.after(FusionSet::Lifecycle));
+        .add_systems(
+            Update,
+            (
+                sync_replicated_tracks.after(FusionSet::Lifecycle),
+                sync_replicated_history.after(sync_replicated_tracks),
+            ),
+        );
 }
 
 /// Push the whole scene into the observation buffer at the current instant.
-fn push_scene(app: &mut App, scene: &Scene, include_adsb: bool) {
-    let now = Utc::now();
+fn push_scene(app: &mut App, scene: &Scene, include_adsb: bool, replay_sequence: u64) {
     let mut buffer = app.world_mut().resource_mut::<ObservationBuffer>();
     if include_adsb {
         for c in &scene.adsb {
-            buffer
-                .observations
-                .push(make_observation(c, SensorKind::AdsbReceiver, now));
+            buffer.observations.push(make_replay_observation(
+                c,
+                SensorKind::AdsbReceiver,
+                replay_sequence,
+            ));
         }
     }
     for c in &scene.mlat {
-        buffer
-            .observations
-            .push(make_observation(c, SensorKind::MlatNetwork, now));
+        buffer.observations.push(make_replay_observation(
+            c,
+            SensorKind::MlatNetwork,
+            replay_sequence,
+        ));
     }
+}
+
+fn make_replay_observation(
+    contact: &Contact,
+    kind: SensorKind,
+    replay_sequence: u64,
+) -> airjedi_fusion::SensorObservation {
+    let mut observation = make_observation(contact, kind);
+    let Some(original) = observation.metadata.observation_id else {
+        return observation;
+    };
+    let identity = ObservationIdentity {
+        frame_sequence: replay_sequence
+            .wrapping_mul(1_000_000)
+            .wrapping_add(original.frame_sequence),
+        payload_index: original.payload_index,
+    };
+    observation.metadata.observation_id = Some(identity);
+    observation.metadata.position_freshness =
+        observation
+            .metadata
+            .position_freshness
+            .map(|mut freshness| {
+                freshness.identity = identity;
+                freshness
+            });
+    observation.metadata.altitude_freshness =
+        observation
+            .metadata
+            .altitude_freshness
+            .map(|mut freshness| {
+                freshness.identity = identity;
+                freshness
+            });
+    observation.metadata.velocity_freshness =
+        observation
+            .metadata
+            .velocity_freshness
+            .map(|mut freshness| {
+                freshness.identity = identity;
+                freshness
+            });
+    observation
 }
 
 /// Headless pipeline check: feed the scene, project, print the DisplayTracks,
@@ -177,12 +263,12 @@ fn run_selftest(scene: Scene) -> ! {
 
     // Confirm passes (ADS-B + MLAT), then a few MLAT-only passes, mirroring the
     // tier-4 test's warm-up so tracks reach a stable status.
-    for _ in 0..3 {
-        push_scene(&mut app, &scene, true);
+    for pass in 1..=3 {
+        push_scene(&mut app, &scene, true, pass);
         app.update();
     }
-    for _ in 0..4 {
-        push_scene(&mut app, &scene, false);
+    for pass in 4..=7 {
+        push_scene(&mut app, &scene, false, pass);
         app.update();
     }
     for _ in 0..3 {
@@ -221,7 +307,7 @@ fn run_selftest(scene: Scene) -> ! {
 }
 
 /// Run the replicating server: fusion agent + renet transport, ticked ~60 Hz.
-fn run_server(ingest: Ingest, port: u16) -> ! {
+fn run_server(ingest: Ingest, port: u16, history_config: HistoryConfig) -> ! {
     let mut app = App::new();
     app.add_plugins((
         MinimalPlugins.set(ScheduleRunnerPlugin::run_loop(Duration::from_millis(16))),
@@ -239,7 +325,17 @@ fn run_server(ingest: Ingest, port: u16) -> ! {
         Ingest::Fixture(scene) => scene.mlat_set.clone(),
         Ingest::Live(_) => Default::default(),
     };
+    let mut fusion_config = FusionConfig::default();
+    fusion_config.history = history_config;
+    app.insert_resource(fusion_config);
     add_fusion_and_projection(&mut app, mlat_set);
+    app.add_systems(
+        Update,
+        (
+            receive_history_requests.after(FusionSet::Lifecycle),
+            pump_history_transfers.after(sync_replicated_history),
+        ),
+    );
 
     match ingest {
         Ingest::Fixture(scene) => {
@@ -248,7 +344,12 @@ fn run_server(ingest: Ingest, port: u16) -> ! {
                 mlat: scene.mlat,
                 timer: Timer::from_seconds(1.0, TimerMode::Repeating),
                 primed: false,
+                sequence: 0,
             })
+            .insert_resource(DiagnosticsTimer(Timer::from_seconds(
+                30.0,
+                TimerMode::Repeating,
+            )))
             .add_systems(Update, feed_observations.before(FusionSet::Drain));
             info!("airjedi-agent starting on udp/{port} (fixture replay)");
         }
@@ -295,6 +396,8 @@ fn log_diagnostics(
     estimates: Query<&DisplayEstimate>,
     contributions: Query<&SensorContributions>,
     entity_map: Res<TrackEntityMap>,
+    history: Res<HistoryRecorder>,
+    transfers: Res<HistoryTransferServer>,
     live: Option<Res<live_ingest::LiveAircraft>>,
 ) {
     let Some(mut timer) = timer else {
@@ -313,9 +416,11 @@ fn log_diagnostics(
         .map(|estimate| estimate.samples.len())
         .sum();
     let sensor_sources: usize = contributions.iter().map(|value| value.sources.len()).sum();
+    let history_diag = history.diagnostics();
+    let transfer_diag = transfers.diagnostics();
 
     info!(
-        "agent diag: rss_bytes={:?} live_contacts={live_contacts:?} observation_buffer={} stored_observations={} tracks={} display_entities={} entity_map={} estimate_samples={} sensor_sources={}",
+        "agent diag: rss_bytes={:?} live_contacts={live_contacts:?} observation_buffer={} stored_observations={} tracks={} display_entities={} entity_map={} estimate_samples={} sensor_sources={} history_tracks={} retained_samples={} retained_sample_bytes={} history_operations={} operation_bytes={} truncation_events={} pending_transfers={} transfer_clients={} selected_transfers={} background_transfers={} snapshot_samples={} snapshot_bytes={} buffered_operations={} retries={} cancellations={} rejected_requests={} revision_gaps={} session_invalidations={} snapshot_truncations={} completed_snapshots={} last_sync_latency_ms={:?}",
         process_rss_bytes(),
         buffer.observations.len(),
         store.total_observation_count(),
@@ -324,6 +429,27 @@ fn log_diagnostics(
         entity_map.0.len(),
         estimate_samples,
         sensor_sources,
+        history_diag.track_count,
+        history_diag.retained_samples,
+        history_diag.retained_sample_bytes,
+        history_diag.operation_count,
+        history_diag.operation_bytes,
+        history_diag.truncation_events,
+        transfer_diag.pending_transfers,
+        transfer_diag.active_clients,
+        transfer_diag.selected_transfers,
+        transfer_diag.background_transfers,
+        transfer_diag.snapshot_samples,
+        transfer_diag.snapshot_bytes,
+        transfer_diag.buffered_operations,
+        transfer_diag.retries,
+        transfer_diag.cancellations,
+        transfer_diag.rejected_requests,
+        transfer_diag.revision_gaps,
+        transfer_diag.session_invalidations,
+        transfer_diag.snapshot_truncations,
+        transfer_diag.completed_snapshots,
+        transfer_diag.last_sync_latency_ms,
     );
 }
 
@@ -353,12 +479,11 @@ fn feed_live_observations(
     if !timer.0.just_finished() {
         return;
     }
-    let now = Utc::now();
     if let Ok(contacts) = live.0.lock() {
         for c in contacts.iter() {
             buffer
                 .observations
-                .push(make_observation(c, SensorKind::AdsbReceiver, now));
+                .push(make_observation(c, SensorKind::AdsbReceiver));
         }
     }
 }
@@ -480,16 +605,20 @@ fn feed_observations(
         return;
     }
     feed.primed = true;
+    feed.sequence = feed.sequence.wrapping_add(1);
 
-    let now = Utc::now();
     for c in &feed.adsb {
-        buffer
-            .observations
-            .push(make_observation(c, SensorKind::AdsbReceiver, now));
+        buffer.observations.push(make_replay_observation(
+            c,
+            SensorKind::AdsbReceiver,
+            feed.sequence,
+        ));
     }
     for c in &feed.mlat {
-        buffer
-            .observations
-            .push(make_observation(c, SensorKind::MlatNetwork, now));
+        buffer.observations.push(make_replay_observation(
+            c,
+            SensorKind::MlatNetwork,
+            feed.sequence,
+        ));
     }
 }

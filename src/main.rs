@@ -53,6 +53,8 @@ mod view3d;
 mod weather;
 pub(crate) mod widgets;
 mod zoom;
+#[cfg(test)]
+mod history_acceptance;
 
 // Re-export core types so crate::Aircraft, crate::MapState, crate::ZoomState
 // continue to resolve throughout the codebase.

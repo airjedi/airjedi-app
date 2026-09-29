@@ -14,13 +14,17 @@
 //! `docs/plans/2026-09-03-design-b-phase1-display-components.md`.
 
 pub mod display;
+pub mod history;
 pub mod ids;
+pub mod observation;
 pub mod sensor_kind;
 pub mod source;
 pub mod status;
 
 pub use display::*;
+pub use history::*;
 pub use ids::*;
+pub use observation::*;
 pub use sensor_kind::*;
 pub use source::*;
 pub use status::*;

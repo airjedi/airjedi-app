@@ -4,6 +4,8 @@ use super::detail_panel::{open_detail_on_selection, render_detail_panel, toggle_
 use super::emergency::{
     detect_emergencies, draw_emergency_rings, update_emergency_banner, update_emergency_banner_text,
 };
+use super::history_chart::{sync_embedded_history_chart, HistoryChartActions, HistoryChartState};
+use super::hover_popup::render_aircraft_hover_popup;
 use super::interpolation::{interpolate_aircraft_positions, InterpolationState};
 use super::list_panel::{
     highlight_selected_aircraft, toggle_aircraft_list, update_aircraft_display_list,
@@ -13,7 +15,6 @@ use super::picking::{
     clear_stale_selection, deselect_on_escape, follow_aircraft_3d, manage_selection_outline,
     pick_aircraft_2d, pick_aircraft_3d,
 };
-use super::hover_popup::render_aircraft_hover_popup;
 use super::trail_renderer::draw_trails;
 use super::trails::record_trail_points;
 use super::typeloader::{
@@ -42,6 +43,8 @@ impl Plugin for AircraftPlugin {
             .init_resource::<CameraFollowState>()
             .init_resource::<EmergencyAlertState>()
             .init_resource::<StatsPanelState>()
+            .init_resource::<HistoryChartState>()
+            .init_resource::<HistoryChartActions>()
             .init_resource::<AircraftTypeDatabase>()
             .add_systems(Startup, start_aircraft_type_loading)
             .add_systems(
@@ -61,7 +64,10 @@ impl Plugin for AircraftPlugin {
                     render_aircraft_hover_popup,
                 ),
             )
-            .add_systems(Update, render_detail_panel)
+            .add_systems(
+                Update,
+                (sync_embedded_history_chart, render_detail_panel).chain(),
+            )
             .add_systems(
                 Update,
                 interpolate_aircraft_positions.after(airjedi_fusion::systems::FusionSet::Lifecycle),

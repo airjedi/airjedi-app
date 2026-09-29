@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 
 use adsb_client::{BeastFramer, Decoder, Framer, Rs1090Decoder, TrackerConfig};
 use bevy::prelude::*;
+use chrono::Utc;
 
 use crate::ingest::{Contact, RECEIVER_LAT, RECEIVER_LON};
 
@@ -73,9 +74,10 @@ fn run_reader(mut stream: TcpStream, shared: &Arc<Mutex<Vec<Contact>>>) {
         framer.feed(&buf[..n]);
         while let Some(frame) = framer.next_frame() {
             frames += 1;
-            for msg in decoder.decode(&frame) {
+            let receipt_time = Utc::now();
+            for msg in decoder.decode_at(&frame, receipt_time) {
                 msgs += 1;
-                tracker.process_message(msg);
+                tracker.process_decoded_message(msg);
             }
         }
         if last_cleanup.elapsed() >= Duration::from_secs(5) {
@@ -104,6 +106,25 @@ fn run_reader(mut stream: TcpStream, shared: &Arc<Mutex<Vec<Contact>>>) {
                         alt_ft: a.altitude,
                         track: a.track,
                         vel_kts: a.velocity,
+                        vertical_rate: a.vertical_rate,
+                        airspeed_kts: a.airspeed,
+                        callsign: a.callsign.clone(),
+                        squawk: a.squawk.clone(),
+                        is_on_ground: a.is_on_ground,
+                        alert: a.alert,
+                        emergency: a.emergency,
+                        spi: a.spi,
+                        roll_angle: a.roll_angle.map(|v| v as f32),
+                        track_angle_rate: a.track_angle_rate.map(|v| v as f32),
+                        observation_time: a
+                            .position_observation_time
+                            .unwrap_or(a.last_observation_time),
+                        receipt_time: a.last_seen,
+                        time_source: a.position_time_source.unwrap_or(a.last_time_source),
+                        observation_id: a.position_observation_id.unwrap_or(a.last_observation_id),
+                        position_freshness: a.position_freshness,
+                        altitude_freshness: a.altitude_freshness,
+                        velocity_freshness: a.velocity_freshness,
                     })
                 })
                 .collect();

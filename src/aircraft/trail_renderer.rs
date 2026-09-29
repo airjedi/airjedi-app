@@ -1,9 +1,9 @@
-use bevy::prelude::*;
 use crate::tiles::*;
+use bevy::prelude::*;
 
 use super::list_panel::AircraftListState;
 use super::staleness::{aircraft_age_secs, staleness_opacity};
-use super::trails::{age_opacity, altitude_color, TrailRenderer};
+use super::trails::{altitude_color, contiguous_trail_pairs, point_opacity, TrailRenderer};
 use super::{SessionClock, TrailConfig, TrailHistory};
 use crate::geo::CoordinateConverter;
 use crate::view3d::View3DState;
@@ -45,63 +45,42 @@ pub fn draw_trails(
         let stale_opacity = staleness_opacity(aircraft_age_secs(aircraft));
         let is_selected = list_state.selected_icao.as_ref() == Some(&aircraft.icao);
 
-        if trail.points.len() < 2 {
-            continue;
-        }
-
-        let mut prev_pos: Option<Vec3> = None;
-        let mut prev_color: Option<Color> = None;
-        let mut prev_estimated = false;
-
-        for point in trail.points.iter() {
-            let age = clock.age_secs(point.timestamp);
-            let max_age = config.max_age_seconds as f64;
-
-            let opacity = if is_selected {
-                // Selected: show full history with minimum opacity for old segments
-                let base = age_opacity(age, config.solid_duration_seconds, config.fade_duration_seconds);
-                base.max(0.3)
-            } else {
-                // Unselected: normal age-based fade, skip points beyond max_age
-                if age > max_age {
-                    prev_pos = None;
-                    continue;
-                }
-                age_opacity(age, config.solid_duration_seconds, config.fade_duration_seconds)
-            };
-
-            if opacity <= 0.0 {
-                prev_pos = None;
-                continue;
-            }
-
-            let xy = converter.latlon_to_world(point.lat, point.lon);
-            let z = if is_3d {
-                view3d_state.altitude_to_z(point.altitude.unwrap_or(0))
+        for (previous, point) in
+            contiguous_trail_pairs(&trail.points, &clock, &config, is_selected, is_3d)
+        {
+            let previous_xy = converter.latlon_to_world(previous.lat, previous.lon);
+            let point_xy = converter.latlon_to_world(point.lat, point.lon);
+            let previous_z = if is_3d {
+                view3d_state.altitude_to_z(previous.altitude.expect("3D pairs have altitude"))
             } else {
                 0.0
             };
-            let pos = Vec3::new(xy.x, xy.y, z);
+            let point_z = if is_3d {
+                view3d_state.altitude_to_z(point.altitude.expect("3D pairs have altitude"))
+            } else {
+                0.0
+            };
+            let previous_pos = Vec3::new(previous_xy.x, previous_xy.y, previous_z);
+            let point_pos = Vec3::new(point_xy.x, point_xy.y, point_z);
 
-            let base_color = altitude_color(point.altitude);
-            let segment_estimated = point.estimated || prev_estimated;
-            let est_dim = if segment_estimated { 0.4 } else { 1.0 };
-            let color = base_color.with_alpha(opacity * stale_opacity * est_dim);
+            let opacity = point_opacity(previous, &clock, &config, is_selected).min(point_opacity(
+                point,
+                &clock,
+                &config,
+                is_selected,
+            ));
+            let estimated = previous.estimated || point.estimated;
+            let estimate_dim = if estimated { 0.4 } else { 1.0 };
+            let color = altitude_color(previous.altitude)
+                .with_alpha(opacity * stale_opacity * estimate_dim);
 
-            if let Some(prev) = prev_pos {
-                let draw_color = prev_color.unwrap_or(color);
-                if segment_estimated {
-                    draw_dashed(prev, pos, draw_color, is_3d, &mut gizmos);
-                } else if is_3d {
-                    gizmos.line(prev, pos, draw_color);
-                } else {
-                    gizmos.line_2d(prev.truncate(), pos.truncate(), draw_color);
-                }
+            if estimated {
+                draw_dashed(previous_pos, point_pos, color, is_3d, &mut gizmos);
+            } else if is_3d {
+                gizmos.line(previous_pos, point_pos, color);
+            } else {
+                gizmos.line_2d(previous_pos.truncate(), point_pos.truncate(), color);
             }
-
-            prev_pos = Some(pos);
-            prev_color = Some(color);
-            prev_estimated = point.estimated;
         }
     }
 }
@@ -132,5 +111,3 @@ fn draw_dashed(from: Vec3, to: Vec3, color: Color, is_3d: bool, gizmos: &mut Giz
         t += step;
     }
 }
-
-

@@ -9,14 +9,16 @@ use rs1090::decode::{DF, FlightStatus, ICAO, Message};
 
 use crate::framing::{Frame, FrameType};
 use crate::protocol::{AircraftMessage, Icao, MessagePayload};
-use super::Decoder;
+use super::{decorate_messages, Decoder, ObservationClock};
 use super::rs1090_mapping;
+use chrono::{DateTime, Utc};
 
 pub struct Rs1090Decoder {
     known_icao: HashSet<Icao>,
     aircraft_state: BTreeMap<ICAO, AircraftState>,
     reference: Option<Position>,
     decode_count: u64,
+    clock: ObservationClock,
 }
 
 impl std::fmt::Debug for Rs1090Decoder {
@@ -59,6 +61,7 @@ impl Rs1090Decoder {
             aircraft_state: BTreeMap::new(),
             reference: None,
             decode_count: 0,
+            clock: ObservationClock::default(),
         }
     }
 
@@ -90,16 +93,11 @@ impl Rs1090Decoder {
         }
     }
 
-    fn timestamp(&self) -> f64 {
-        let now = chrono::Utc::now();
-        now.timestamp() as f64 + f64::from(now.timestamp_subsec_millis()) / 1000.0
-    }
-
     fn decode_modes(
         &mut self,
         data: &[u8],
         signal_level: Option<f32>,
-        frame_ts: Option<u64>,
+        timestamp: f64,
     ) -> Vec<AircraftMessage> {
         let mut msg = match Message::try_from(data) {
             Ok(m) => m,
@@ -110,17 +108,6 @@ impl Rs1090Decoder {
             Some(i) => i,
             None => return vec![],
         };
-
-        let rs_icao = ICAO(icao.0);
-        // CPR even/odd pairing is time-windowed, so it must be driven by the
-        // frame's own reception time (BEAST 12 MHz receiver clock), not
-        // wall-clock. Using Utc::now() makes replay/simulation (and any
-        // non-realtime ingest) collapse every frame to the same instant,
-        // which breaks global CPR. Fall back to wall-clock only when the
-        // transport supplies no timestamp (e.g. SBS-1 line feeds).
-        let ts = frame_ts
-            .map(|t| t as f64 / 12_000_000.0)
-            .unwrap_or_else(|| self.timestamp());
 
         match &mut msg.df {
             DF::ShortAirAirSurveillance { ac, .. } => {
@@ -193,11 +180,15 @@ impl Rs1090Decoder {
                     },
                 }]
             }
-            DF::ExtendedSquitterADSB(adsb) => {
-                self.decode_and_extract(&mut adsb.message, ICAO(adsb.icao24.0), icao, signal_level, ts)
-            }
+            DF::ExtendedSquitterADSB(adsb) => self.decode_and_extract(
+                &mut adsb.message,
+                ICAO(adsb.icao24.0),
+                icao,
+                signal_level,
+                timestamp,
+            ),
             DF::ExtendedSquitterTisB { cf, .. } => {
-                self.decode_and_extract(&mut cf.me, ICAO(cf.aa.0), icao, signal_level, ts)
+                self.decode_and_extract(&mut cf.me, ICAO(cf.aa.0), icao, signal_level, timestamp)
             }
             DF::ExtendedSquitterMilitary { .. } => {
                 vec![AircraftMessage {
@@ -502,13 +493,21 @@ impl Default for Rs1090Decoder {
 }
 
 impl Decoder for Rs1090Decoder {
-    fn decode(&mut self, frame: &Frame) -> Vec<AircraftMessage> {
-        match frame.frame_type {
+    fn decode_at(
+        &mut self,
+        frame: &Frame,
+        receipt_time: DateTime<Utc>,
+    ) -> Vec<super::DecodedMessage> {
+        let (observation_time, time_source) = self.clock.resolve(frame.timestamp, receipt_time);
+        let timestamp = observation_time.timestamp() as f64
+            + f64::from(observation_time.timestamp_subsec_nanos()) / 1_000_000_000.0;
+        let messages = match frame.frame_type {
             FrameType::ModeSShort | FrameType::ModeSLong => {
-                self.decode_modes(&frame.data, frame.signal_level, frame.timestamp)
+                self.decode_modes(&frame.data, frame.signal_level, timestamp)
             }
             _ => vec![],
-        }
+        };
+        decorate_messages(frame, receipt_time, observation_time, time_source, messages)
     }
 
     fn set_reference_position(&mut self, lat: f64, lon: f64) {
@@ -522,6 +521,7 @@ impl Decoder for Rs1090Decoder {
         self.aircraft_state.clear();
         self.reference = None;
         self.decode_count = 0;
+        self.clock.reset();
     }
 }
 

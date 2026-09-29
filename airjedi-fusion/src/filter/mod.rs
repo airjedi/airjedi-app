@@ -9,6 +9,7 @@ pub mod ukf;
 use crate::coord;
 use crate::prelude_imports::*;
 use crate::sensor::SensorObservation;
+use crate::store::{observation_key, ObservationKey, StoredObservation};
 use crate::types::{StateVectorType, Timestamp};
 use nalgebra::{DMatrix, DVector};
 use std::collections::VecDeque;
@@ -23,7 +24,12 @@ pub struct Innovation {
 #[derive(Debug, Clone, PartialEq)]
 pub enum FilterResult {
     Updated,
-    OutlierRejected { distance: f64 },
+    /// The observation carried only non-position telemetry. It was consumed,
+    /// but did not refresh the position filter or track-position freshness.
+    TelemetryOnly,
+    OutlierRejected {
+        distance: f64,
+    },
     DivergenceDetected,
 }
 
@@ -131,6 +137,9 @@ impl FilterVariant {
     }
 
     pub fn update(&mut self, observation: &SensorObservation) -> FilterResult {
+        if observation.is_telemetry_only() {
+            return FilterResult::TelemetryOnly;
+        }
         self.inner.update(observation)
     }
 
@@ -177,6 +186,8 @@ pub struct TrackerState {
     pub variant: FilterVariant,
     pub state_type: StateVectorType,
     pub last_update: Option<Timestamp>,
+    pub processed_observations: std::collections::HashSet<ObservationKey>,
+    pub processed_store_indices: std::collections::HashSet<usize>,
 }
 
 impl TrackerState {
@@ -186,6 +197,8 @@ impl TrackerState {
             variant: FilterVariant::new(ekf::Ekf6Dof::new(config)),
             state_type: StateVectorType::Cartesian6Dof,
             last_update: None,
+            processed_observations: std::collections::HashSet::new(),
+            processed_store_indices: std::collections::HashSet::new(),
         }
     }
 
@@ -215,6 +228,27 @@ impl TrackerState {
 
     pub fn zero_velocity(&mut self) {
         self.variant.zero_velocity();
+    }
+
+    pub fn is_processed(&self, stored: &StoredObservation) -> bool {
+        observation_key(&stored.observation)
+            .map(|key| self.processed_observations.contains(&key))
+            .unwrap_or_else(|| self.processed_store_indices.contains(&stored.store_index))
+    }
+
+    pub fn mark_processed(&mut self, stored: &StoredObservation) {
+        if let Some(key) = observation_key(&stored.observation) {
+            self.processed_observations.insert(key);
+        } else {
+            self.processed_store_indices.insert(stored.store_index);
+        }
+    }
+
+    pub fn prune_processed(&mut self, store: &crate::store::TimelineStore) {
+        self.processed_observations
+            .retain(|key| store.contains_observation_key(key));
+        self.processed_store_indices
+            .retain(|index| store.contains_store_index(*index));
     }
 
     #[must_use]

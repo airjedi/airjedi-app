@@ -1,6 +1,6 @@
-use super::transition::{ConstantVelocity, CombinedTransitionModel, TransitionModel};
+use super::transition::{CombinedTransitionModel, ConstantVelocity, TransitionModel};
 use super::{FilterResult, Innovation, StateHistory, StateSnapshot, TrackFilter};
-use crate::coord::{self, CoordinateFrame};
+use crate::coord;
 use crate::sensor::{Measurement, SensorObservation};
 use nalgebra::{DMatrix, DVector};
 
@@ -47,7 +47,10 @@ impl Surface4Dof {
         }
     }
 
-    fn observation_to_local(&self, obs: &SensorObservation) -> Option<(DVector<f64>, DMatrix<f64>)> {
+    fn observation_to_local(
+        &self,
+        obs: &SensorObservation,
+    ) -> Option<(DVector<f64>, DMatrix<f64>)> {
         match &obs.measurement {
             Measurement::PositionVelocity2D {
                 lat_deg,
@@ -80,7 +83,10 @@ impl Surface4Dof {
                 }
 
                 let r = if obs.covariance.matrix.nrows() >= z_dim {
-                    obs.covariance.matrix.view((0, 0), (z_dim, z_dim)).into_owned()
+                    obs.covariance
+                        .matrix
+                        .view((0, 0), (z_dim, z_dim))
+                        .into_owned()
                 } else {
                     DMatrix::identity(z_dim, z_dim) * 50.0
                 };
@@ -115,7 +121,10 @@ impl Surface4Dof {
                 }
 
                 let r = if obs.covariance.matrix.nrows() >= z_dim {
-                    obs.covariance.matrix.view((0, 0), (z_dim, z_dim)).into_owned()
+                    obs.covariance
+                        .matrix
+                        .view((0, 0), (z_dim, z_dim))
+                        .into_owned()
                 } else {
                     DMatrix::identity(z_dim, z_dim) * 100.0
                 };
@@ -277,7 +286,12 @@ mod tests {
     use approx::assert_relative_eq;
     use chrono::Utc;
 
-    fn make_surface_obs(lat: f64, lon: f64, sog: Option<f64>, cog: Option<f64>) -> SensorObservation {
+    fn make_surface_obs(
+        lat: f64,
+        lon: f64,
+        sog: Option<f64>,
+        cog: Option<f64>,
+    ) -> SensorObservation {
         SensorObservation {
             sensor_id: SensorId {
                 id: "ais".to_string(),
@@ -329,8 +343,8 @@ mod tests {
         filter.predict(1.0);
         let x_after = filter.state_vec();
 
-        let pos_moved = (x_after[0] - x_before[0]).abs() > 0.0
-            || (x_after[1] - x_before[1]).abs() > 0.0;
+        let pos_moved =
+            (x_after[0] - x_before[0]).abs() > 0.0 || (x_after[1] - x_before[1]).abs() > 0.0;
         assert!(pos_moved || (x_before[2].abs() < 1e-10 && x_before[3].abs() < 1e-10));
     }
 

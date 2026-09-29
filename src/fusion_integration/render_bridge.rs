@@ -1,77 +1,61 @@
 use crate::adsb::connection::FeedConnectionManager;
 use crate::adsb::enrichment::{EnrichmentConnectionManager, PositionSource};
 use crate::adsb::sync::AircraftModelRegistry;
-use crate::aircraft::components::{Aircraft, FusionDiagnostics, FusionTrackLink};
+use crate::aircraft::components::{
+    Aircraft, AuthoritativeHistory, FusionDiagnostics, FusionTrackLink, HistoryMaterialized,
+};
 use crate::aircraft::picking::{on_aircraft_click, on_aircraft_hover, on_aircraft_out};
-use crate::aircraft::{InterpolationState, TrailHistory};
+use crate::aircraft::{AircraftListState, InterpolationState, TrailHistory};
 use crate::constants;
 use crate::geo;
 use crate::map::MapState;
+use crate::tiles::LocalOrigin;
 use crate::view3d;
 use airjedi_fusion::types::{IdentifierType, TargetCategory};
 use airjedi_fusion::{
-    derive_display_track, filter_type_label, RawObservationHint, TargetClassification, Track,
-    TrackQuality, TrackStatus, TrackerState,
+    derive_display_track, filter_type_label, raw_observation_hint_for, FusionClock,
+    HistoryRecorder, TargetClassification, TimelineStore, Track, TrackQuality, TrackStatus,
+    TrackerState,
 };
 use bevy::prelude::*;
-use crate::tiles::LocalOrigin;
 
 pub fn sync_tracks_to_visuals(
     mut commands: Commands,
-    fusion_tracks: Query<
-        (
-            Entity,
-            &Track,
-            &TrackerState,
-            &TrackQuality,
-            &TargetClassification,
-        ),
-        Changed<TrackerState>,
-    >,
+    fusion_tracks: Query<(
+        Entity,
+        &Track,
+        &TrackerState,
+        &TrackQuality,
+        &TargetClassification,
+    )>,
     mut visuals: Query<(
         &FusionTrackLink,
         &mut Aircraft,
         Option<&mut InterpolationState>,
         Option<&mut FusionDiagnostics>,
+        &mut TrailHistory,
+        Option<&HistoryMaterialized>,
     )>,
     visual_lookup: Query<(Entity, &FusionTrackLink)>,
     model_registry: Option<Res<AircraftModelRegistry>>,
     type_db: Option<Res<crate::aircraft::AircraftTypeDatabase>>,
-    feed_mgr: Option<Res<FeedConnectionManager>>,
     enrichment_mgr: Option<Res<EnrichmentConnectionManager>>,
+    timeline_store: Res<TimelineStore>,
+    history: Res<HistoryRecorder>,
+    fusion_clock: Res<FusionClock>,
     clock: Res<super::clock::SimClock>,
+    session_clock: Res<crate::aircraft::SessionClock>,
+    list_state: Res<AircraftListState>,
     map_state: Res<MapState>,
     local_origin: Res<LocalOrigin>,
     view3d_state: Res<view3d::View3DState>,
 ) {
-    let Some(model_registry) = model_registry else {
-        return;
-    };
-
-    let raw_aircraft: Option<std::collections::HashMap<adsb_client::Icao, adsb_client::Aircraft>> =
-        feed_mgr.as_ref().map(|mgr| {
-            let mut best: std::collections::HashMap<adsb_client::Icao, adsb_client::Aircraft> =
-                std::collections::HashMap::new();
-            for (_, ac) in mgr.all_aircraft() {
-                best.entry(ac.icao)
-                    .and_modify(|existing| {
-                        if ac.last_seen > existing.last_seen {
-                            *existing = ac.clone();
-                        }
-                    })
-                    .or_insert(ac);
-            }
-            best
-        });
-
     for (track_entity, track, tracker, quality, classification) in &fusion_tracks {
         let track_icao = track
             .cooperative_ids
             .iter()
             .find(|id| id.id_type == IdentifierType::Icao)
             .and_then(|id| adsb_client::Icao::from_hex(&id.id));
-        let raw_ac = track_icao
-            .and_then(|icao| raw_aircraft.as_ref().and_then(|map| map.get(&icao)));
         let position_source = track_icao
             .and_then(|icao| enrichment_mgr.as_ref().and_then(|mgr| mgr.lookup(icao)))
             .map(|info| info.source);
@@ -82,26 +66,18 @@ pub fn sync_tracks_to_visuals(
         // the raw ADS-B overrides cross into it via a sensor-agnostic hint. The
         // visual `Aircraft` written below is a client-side view built from this
         // same `dt`; the serializable DisplayTrack is stored on the track entity
-        // as the projection boundary.
-        let hint = raw_ac.map(|ac| RawObservationHint {
-            altitude_ft: ac.altitude,
-            vertical_rate: ac.vertical_rate,
-            track_deg: ac.track,
-            velocity_kts: ac.velocity,
-            latitude: ac.latitude,
-            longitude: ac.longitude,
-            squawk: ac.squawk.clone(),
-            is_on_ground: ac.is_on_ground,
-            alert: ac.alert,
-            emergency: ac.emergency,
-            spi: ac.spi,
-            roll_angle: ac.roll_angle.map(|v| v as f32),
-            track_angle_rate: ac.track_angle_rate.map(|v| v as f32),
-            callsign: ac.callsign.clone(),
-        });
+        // as the projection boundary. Both embedded and headless paths build
+        // the hint from the same timestamped TimelineStore observations.
+        let hint = raw_observation_hint_for(&timeline_store, track);
         let dt = derive_display_track(track, tracker, quality, hint.as_ref(), position_source);
+        let preview = history.preview(&track.id, fusion_clock.now_utc());
+        let selected_history = (list_state.selected_icao.as_deref() == Some(dt.icao.as_str()))
+            .then(|| history.snapshot(&track.id, fusion_clock.now_utc()))
+            .flatten();
         let is_coasting = dt.status == TrackStatus::Coasting;
-        commands.entity(track_entity).insert(dt.clone());
+        commands
+            .entity(track_entity)
+            .insert((dt.clone(), preview.clone()));
 
         let existing_visual = visual_lookup
             .iter()
@@ -114,7 +90,9 @@ pub fn sync_tracks_to_visuals(
         }
 
         if let Some((visual_entity, _)) = existing_visual {
-            if let Ok((_, mut aircraft, interp_opt, diag_opt)) = visuals.get_mut(visual_entity) {
+            if let Ok((_, mut aircraft, interp_opt, diag_opt, mut trail, materialized)) =
+                visuals.get_mut(visual_entity)
+            {
                 let position_changed = (dt.latitude - aircraft.latitude).abs() > f64::EPSILON
                     || (dt.longitude - aircraft.longitude).abs() > f64::EPSILON;
 
@@ -134,17 +112,49 @@ pub fn sync_tracks_to_visuals(
                     aircraft.roll_last_seen = Some(dt.last_seen);
                 }
                 aircraft.last_seen = dt.last_seen;
+                let full = selected_history.is_some();
+                let (session_id, revision, sample_count) = selected_history.as_ref().map_or(
+                    (
+                        preview.session_id,
+                        preview.history_revision,
+                        preview.samples.len(),
+                    ),
+                    |snapshot| {
+                        (
+                            snapshot.session_id,
+                            snapshot.revision,
+                            snapshot.samples.len(),
+                        )
+                    },
+                );
+                let unchanged = materialized.is_some_and(|materialized| {
+                    materialized.session_id == Some(session_id)
+                        && materialized.revision == revision
+                        && materialized.full == full
+                        && materialized.sample_count == sample_count
+                });
+                if !unchanged {
+                    if let Some(snapshot) = selected_history.as_ref() {
+                        trail.replace_from_samples(
+                            &snapshot.samples,
+                            snapshot.server_time,
+                            &session_clock,
+                        );
+                    } else {
+                        trail.replace_from_display(&preview, &session_clock);
+                    }
+                    commands.entity(visual_entity).insert(HistoryMaterialized {
+                        session_id: Some(session_id),
+                        revision,
+                        full,
+                        sample_count,
+                    });
+                }
                 if dt.squawk.is_some() {
                     aircraft.squawk = dt.squawk.clone();
                 }
 
-                if let Some(ac) = raw_ac {
-                    if let Some(ref cs) = ac.callsign {
-                        if !cs.trim().is_empty() {
-                            aircraft.callsign = Some(cs.clone());
-                        }
-                    }
-                } else if aircraft.callsign.is_none() {
+                if aircraft.callsign.is_none() {
                     for cid in &track.cooperative_ids {
                         if cid.id_type == IdentifierType::Callsign {
                             aircraft.callsign = Some(cid.id.clone());
@@ -174,6 +184,9 @@ pub fn sync_tracks_to_visuals(
                 }
             }
         } else if is_air_target(classification.category) && !is_coasting {
+            let Some(model_registry) = model_registry.as_ref() else {
+                continue;
+            };
             // Don't spawn new visual entities for coasting tracks. A coasting track
             // with no existing visual means its visual was cleaned up because
             // aircraft.last_seen exceeded the timeout. Spawning a new one would set
@@ -245,6 +258,8 @@ pub fn sync_tracks_to_visuals(
                     track_entity,
                     track_id: track.id.clone(),
                 },
+                AuthoritativeHistory,
+                HistoryMaterialized::default(),
                 make_diagnostics(tracker, quality, position_source),
                 TrailHistory::default(),
                 InterpolationState::new(
@@ -359,5 +374,105 @@ pub fn cleanup_orphaned_visuals(
         if orphaned || timed_out {
             commands.entity(visual_entity).despawn();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::aircraft::SessionClock;
+    use airjedi_fusion::filter::ekf::ProcessNoiseConfig;
+    use airjedi_fusion::store::StoreConfig;
+    use airjedi_fusion::{HistoryConfig, TargetDomain, TargetId};
+    use chrono::TimeZone;
+
+    #[derive(Resource, Default)]
+    struct TrailRewriteCount(usize);
+
+    fn count_trail_rewrites(
+        mut count: ResMut<TrailRewriteCount>,
+        changed_trails: Query<&TrailHistory, Changed<TrailHistory>>,
+    ) {
+        count.0 += changed_trails.iter().count();
+    }
+
+    #[test]
+    fn static_embedded_history_does_not_rewrite_the_visual_trail_each_frame() {
+        let now = chrono::Utc.with_ymd_and_hms(2026, 9, 29, 12, 0, 0).unwrap();
+        let track_id = airjedi_fusion::TrackId::new();
+        let mut app = App::new();
+        app.insert_resource(TimelineStore::new(StoreConfig::default()))
+            .insert_resource(HistoryRecorder::new(HistoryConfig::default()))
+            .insert_resource(FusionClock::fixed(now))
+            .insert_resource(crate::fusion_integration::clock::SimClock::fixed(now))
+            .insert_resource(SessionClock::default())
+            .insert_resource(AircraftListState::default())
+            .insert_resource(MapState::default())
+            .insert_resource(LocalOrigin::from_latlon(37.0, -97.0))
+            .insert_resource(view3d::View3DState::default())
+            .init_resource::<TrailRewriteCount>()
+            .add_systems(
+                Update,
+                (sync_tracks_to_visuals, count_trail_rewrites).chain(),
+            );
+
+        let track_entity = app
+            .world_mut()
+            .spawn((
+                Track {
+                    id: track_id.clone(),
+                    cooperative_ids: vec![TargetId {
+                        domain: TargetDomain::Air,
+                        id: "PROBE01".to_string(),
+                        id_type: IdentifierType::Icao,
+                    }],
+                    created_at: now,
+                    last_update: now,
+                    is_on_ground: false,
+                },
+                TrackerState::new_6dof(ProcessNoiseConfig::default()),
+                TrackQuality {
+                    status: TrackStatus::Confirmed,
+                    ..TrackQuality::default()
+                },
+                TargetClassification::default(),
+            ))
+            .id();
+        app.world_mut().spawn((
+            FusionTrackLink {
+                track_entity,
+                track_id,
+            },
+            Aircraft {
+                icao: "PROBE01".to_string(),
+                callsign: None,
+                latitude: 0.0,
+                longitude: 0.0,
+                altitude: None,
+                heading: None,
+                velocity: None,
+                vertical_rate: None,
+                roll_angle: None,
+                track_angle_rate: None,
+                roll_last_seen: None,
+                squawk: None,
+                is_on_ground: None,
+                alert: None,
+                emergency: None,
+                spi: None,
+                last_seen: now,
+            },
+            TrailHistory::default(),
+        ));
+
+        app.update();
+        app.world_mut().resource_mut::<TrailRewriteCount>().0 = 0;
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<TrailRewriteCount>().0,
+            0,
+            "unchanged embedded history must not rewrite the visual TrailHistory"
+        );
     }
 }

@@ -159,6 +159,12 @@ impl Default for OverlayConfig {
 pub struct TrailsConfig {
     pub enabled: bool,
     pub max_age_seconds: u64,
+    /// Agent-owned history retention, independent of the visible trail age.
+    #[serde(default = "TrailsConfig::default_history_retention_seconds")]
+    pub history_retention_seconds: u64,
+    /// Cadence used by the authoritative history recorder.
+    #[serde(default = "TrailsConfig::default_history_sampling_interval_seconds")]
+    pub history_sampling_interval_seconds: u64,
     #[serde(default)]
     pub renderer_2d: TrailRenderer,
     #[serde(default = "TrailsConfig::default_renderer_3d")]
@@ -166,6 +172,14 @@ pub struct TrailsConfig {
 }
 
 impl TrailsConfig {
+    fn default_history_retention_seconds() -> u64 {
+        30 * 60
+    }
+
+    fn default_history_sampling_interval_seconds() -> u64 {
+        2
+    }
+
     fn default_renderer_3d() -> TrailRenderer {
         TrailRenderer::MeshStrip
     }
@@ -176,6 +190,8 @@ impl Default for TrailsConfig {
         Self {
             enabled: true,
             max_age_seconds: 300,
+            history_retention_seconds: Self::default_history_retention_seconds(),
+            history_sampling_interval_seconds: Self::default_history_sampling_interval_seconds(),
             renderer_2d: TrailRenderer::default(),
             renderer_3d: Self::default_renderer_3d(),
         }
@@ -572,6 +588,8 @@ pub struct SettingsUiState {
     // Trail settings
     pub trails_enabled: bool,
     pub trails_max_age: String,
+    pub history_retention_seconds: u64,
+    pub history_sampling_interval_seconds: u64,
     pub trails_renderer_2d: TrailRenderer,
     pub trails_renderer_3d: TrailRenderer,
     pub data_ingest: DataIngestConfig,
@@ -594,6 +612,8 @@ impl SettingsUiState {
         // Trail settings
         self.trails_enabled = config.trails.enabled;
         self.trails_max_age = config.trails.max_age_seconds.to_string();
+        self.history_retention_seconds = config.trails.history_retention_seconds;
+        self.history_sampling_interval_seconds = config.trails.history_sampling_interval_seconds;
         self.trails_renderer_2d = config.trails.renderer_2d;
         self.trails_renderer_3d = config.trails.renderer_3d;
         self.data_ingest = config.data_ingest.clone();
@@ -663,6 +683,12 @@ impl SettingsUiState {
             trails: TrailsConfig {
                 enabled: self.trails_enabled,
                 max_age_seconds: trails_max_age,
+                history_retention_seconds: self
+                    .history_retention_seconds
+                    .max(1),
+                history_sampling_interval_seconds: self
+                    .history_sampling_interval_seconds
+                    .max(1),
                 renderer_2d: self.trails_renderer_2d,
                 renderer_3d: self.trails_renderer_3d,
             },

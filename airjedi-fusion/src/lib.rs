@@ -1,9 +1,11 @@
 pub mod associator;
 pub mod classification;
+pub mod clock;
 pub mod config;
 pub mod coord;
 pub mod display;
 pub mod filter;
+pub mod history;
 pub mod metrics;
 pub mod prelude_imports;
 pub mod sensor;
@@ -14,9 +16,15 @@ pub mod transport;
 pub mod types;
 
 pub use classification::TargetClassification;
+pub use clock::FusionClock;
 pub use config::FusionConfig;
-pub use display::{derive_display_track, filter_type_label, RawObservationHint};
+pub use display::{
+    derive_display_track, filter_type_label, raw_observation_hint_for, RawObservationHint,
+};
 pub use filter::{ModeInfo, TrackerState};
+pub use history::{
+    record_history_system, HistoryConfig, HistoryRecorder, HistoryRecorderDiagnostics,
+};
 pub use sensor::{Measurement, SensorObservation};
 pub use store::TimelineStore;
 pub use track::{Track, TrackQuality, TrackStatus};
@@ -37,12 +45,15 @@ impl Plugin for FusionPlugin {
             .cloned()
             .unwrap_or_default();
 
-        let initiator = systems::TrackInitiator(
-            track::initiation::MofNInitiator::new(config.initiation.clone()),
-        );
+        let initiator = systems::TrackInitiator {
+            initiator: track::initiation::MofNInitiator::new(config.initiation.clone()),
+            processed_observations: std::collections::HashSet::new(),
+        };
 
         app.init_resource::<systems::ObservationBuffer>()
+            .init_resource::<clock::FusionClock>()
             .insert_resource(TimelineStore::new(config.store.clone()))
+            .insert_resource(HistoryRecorder::new(config.history.clone()))
             .insert_resource(config.lifecycle.clone())
             .insert_resource(config.associator.clone())
             .insert_resource(initiator)
@@ -60,6 +71,7 @@ impl Plugin for FusionPlugin {
                 )
                     .chain(),
             )
+            .add_systems(Update, clock::advance_fusion_clock.before(FusionSet::Drain))
             .add_systems(Update, systems::drain_observations.in_set(FusionSet::Drain))
             .add_systems(
                 Update,
@@ -90,6 +102,12 @@ impl Plugin for FusionPlugin {
             .add_systems(
                 Update,
                 systems::store_eviction_system.in_set(FusionSet::Lifecycle),
+            )
+            .add_systems(
+                Update,
+                history::record_history_system
+                    .in_set(FusionSet::Lifecycle)
+                    .after(systems::track_cleanup_system),
             );
 
         // Conditionally add NATS transport systems when feature is enabled

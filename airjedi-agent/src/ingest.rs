@@ -12,6 +12,10 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use adsb_client::{BeastFramer, Decoder, Framer, Icao, Rs1090Decoder, TrackerConfig};
+use airjedi_core::{
+    AltitudeReference, HeadingReference, ObservationFreshness, ObservationIdentity,
+    TimeSourceQuality,
+};
 use airjedi_fusion::coord::CoordinateFrame;
 use airjedi_fusion::sensor::*;
 use airjedi_fusion::{IdentifierType, TargetCategory, TargetDomain, TargetId};
@@ -25,6 +29,10 @@ const POS_VAR_MLAT: f64 = 250_000.0;
 
 const BEAST_MLAT: &str = "beast_30005_20260902_mlat.bin.gz";
 const NDJSON_MLAT: &str = "readsb_30047_20260902_mlat.ndjson.gz";
+// The correlated capture's readsb `now` field starts at this Unix second. The
+// value anchors BEAST's receiver ticks without consulting the replay process
+// wall clock, and keeps the two fixture streams on the same timeline.
+const REPLAY_CAPTURE_ANCHOR_UNIX_SECS: i64 = 1_788_385_464;
 
 /// One positioned target from the capture.
 #[derive(Clone, Debug)]
@@ -35,6 +43,23 @@ pub struct Contact {
     pub alt_ft: Option<i32>,
     pub track: Option<f64>,
     pub vel_kts: Option<f64>,
+    pub vertical_rate: Option<i32>,
+    pub airspeed_kts: Option<f64>,
+    pub callsign: Option<String>,
+    pub squawk: Option<String>,
+    pub is_on_ground: Option<bool>,
+    pub alert: Option<bool>,
+    pub emergency: Option<bool>,
+    pub spi: Option<bool>,
+    pub roll_angle: Option<f32>,
+    pub track_angle_rate: Option<f32>,
+    pub observation_time: DateTime<Utc>,
+    pub receipt_time: DateTime<Utc>,
+    pub time_source: TimeSourceQuality,
+    pub observation_id: ObservationIdentity,
+    pub position_freshness: Option<ObservationFreshness>,
+    pub altitude_freshness: Option<ObservationFreshness>,
+    pub velocity_freshness: Option<ObservationFreshness>,
 }
 
 /// The decoded scene: ADS-B contacts, MLAT contacts, and the set of ICAOs that
@@ -75,11 +100,13 @@ fn decode_beast_contacts(dir: &Path) -> std::io::Result<Vec<Contact>> {
         position_history_secs: 3600,
         event_channel_capacity: 1024,
     });
+    let replay_receipt = DateTime::from_timestamp(REPLAY_CAPTURE_ANCHOR_UNIX_SECS, 0)
+        .expect("capture anchor is a valid timestamp");
     for chunk in bytes.chunks(4096) {
         framer.feed(chunk);
         while let Some(frame) = framer.next_frame() {
-            for msg in decoder.decode(&frame) {
-                tracker.process_message(msg);
+            for msg in decoder.decode_at(&frame, replay_receipt) {
+                tracker.process_decoded_message(msg);
             }
         }
     }
@@ -95,6 +122,25 @@ fn decode_beast_contacts(dir: &Path) -> std::io::Result<Vec<Contact>> {
                 alt_ft: a.altitude,
                 track: a.track,
                 vel_kts: a.velocity,
+                vertical_rate: a.vertical_rate,
+                airspeed_kts: a.airspeed,
+                callsign: a.callsign.clone(),
+                squawk: a.squawk.clone(),
+                is_on_ground: a.is_on_ground,
+                alert: a.alert,
+                emergency: a.emergency,
+                spi: a.spi,
+                roll_angle: a.roll_angle.map(|v| v as f32),
+                track_angle_rate: a.track_angle_rate.map(|v| v as f32),
+                observation_time: a
+                    .position_observation_time
+                    .unwrap_or(a.last_observation_time),
+                receipt_time: a.last_seen,
+                time_source: a.position_time_source.unwrap_or(a.last_time_source),
+                observation_id: a.position_observation_id.unwrap_or(a.last_observation_id),
+                position_freshness: a.position_freshness,
+                altitude_freshness: a.altitude_freshness,
+                velocity_freshness: a.velocity_freshness,
             })
         })
         .collect();
@@ -109,7 +155,7 @@ fn parse_mlat(dir: &Path) -> std::io::Result<(HashSet<u32>, HashMap<u32, Contact
     let text = String::from_utf8_lossy(&bytes);
     let mut set = HashSet::new();
     let mut positions: HashMap<u32, Contact> = HashMap::new();
-    for line in text.lines() {
+    for (line_number, line) in text.lines().enumerate() {
         let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;
         };
@@ -127,6 +173,15 @@ fn parse_mlat(dir: &Path) -> std::io::Result<(HashSet<u32>, HashMap<u32, Contact
             v.get("lat").and_then(serde_json::Value::as_f64),
             v.get("lon").and_then(serde_json::Value::as_f64),
         ) {
+            let capture_time = v
+                .get("now")
+                .and_then(serde_json::Value::as_f64)
+                .and_then(|seconds| {
+                    let whole = seconds.trunc() as i64;
+                    let nanos = (seconds.fract().abs() * 1_000_000_000.0) as u32;
+                    DateTime::from_timestamp(whole, nanos)
+                })
+                .unwrap_or_else(|| DateTime::from_timestamp(0, 0).expect("Unix epoch is valid"));
             let alt = v
                 .get("alt_baro")
                 .and_then(serde_json::Value::as_i64)
@@ -140,6 +195,42 @@ fn parse_mlat(dir: &Path) -> std::io::Result<(HashSet<u32>, HashMap<u32, Contact
                     alt_ft: alt,
                     track: None,
                     vel_kts: None,
+                    vertical_rate: None,
+                    airspeed_kts: None,
+                    callsign: None,
+                    squawk: None,
+                    is_on_ground: None,
+                    alert: None,
+                    emergency: None,
+                    spi: None,
+                    roll_angle: None,
+                    track_angle_rate: None,
+                    observation_time: capture_time,
+                    receipt_time: capture_time,
+                    time_source: TimeSourceQuality::ProtocolTimestamp,
+                    observation_id: ObservationIdentity {
+                        frame_sequence: line_number as u64,
+                        payload_index: 0,
+                    },
+                    position_freshness: Some(ObservationFreshness {
+                        observation_time: capture_time,
+                        receipt_time: capture_time,
+                        time_source: TimeSourceQuality::ProtocolTimestamp,
+                        identity: ObservationIdentity {
+                            frame_sequence: line_number as u64,
+                            payload_index: 0,
+                        },
+                    }),
+                    altitude_freshness: alt.map(|_| ObservationFreshness {
+                        observation_time: capture_time,
+                        receipt_time: capture_time,
+                        time_source: TimeSourceQuality::ProtocolTimestamp,
+                        identity: ObservationIdentity {
+                            frame_sequence: line_number as u64,
+                            payload_index: 0,
+                        },
+                    }),
+                    velocity_freshness: None,
                 },
             );
         }
@@ -173,9 +264,9 @@ pub fn load_scene(dir: &Path) -> std::io::Result<Scene> {
     })
 }
 
-/// Build a fusion observation from a contact at time `now`.
+/// Build a fusion observation while preserving the contact's source timing.
 #[must_use]
-pub fn make_observation(c: &Contact, kind: SensorKind, now: DateTime<Utc>) -> SensorObservation {
+pub fn make_observation(c: &Contact, kind: SensorKind) -> SensorObservation {
     let pos_var = if matches!(kind, SensorKind::MlatNetwork) {
         POS_VAR_MLAT
     } else {
@@ -193,6 +284,27 @@ pub fn make_observation(c: &Contact, kind: SensorKind, now: DateTime<Utc>) -> Se
     let cov = DMatrix::from_diagonal(&DVector::from_vec(vec![
         pos_var, pos_var, pos_var, 100.0, 100.0, 100.0,
     ]));
+    let freshest = [
+        c.position_freshness,
+        c.altitude_freshness,
+        c.velocity_freshness,
+    ]
+    .into_iter()
+    .flatten()
+    .max_by_key(|freshness| freshness.observation_time);
+    let observation_time = freshest
+        .map(|freshness| freshness.observation_time)
+        .unwrap_or(c.observation_time);
+    let receipt_time = freshest
+        .map(|freshness| freshness.receipt_time)
+        .unwrap_or(c.receipt_time);
+    let observation_id = freshest
+        .map(|freshness| freshness.identity)
+        .unwrap_or(c.observation_id);
+    let time_source = freshest
+        .map(|freshness| freshness.time_source)
+        .unwrap_or(c.time_source);
+
     SensorObservation {
         sensor_id: SensorId {
             id: match kind {
@@ -203,8 +315,8 @@ pub fn make_observation(c: &Contact, kind: SensorKind, now: DateTime<Utc>) -> Se
             tier: FusionTier::Regional,
             coordinate_frame: CoordinateFrame::Wgs84,
         },
-        timestamp: now,
-        receipt_time: now,
+        timestamp: observation_time,
+        receipt_time,
         target_id: Some(TargetId {
             domain: TargetDomain::Air,
             id: format!("{}", Icao(c.icao)),
@@ -216,11 +328,163 @@ pub fn make_observation(c: &Contact, kind: SensorKind, now: DateTime<Utc>) -> Se
             alt_m,
             vel_north_mps: vn,
             vel_east_mps: ve,
-            vel_down_mps: None,
+            vel_down_mps: c.vertical_rate.map(|rate| f64::from(-rate) * 0.00508),
             heading_deg: c.track,
         },
         covariance: ObservationCovariance { matrix: cov },
         classification_hint: Some(TargetCategory::FixedWing),
-        metadata: ObservationMetadata::default(),
+        metadata: ObservationMetadata {
+            observation_id: Some(observation_id),
+            time_source: Some(time_source),
+            position_freshness: c.position_freshness,
+            altitude_freshness: c.altitude_freshness,
+            velocity_freshness: c.velocity_freshness,
+            altitude_reference: c.alt_ft.map(|_| AltitudeReference::Barometric),
+            heading_reference: c.track.map(|_| HeadingReference::GroundTrack),
+            vertical_rate_fpm: c.vertical_rate,
+            airspeed_kts: c.airspeed_kts,
+            callsign: c.callsign.clone(),
+            squawk: c.squawk.clone(),
+            is_on_ground: c.is_on_ground,
+            alert: c.alert,
+            emergency: c.emergency,
+            spi: c.spi,
+            roll_angle: c.roll_angle,
+            track_angle_rate: c.track_angle_rate,
+            ..Default::default()
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use airjedi_fusion::store::StoreConfig;
+    use airjedi_fusion::TimelineStore;
+
+    fn freshness(observation_time: DateTime<Utc>, frame_sequence: u64) -> ObservationFreshness {
+        ObservationFreshness {
+            observation_time,
+            receipt_time: observation_time,
+            time_source: TimeSourceQuality::ProtocolTimestamp,
+            identity: ObservationIdentity {
+                frame_sequence,
+                payload_index: 0,
+            },
+        }
+    }
+
+    fn contact(
+        observation_time: DateTime<Utc>,
+        observation_id: ObservationIdentity,
+        position_freshness: Option<ObservationFreshness>,
+        altitude_freshness: Option<ObservationFreshness>,
+        velocity_freshness: Option<ObservationFreshness>,
+    ) -> Contact {
+        Contact {
+            icao: 0xA1B2C3,
+            lat: 34.0,
+            lon: -118.5,
+            alt_ft: Some(35_000),
+            track: Some(90.0),
+            vel_kts: Some(100.0),
+            vertical_rate: None,
+            airspeed_kts: None,
+            callsign: None,
+            squawk: None,
+            is_on_ground: None,
+            alert: None,
+            emergency: None,
+            spi: None,
+            roll_angle: None,
+            track_angle_rate: None,
+            observation_time,
+            receipt_time: observation_time,
+            time_source: TimeSourceQuality::ProtocolTimestamp,
+            observation_id,
+            position_freshness,
+            altitude_freshness,
+            velocity_freshness,
+        }
+    }
+
+    #[test]
+    fn cached_contact_reuses_source_timing_and_identity() {
+        let observation_time = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        let contact = Contact {
+            icao: 0xA1B2C3,
+            lat: 34.0,
+            lon: -118.5,
+            alt_ft: Some(35_000),
+            track: Some(90.0),
+            vel_kts: Some(100.0),
+            vertical_rate: None,
+            airspeed_kts: None,
+            callsign: None,
+            squawk: None,
+            is_on_ground: None,
+            alert: None,
+            emergency: None,
+            spi: None,
+            roll_angle: None,
+            track_angle_rate: None,
+            observation_time,
+            receipt_time: observation_time + chrono::Duration::seconds(2),
+            time_source: TimeSourceQuality::ReceiverClock,
+            observation_id: ObservationIdentity {
+                frame_sequence: 12,
+                payload_index: 0,
+            },
+            position_freshness: None,
+            altitude_freshness: None,
+            velocity_freshness: None,
+        };
+
+        let first = make_observation(&contact, SensorKind::AdsbReceiver);
+        let second = make_observation(&contact, SensorKind::AdsbReceiver);
+
+        assert_eq!(first.timestamp, observation_time);
+        assert_eq!(second.timestamp, observation_time);
+        assert_eq!(first.receipt_time, contact.receipt_time);
+        assert_eq!(
+            first.metadata.observation_id,
+            second.metadata.observation_id
+        );
+        assert_eq!(first.metadata.time_source, second.metadata.time_source);
+    }
+
+    #[test]
+    fn telemetry_only_update_survives_stale_position_identity_deduplication() {
+        let position_time = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        let telemetry_time = position_time + chrono::Duration::seconds(1);
+        let position_identity = ObservationIdentity {
+            frame_sequence: 10,
+            payload_index: 0,
+        };
+        let first = contact(
+            position_time,
+            position_identity,
+            Some(freshness(position_time, 10)),
+            Some(freshness(position_time, 10)),
+            Some(freshness(position_time, 10)),
+        );
+        let second = contact(
+            position_time,
+            position_identity,
+            None,
+            Some(freshness(telemetry_time, 11)),
+            Some(freshness(telemetry_time, 12)),
+        );
+
+        let first_observation = make_observation(&first, SensorKind::AdsbReceiver);
+        let second_observation = make_observation(&second, SensorKind::AdsbReceiver);
+        assert!(second_observation.is_telemetry_only());
+
+        let mut store = TimelineStore::new(StoreConfig::default());
+        assert!(store.insert(first_observation));
+        assert!(
+            store.insert(second_observation),
+            "a telemetry-only update with fresh altitude and velocity must not be discarded because its position identity is stale"
+        );
     }
 }

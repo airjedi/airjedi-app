@@ -6,12 +6,14 @@ use super::{Frame, FrameType, Framer};
 #[derive(Debug)]
 pub struct BeastFramer {
     inner: beast_frame::FrameDecoder,
+    next_sequence: u64,
 }
 
 impl BeastFramer {
     pub fn new() -> Self {
         Self {
             inner: beast_frame::FrameDecoder::new(),
+            next_sequence: 0,
         }
     }
 }
@@ -34,7 +36,10 @@ impl Framer for BeastFramer {
             beast_frame::MessageType::ModeSShort => FrameType::ModeSShort,
             beast_frame::MessageType::ModeSLong => FrameType::ModeSLong,
         };
+        let sequence = self.next_sequence;
+        self.next_sequence = self.next_sequence.wrapping_add(1);
         Some(Frame {
+            sequence,
             timestamp: Some(beast.mlat_timestamp),
             signal_level: Some(beast.signal_level as f32 / 255.0),
             data: Bytes::from(beast.data),

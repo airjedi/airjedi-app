@@ -19,11 +19,13 @@
 
 use std::collections::HashMap;
 
+use airjedi_core::{ObservationFreshness, ObservationIdentity, TimeSourceQuality};
 use chrono::{DateTime, Utc};
+#[cfg(feature = "tracker-jump-detection")]
 use log::{info, warn};
 use tokio::sync::broadcast;
 
-use crate::protocol::{AircraftMessage, Icao, MessagePayload};
+use crate::protocol::{AircraftMessage, DecodedMessage, Icao, MessagePayload, MessageTiming};
 
 // Constants for position validation and tracking
 const NAUTICAL_MILE_CONVERSION: f64 = 1.15078; // 1 nautical mile = 1.15078 statute miles
@@ -34,6 +36,27 @@ const JUMP_DETECTION_THRESHOLD_MILES: f64 = 10.0;
 #[cfg(feature = "tracker-jump-detection")]
 const MAX_CONSECUTIVE_REJECTIONS: u32 = 3;
 const POSITION_CHANGE_THRESHOLD_DEGREES: f64 = 0.001; // ~100 meters at mid-latitudes
+
+/// Accept a field report once, and only let measurement time move forward.
+///
+/// Receipt time is deliberately not used to make an older measurement fresh:
+/// a delayed report may be live traffic, but it must not replace a newer field
+/// value. Distinct reports with the same measurement time remain admissible.
+fn accepts_freshness(
+    current: Option<ObservationFreshness>,
+    candidate: ObservationFreshness,
+) -> bool {
+    let Some(current) = current else {
+        return true;
+    };
+    if current.identity == candidate.identity {
+        return false;
+    }
+
+    candidate.observation_time > current.observation_time
+        || (candidate.observation_time == current.observation_time
+            && candidate.receipt_time >= current.receipt_time)
+}
 
 /// Calculate distance between two lat/lon points using Haversine formula (in miles).
 fn haversine_distance(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
@@ -120,6 +143,24 @@ pub struct Aircraft {
     pub signal_level: Option<f32>,
     /// Timestamp of last received message.
     pub last_seen: DateTime<Utc>,
+    /// Measurement time of the latest decoded report.
+    pub last_observation_time: DateTime<Utc>,
+    /// Timestamp quality of the latest decoded report.
+    pub last_time_source: TimeSourceQuality,
+    /// Identity of the latest decoded report.
+    pub last_observation_id: ObservationIdentity,
+    /// Measurement time of the latest accepted position report.
+    pub position_observation_time: Option<DateTime<Utc>>,
+    /// Timestamp quality of the latest accepted position report.
+    pub position_time_source: Option<TimeSourceQuality>,
+    /// Identity of the latest accepted position report.
+    pub position_observation_id: Option<ObservationIdentity>,
+    /// Timing and identity of the latest accepted position field.
+    pub position_freshness: Option<ObservationFreshness>,
+    /// Timing and identity of the latest accepted altitude field.
+    pub altitude_freshness: Option<ObservationFreshness>,
+    /// Timing and identity of the latest accepted velocity/track fields.
+    pub velocity_freshness: Option<ObservationFreshness>,
     /// Timestamp of last accepted position update (for jump detection).
     last_position_time: Option<DateTime<Utc>>,
     /// Position history for trail rendering.
@@ -129,7 +170,7 @@ pub struct Aircraft {
 }
 
 impl Aircraft {
-    fn new(icao: Icao) -> Self {
+    fn new(icao: Icao, receipt_time: DateTime<Utc>) -> Self {
         Self {
             icao,
             callsign: None,
@@ -155,7 +196,19 @@ impl Aircraft {
             wind_direction: None,
             temperature: None,
             signal_level: None,
-            last_seen: Utc::now(),
+            last_seen: receipt_time,
+            last_observation_time: receipt_time,
+            last_time_source: TimeSourceQuality::ReceiptTime,
+            last_observation_id: ObservationIdentity {
+                frame_sequence: 0,
+                payload_index: 0,
+            },
+            position_observation_time: None,
+            position_time_source: None,
+            position_observation_id: None,
+            position_freshness: None,
+            altitude_freshness: None,
+            velocity_freshness: None,
             last_position_time: None,
             position_history: Vec::new(),
             #[cfg(feature = "tracker-jump-detection")]
@@ -181,6 +234,7 @@ impl Aircraft {
         center_lat: f64,
         center_lon: f64,
         max_distance: f64,
+        observation_time: DateTime<Utc>,
     ) -> bool {
         // Check if position is within max distance from center
         let distance_from_center = haversine_distance(center_lat, center_lon, lat, lon);
@@ -191,10 +245,9 @@ impl Aircraft {
         // Redundant with rs1090 CPR validation; enable for hardware decoders that bypass it.
         #[cfg(feature = "tracker-jump-detection")]
         if let (Some(last_lat), Some(last_lon)) = (self.latitude, self.longitude) {
-            let now = Utc::now();
             let time_since_last_position = self
                 .last_position_time
-                .map(|t| (now - t).num_seconds())
+                .map(|t| (observation_time - t).num_seconds())
                 .unwrap_or(i64::MAX);
 
             if time_since_last_position <= JUMP_DETECTION_TIME_WINDOW_SECONDS {
@@ -231,13 +284,13 @@ impl Aircraft {
                 lat,
                 lon,
                 altitude: self.altitude,
-                timestamp: Utc::now(),
+                timestamp: observation_time,
             });
         }
 
         self.latitude = Some(lat);
         self.longitude = Some(lon);
-        self.last_position_time = Some(Utc::now());
+        self.last_position_time = Some(observation_time);
         #[cfg(feature = "tracker-jump-detection")]
         {
             self.consecutive_rejections = 0;
@@ -246,8 +299,7 @@ impl Aircraft {
         true
     }
 
-    fn cleanup_old_history(&mut self, max_age_seconds: i64) {
-        let now = Utc::now();
+    fn cleanup_old_history_at(&mut self, now: DateTime<Utc>, max_age_seconds: i64) {
         self.position_history
             .retain(|point| (now - point.timestamp).num_seconds() < max_age_seconds);
     }
@@ -344,15 +396,43 @@ impl AircraftTracker {
 
     /// Process an incoming aircraft message.
     pub fn process_message(&mut self, msg: AircraftMessage) {
+        let now = Utc::now();
+        self.process_decoded_message(DecodedMessage::new(
+            msg,
+            MessageTiming::receipt_time(
+                now,
+                ObservationIdentity {
+                    frame_sequence: 0,
+                    payload_index: 0,
+                },
+            ),
+        ));
+    }
+
+    /// Process a decoded message without replacing its observation timing.
+    pub fn process_decoded_message(&mut self, decoded: DecodedMessage) {
+        let timing = decoded.timing;
+        let msg = decoded.message;
+        let freshness = ObservationFreshness {
+            observation_time: timing.observation_time,
+            receipt_time: timing.receipt_time,
+            time_source: timing.time_source,
+            identity: timing.identity,
+        };
         let icao = msg.icao();
         let is_new = !self.aircraft.contains_key(&icao);
 
         let aircraft = self
             .aircraft
             .entry(icao)
-            .or_insert_with(|| Aircraft::new(icao));
+            .or_insert_with(|| Aircraft::new(icao, timing.receipt_time));
 
-        aircraft.last_seen = Utc::now();
+        if timing.receipt_time >= aircraft.last_seen {
+            aircraft.last_seen = timing.receipt_time;
+            aircraft.last_observation_time = timing.observation_time;
+            aircraft.last_time_source = timing.time_source;
+            aircraft.last_observation_id = timing.identity;
+        }
 
         if let Some(sl) = msg.signal_level {
             aircraft.signal_level = Some(sl);
@@ -383,26 +463,40 @@ impl AircraftTracker {
                 is_on_ground,
                 ..
             } => {
-                if let Some(alt) = altitude {
-                    aircraft.altitude = Some(alt);
-                }
-                if let Some(gs) = ground_speed {
-                    aircraft.velocity = Some(gs);
-                }
-                if let Some(trk) = track {
-                    aircraft.track = Some(trk);
-                }
-                if let Some(on_ground) = is_on_ground {
-                    aircraft.is_on_ground = Some(on_ground);
-                }
-                let updated = aircraft.update_position(
-                    latitude,
-                    longitude,
-                    self.center_lat,
-                    self.center_lon,
-                    self.max_distance_miles,
-                );
+                let altitude_is_fresh = accepts_freshness(aircraft.altitude_freshness, freshness);
+                let velocity_is_fresh = accepts_freshness(aircraft.velocity_freshness, freshness);
+                let updated = accepts_freshness(aircraft.position_freshness, freshness)
+                    && aircraft.update_position(
+                        latitude,
+                        longitude,
+                        self.center_lat,
+                        self.center_lon,
+                        self.max_distance_miles,
+                        timing.observation_time,
+                    );
                 if updated {
+                    if let Some(alt) = altitude.filter(|_| altitude_is_fresh) {
+                        aircraft.altitude = Some(alt);
+                        aircraft.altitude_freshness = Some(freshness);
+                    }
+                    if velocity_is_fresh {
+                        if let Some(gs) = ground_speed {
+                            aircraft.velocity = Some(gs);
+                        }
+                        if let Some(trk) = track {
+                            aircraft.track = Some(trk);
+                        }
+                        if ground_speed.is_some() || track.is_some() {
+                            aircraft.velocity_freshness = Some(freshness);
+                        }
+                    }
+                    if let Some(on_ground) = is_on_ground {
+                        aircraft.is_on_ground = Some(on_ground);
+                    }
+                    aircraft.position_observation_time = Some(timing.observation_time);
+                    aircraft.position_time_source = Some(timing.time_source);
+                    aircraft.position_observation_id = Some(timing.identity);
+                    aircraft.position_freshness = Some(freshness);
                     let _ = self.event_tx.send(TrackerEvent::PositionUpdated(icao));
                 }
             }
@@ -416,23 +510,26 @@ impl AircraftTracker {
                 roll_angle,
                 track_angle_rate,
             } => {
-                aircraft.velocity = Some(speed);
-                aircraft.track = Some(track);
-                aircraft.vertical_rate = vertical_rate;
-                if let Some(on_ground) = is_on_ground {
-                    aircraft.is_on_ground = Some(on_ground);
-                }
-                if let Some(hdg) = heading {
-                    aircraft.heading = Some(hdg);
-                }
-                if let Some(aspd) = airspeed {
-                    aircraft.airspeed = Some(aspd);
-                }
-                if let Some(ra) = roll_angle {
-                    aircraft.roll_angle = Some(ra);
-                }
-                if let Some(tar) = track_angle_rate {
-                    aircraft.track_angle_rate = Some(tar);
+                if accepts_freshness(aircraft.velocity_freshness, freshness) {
+                    aircraft.velocity = Some(speed);
+                    aircraft.track = Some(track);
+                    aircraft.vertical_rate = vertical_rate;
+                    if let Some(on_ground) = is_on_ground {
+                        aircraft.is_on_ground = Some(on_ground);
+                    }
+                    if let Some(hdg) = heading {
+                        aircraft.heading = Some(hdg);
+                    }
+                    if let Some(aspd) = airspeed {
+                        aircraft.airspeed = Some(aspd);
+                    }
+                    if let Some(ra) = roll_angle {
+                        aircraft.roll_angle = Some(ra);
+                    }
+                    if let Some(tar) = track_angle_rate {
+                        aircraft.track_angle_rate = Some(tar);
+                    }
+                    aircraft.velocity_freshness = Some(freshness);
                 }
             }
             MessagePayload::Altitude {
@@ -443,8 +540,11 @@ impl AircraftTracker {
                 spi,
                 is_on_ground,
             } => {
-                if let Some(alt) = altitude {
+                if let Some(alt) =
+                    altitude.filter(|_| accepts_freshness(aircraft.altitude_freshness, freshness))
+                {
                     aircraft.altitude = Some(alt);
+                    aircraft.altitude_freshness = Some(freshness);
                 }
                 if let Some(sq) = squawk {
                     aircraft.squawk = Some(sq);
@@ -542,11 +642,14 @@ impl AircraftTracker {
 
     /// Remove stale aircraft and clean up old position history.
     pub fn cleanup_stale(&mut self) {
-        let now = Utc::now();
+        self.cleanup_stale_at(Utc::now());
+    }
 
+    /// Remove stale aircraft using an injected receipt-time clock.
+    pub fn cleanup_stale_at(&mut self, now: DateTime<Utc>) {
         // Clean up old position history
         for aircraft in self.aircraft.values_mut() {
-            aircraft.cleanup_old_history(self.position_history_secs);
+            aircraft.cleanup_old_history_at(now, self.position_history_secs);
         }
 
         // Remove aircraft that haven't been seen recently
@@ -567,6 +670,25 @@ impl AircraftTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn position_message(timing: MessageTiming, latitude: f64) -> DecodedMessage {
+        DecodedMessage::new(
+            AircraftMessage {
+                icao: Icao(0xA1B2C3),
+                signal_level: None,
+                payload: MessagePayload::Position {
+                    latitude,
+                    longitude: -118.5,
+                    altitude: Some(35000),
+                    ground_speed: None,
+                    track: None,
+                    is_on_ground: None,
+                    altitude_gnss: None,
+                },
+            },
+            timing,
+        )
+    }
 
     #[test]
     fn test_haversine_distance() {
@@ -620,6 +742,170 @@ mod tests {
         assert_eq!(aircraft.altitude, Some(35000));
         assert_eq!(tracker.positioned_len(), 1);
         assert_eq!(tracker.position_history_len(), 1);
+    }
+
+    #[test]
+    fn repeated_cached_position_keeps_measurement_time() {
+        let observation_time = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        let receipt_time = observation_time + chrono::Duration::seconds(10);
+        let timing = MessageTiming {
+            observation_time,
+            receipt_time,
+            time_source: TimeSourceQuality::ReceiverClock,
+            identity: ObservationIdentity {
+                frame_sequence: 7,
+                payload_index: 0,
+            },
+        };
+        let mut tracker = AircraftTracker::new(TrackerConfig {
+            center: Some((33.9425, -118.4081)),
+            ..Default::default()
+        });
+
+        tracker.process_decoded_message(position_message(timing, 34.0));
+        tracker.process_decoded_message(position_message(timing, 34.0));
+
+        let aircraft = tracker.get_by_icao(Icao(0xA1B2C3)).unwrap();
+        assert_eq!(aircraft.last_seen, receipt_time);
+        assert_eq!(aircraft.position_observation_time, Some(observation_time));
+        assert_eq!(aircraft.position_observation_id, Some(timing.identity));
+        assert_eq!(aircraft.position_history.len(), 1);
+        assert_eq!(aircraft.position_history[0].timestamp, observation_time);
+    }
+
+    #[test]
+    fn stationary_report_is_fresh_even_when_position_does_not_move() {
+        let observation_time = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        let mut tracker = AircraftTracker::new(TrackerConfig {
+            center: Some((33.9425, -118.4081)),
+            ..Default::default()
+        });
+
+        tracker.process_decoded_message(position_message(
+            MessageTiming {
+                observation_time,
+                receipt_time: observation_time,
+                time_source: TimeSourceQuality::ReceiverClock,
+                identity: ObservationIdentity {
+                    frame_sequence: 1,
+                    payload_index: 0,
+                },
+            },
+            34.0,
+        ));
+        tracker.process_decoded_message(position_message(
+            MessageTiming {
+                observation_time: observation_time + chrono::Duration::seconds(2),
+                receipt_time: observation_time + chrono::Duration::seconds(2),
+                time_source: TimeSourceQuality::ReceiverClock,
+                identity: ObservationIdentity {
+                    frame_sequence: 2,
+                    payload_index: 0,
+                },
+            },
+            34.0,
+        ));
+
+        let aircraft = tracker.get_by_icao(Icao(0xA1B2C3)).unwrap();
+        assert_eq!(aircraft.position_history.len(), 1);
+        assert_eq!(
+            aircraft.position_freshness.unwrap().identity.frame_sequence,
+            2
+        );
+        assert_eq!(
+            aircraft.altitude_freshness.unwrap().identity.frame_sequence,
+            2
+        );
+    }
+
+    #[test]
+    fn rejected_position_does_not_refresh_its_telemetry_fields() {
+        let observation_time = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        let timing = |frame_sequence| MessageTiming {
+            observation_time: observation_time + chrono::Duration::seconds(frame_sequence as i64),
+            receipt_time: observation_time + chrono::Duration::seconds(frame_sequence as i64),
+            time_source: TimeSourceQuality::ReceiverClock,
+            identity: ObservationIdentity {
+                frame_sequence,
+                payload_index: 0,
+            },
+        };
+        let mut tracker = AircraftTracker::new(TrackerConfig {
+            center: Some((33.9425, -118.4081)),
+            max_distance_miles: 100.0,
+            ..Default::default()
+        });
+
+        tracker.process_decoded_message(position_message(timing(1), 34.0));
+        tracker.process_decoded_message(position_message(timing(2), 40.0));
+
+        let aircraft = tracker.get_by_icao(Icao(0xA1B2C3)).unwrap();
+        assert_eq!(aircraft.altitude, Some(35000));
+        assert_eq!(
+            aircraft.altitude_freshness.unwrap().identity.frame_sequence,
+            1
+        );
+        assert_eq!(
+            aircraft.position_freshness.unwrap().identity.frame_sequence,
+            1
+        );
+    }
+
+    #[test]
+    fn late_position_does_not_replace_newer_field_freshness() {
+        let observation_time = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        let timing = |frame_sequence, seconds| MessageTiming {
+            observation_time: observation_time + chrono::Duration::seconds(seconds),
+            receipt_time: observation_time + chrono::Duration::seconds(10 + frame_sequence as i64),
+            time_source: TimeSourceQuality::ReceiverClock,
+            identity: ObservationIdentity {
+                frame_sequence,
+                payload_index: 0,
+            },
+        };
+        let mut tracker = AircraftTracker::new(TrackerConfig {
+            center: Some((33.9425, -118.4081)),
+            ..Default::default()
+        });
+
+        tracker.process_decoded_message(position_message(timing(1, 10), 34.0));
+        tracker.process_decoded_message(position_message(timing(2, 5), 34.1));
+
+        let aircraft = tracker.get_by_icao(Icao(0xA1B2C3)).unwrap();
+        assert_eq!(aircraft.latitude, Some(34.0));
+        assert_eq!(
+            aircraft.position_freshness.unwrap().identity.frame_sequence,
+            1
+        );
+        assert_eq!(
+            aircraft.altitude_freshness.unwrap().identity.frame_sequence,
+            1
+        );
+        assert_eq!(
+            aircraft.last_seen,
+            observation_time + chrono::Duration::seconds(12)
+        );
+    }
+
+    #[test]
+    fn silent_feed_ages_from_receipt_time() {
+        let receipt_time = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        let timing = MessageTiming::receipt_time(
+            receipt_time,
+            ObservationIdentity {
+                frame_sequence: 1,
+                payload_index: 0,
+            },
+        );
+        let mut tracker = AircraftTracker::new(TrackerConfig {
+            aircraft_timeout_secs: 5,
+            ..Default::default()
+        });
+
+        tracker.process_decoded_message(position_message(timing, 34.0));
+        tracker.cleanup_stale_at(receipt_time + chrono::Duration::seconds(6));
+
+        assert!(tracker.is_empty());
     }
 
     #[test]

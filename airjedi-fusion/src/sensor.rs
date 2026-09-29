@@ -1,5 +1,9 @@
 use crate::coord::CoordinateFrame;
 use crate::types::{StateVectorType, TargetCategory, TargetId, Timestamp};
+use airjedi_core::{
+    AltitudeReference, HeadingReference, ObservationFreshness, ObservationIdentity,
+    TimeSourceQuality,
+};
 use nalgebra::{DMatrix, DVector};
 
 // `SensorKind` moved to `airjedi-core` so `SensorContributions` can name it
@@ -84,6 +88,46 @@ pub struct ObservationMetadata {
     pub accuracy_category: Option<u8>,
     pub source_label: String,
     pub is_on_ground: Option<bool>,
+    pub altitude_reference: Option<AltitudeReference>,
+    pub heading_reference: Option<HeadingReference>,
+    pub vertical_rate_fpm: Option<i32>,
+    pub airspeed_kts: Option<f64>,
+    pub callsign: Option<String>,
+    pub squawk: Option<String>,
+    pub alert: Option<bool>,
+    pub emergency: Option<bool>,
+    pub spi: Option<bool>,
+    pub roll_angle: Option<f32>,
+    pub track_angle_rate: Option<f32>,
+    /// Source-local identity used to distinguish repeated polls from reports.
+    pub observation_id: Option<ObservationIdentity>,
+    /// Quality of the observation timestamp.
+    pub time_source: Option<TimeSourceQuality>,
+    /// Freshness of the position field in this observation.
+    pub position_freshness: Option<ObservationFreshness>,
+    /// Freshness of the altitude field in this observation.
+    pub altitude_freshness: Option<ObservationFreshness>,
+    /// Freshness of the velocity/track fields in this observation.
+    pub velocity_freshness: Option<ObservationFreshness>,
+}
+
+impl SensorObservation {
+    /// Whether this observation carries field-level freshness information.
+    #[must_use]
+    pub fn has_field_freshness(&self) -> bool {
+        self.metadata.position_freshness.is_some()
+            || self.metadata.altitude_freshness.is_some()
+            || self.metadata.velocity_freshness.is_some()
+    }
+
+    /// Whether this is a telemetry-only update with no new position fix.
+    #[must_use]
+    pub fn is_telemetry_only(&self) -> bool {
+        self.has_field_freshness()
+            && self.metadata.position_freshness.is_none()
+            && (self.metadata.altitude_freshness.is_some()
+                || self.metadata.velocity_freshness.is_some())
+    }
 }
 
 pub trait SensorSource: Send + Sync + 'static {

@@ -22,14 +22,24 @@ use bevy::prelude::*;
 use bevy_replicon::prelude::{ClientState, RepliconChannels, RepliconPlugins};
 use bevy_replicon_renet::{netcode::NetcodeClientTransport, RenetClient, RepliconRenetPlugins};
 
-use airjedi_core::{DisplayEstimate, DisplayTrack, SensorContributions, TrackStatus};
-use airjedi_net::{create_client, register_replicated, DEFAULT_PORT};
+use airjedi_core::{
+    DisplayEstimate, DisplayTrack, DisplayTrail, SensorContributions, TrackId, TrackStatus,
+};
+use airjedi_net::{
+    create_client, register_replicated, ClientHistoryStore, HistoryClientMessage,
+    HistoryLoadingState, HistoryRequestPriority, DEFAULT_PORT,
+};
 
 use crate::adsb::sync::AircraftModelRegistry;
+use crate::aircraft::components::{AuthoritativeHistory, HistoryMaterialized};
+use crate::aircraft::history_chart::{
+    ChartTransferProgress, HistoryChartActions, HistoryChartLoading, HistoryChartState,
+};
 use crate::aircraft::interpolation::update_interpolation_on_adsb;
 use crate::aircraft::picking::{on_aircraft_click, on_aircraft_hover, on_aircraft_out};
 use crate::aircraft::{
-    AircraftListState, AircraftTypeDatabase, CameraFollowState, InterpolationState, TrailHistory,
+    AircraftListState, AircraftTypeDatabase, CameraFollowState, InterpolationState, SessionClock,
+    TrailHistory,
 };
 use crate::config::AppConfig;
 use crate::fusion_integration::estimated_track::EstimatedTrackConfig;
@@ -46,6 +56,9 @@ struct ThinAgentAddr(SocketAddr);
 /// Throttles reconnect attempts while the client is disconnected.
 #[derive(Resource)]
 struct ReconnectBackoff(Timer);
+
+#[derive(Resource, Default)]
+struct SelectedHistoryTrack(Option<TrackId>);
 
 /// Registers the replication client and the `DisplayTrack` -> visual hydrator.
 pub struct ThinClientPlugin {
@@ -79,6 +92,8 @@ impl Plugin for ThinClientPlugin {
 
         app.insert_resource(ThinAgentAddr(addr))
             .insert_resource(ThinClientStatus::default())
+            .init_resource::<ClientHistoryStore>()
+            .init_resource::<SelectedHistoryTrack>()
             .insert_resource(ReconnectBackoff(Timer::from_seconds(
                 2.0,
                 TimerMode::Repeating,
@@ -89,8 +104,13 @@ impl Plugin for ThinClientPlugin {
                 (
                     manage_connection,
                     update_thin_status,
+                    ingest_history_previews,
+                    receive_history_messages,
+                    request_history_transfers,
                     hydrate_new_tracks,
                     update_hydrated_tracks,
+                    materialize_client_history,
+                    sync_thin_history_chart,
                 )
                     .chain(),
             )
@@ -230,7 +250,7 @@ fn aircraft_from_display(dt: &DisplayTrack) -> Aircraft {
 /// Attach the full aircraft visual to each newly replicated `DisplayTrack`.
 fn hydrate_new_tracks(
     mut commands: Commands,
-    new_tracks: Query<(Entity, &DisplayTrack), Added<DisplayTrack>>,
+    new_tracks: Query<(Entity, &DisplayTrack, Option<&TrailHistory>)>,
     model_registry: Option<Res<AircraftModelRegistry>>,
     type_db: Option<Res<AircraftTypeDatabase>>,
     local_origin: Res<LocalOrigin>,
@@ -242,7 +262,10 @@ fn hydrate_new_tracks(
     let now = time.elapsed_secs_f64();
     let converter = CoordinateConverter::new(&local_origin);
 
-    for (entity, dt) in &new_tracks {
+    for (entity, dt, trail) in &new_tracks {
+        if trail.is_some() {
+            continue;
+        }
         let type_info = type_db.as_ref().and_then(|db| db.lookup(&dt.icao));
         let type_code = type_info.as_ref().and_then(|i| i.type_code.clone());
         let registration = type_info.as_ref().and_then(|i| i.registration.clone());
@@ -266,6 +289,8 @@ fn hydrate_new_tracks(
             Transform::from_xyz(pos.x, pos.y, crate::constants::AIRCRAFT_Z_LAYER),
             Pickable::default(),
             aircraft_from_display(dt),
+            AuthoritativeHistory,
+            HistoryMaterialized::default(),
             TrailHistory::default(),
             InterpolationState::new(
                 dt.latitude,
@@ -288,11 +313,225 @@ fn hydrate_new_tracks(
     }
 }
 
+fn ingest_history_previews(previews: Query<&DisplayTrail>, mut store: ResMut<ClientHistoryStore>) {
+    for preview in &previews {
+        store.install_preview(preview);
+    }
+}
+
+fn receive_history_messages(
+    mut messages: MessageReader<airjedi_net::HistoryServerMessage>,
+    mut store: ResMut<ClientHistoryStore>,
+) {
+    for message in messages.read() {
+        store.apply(message);
+    }
+}
+
+fn request_history_transfers(
+    state: Res<State<ClientState>>,
+    list_state: Res<AircraftListState>,
+    tracks: Query<(&DisplayTrack, Option<&DisplayTrail>)>,
+    mut selected: ResMut<SelectedHistoryTrack>,
+    mut store: ResMut<ClientHistoryStore>,
+    mut messages: MessageWriter<HistoryClientMessage>,
+    mut chart_actions: ResMut<HistoryChartActions>,
+) {
+    if *state.get() != ClientState::Connected {
+        store.invalidate_active_requests();
+        return;
+    }
+
+    let live_tracks: std::collections::HashSet<TrackId> = tracks
+        .iter()
+        .map(|(track, _)| track.track_id.clone())
+        .collect();
+    let mut retained_tracks = live_tracks;
+    // Keep the selected read model while the replicated entity is between
+    // connections. The entity can arrive on a later frame than its preview.
+    if let Some(track_id) = selected.0.clone() {
+        retained_tracks.insert(track_id);
+    }
+    for cancel in store.retain_tracks(&retained_tracks) {
+        messages.write(HistoryClientMessage::Cancel(cancel));
+    }
+
+    let selected_track = list_state.selected_icao.as_ref().and_then(|icao| {
+        tracks
+            .iter()
+            .find(|(track, _)| &track.icao == icao)
+            .map(|(track, _)| track.track_id.clone())
+    });
+
+    if selected.0 != selected_track {
+        if let Some(previous) = selected.0.as_ref() {
+            if let Some(cancel) = store.cancel_request(previous) {
+                messages.write(HistoryClientMessage::Cancel(cancel));
+            }
+        }
+        selected.0 = selected_track.clone();
+    }
+
+    if let Some(track_id) = selected_track.as_ref() {
+        if chart_actions.retry.as_ref() == Some(track_id) {
+            send_request_plan(
+                store.retry(track_id, HistoryRequestPriority::Selected),
+                &mut messages,
+            );
+            chart_actions.retry = None;
+        }
+        send_request_plan(
+            store.prepare_request(track_id, HistoryRequestPriority::Selected),
+            &mut messages,
+        );
+    }
+
+    for cancel in store.release_completed_background_requests() {
+        messages.write(HistoryClientMessage::Cancel(cancel));
+    }
+
+    let mut background_count = store.active_request_count_for(HistoryRequestPriority::Background);
+    let mut candidates: Vec<(String, TrackId)> = tracks
+        .iter()
+        .filter_map(|(track, preview)| {
+            if selected_track.as_ref() == Some(&track.track_id) || preview.is_none() {
+                return None;
+            }
+            Some((track.track_id.0.to_string(), track.track_id.clone()))
+        })
+        .collect();
+    candidates.sort_by(|left, right| left.0.cmp(&right.0));
+    for (_, track_id) in candidates {
+        if background_count >= 2 {
+            break;
+        }
+        let plan = store.prepare_request(&track_id, HistoryRequestPriority::Background);
+        if plan.request.is_some() {
+            background_count += 1;
+        }
+        send_request_plan(plan, &mut messages);
+    }
+}
+
+fn sync_thin_history_chart(
+    list_state: Res<AircraftListState>,
+    tracks: Query<&DisplayTrack>,
+    store: Res<ClientHistoryStore>,
+    mut chart: ResMut<HistoryChartState>,
+) {
+    let selected = list_state.selected_icao.as_ref().and_then(|icao| {
+        tracks
+            .iter()
+            .find(|track| &track.icao == icao)
+            .map(|track| track.track_id.clone())
+    });
+    chart.select(selected.clone());
+
+    let Some(track_id) = selected else {
+        return;
+    };
+    let Some(history) = store.track(&track_id) else {
+        chart.set_waiting();
+        return;
+    };
+    let loading = match history.loading {
+        HistoryLoadingState::Preview => HistoryChartLoading::Preview,
+        HistoryLoadingState::Loading => HistoryChartLoading::Loading,
+        HistoryLoadingState::Partial => HistoryChartLoading::Partial,
+        HistoryLoadingState::Complete => HistoryChartLoading::Complete,
+        HistoryLoadingState::RetryableError => HistoryChartLoading::RetryableError,
+    };
+    let transfer = history.transfer.map(|progress| ChartTransferProgress {
+        received_chunks: progress.received_chunks,
+        total_chunks: progress.total_chunks,
+        received_samples: progress.received_samples,
+        expected_samples: progress.expected_samples,
+    });
+    chart.set_history(
+        history.session_id,
+        history.server_time,
+        history.history_revision,
+        history.coverage.clone(),
+        loading,
+        transfer,
+        &history.samples,
+    );
+}
+
+fn send_request_plan(
+    plan: airjedi_net::HistoryRequestPlan,
+    messages: &mut MessageWriter<HistoryClientMessage>,
+) {
+    if let Some(cancel) = plan.cancel {
+        messages.write(HistoryClientMessage::Cancel(cancel));
+    }
+    if let Some(request) = plan.request {
+        messages.write(HistoryClientMessage::Request(request));
+    }
+}
+
+/// Materialize either the selected full history or the bounded preview. The
+/// component remains present while assets are loading, so hydration retries on
+/// a later frame instead of losing the already received samples.
+fn materialize_client_history(
+    list_state: Res<AircraftListState>,
+    store: Res<ClientHistoryStore>,
+    clock: Res<SessionClock>,
+    mut commands: Commands,
+    mut visuals: Query<(
+        Entity,
+        &DisplayTrack,
+        &DisplayTrail,
+        &mut TrailHistory,
+        Option<&HistoryMaterialized>,
+    )>,
+) {
+    for (entity, track, preview, mut trail, marker) in &mut visuals {
+        let selected = list_state.selected_icao.as_ref() == Some(&track.icao);
+        let full_history = selected
+            .then(|| store.track(&track.track_id))
+            .flatten()
+            .filter(|history| !matches!(history.loading, HistoryLoadingState::Preview));
+
+        let (session_id, revision, full) = full_history.map_or(
+            (preview.session_id, preview.history_revision, false),
+            |history| (history.session_id, history.history_revision, true),
+        );
+        let sample_count =
+            full_history.map_or(preview.samples.len(), |history| history.samples.len());
+        let unchanged = marker.is_some_and(|marker| {
+            marker.session_id == Some(session_id)
+                && marker.revision == revision
+                && marker.full == full
+                && marker.sample_count == sample_count
+        });
+        if unchanged {
+            continue;
+        }
+
+        if let Some(history) = full_history {
+            trail.replace_from_samples(&history.samples, history.server_time, &clock);
+        } else {
+            trail.replace_from_display(preview, &clock);
+        }
+        commands.entity(entity).insert(HistoryMaterialized {
+            session_id: Some(session_id),
+            revision,
+            full,
+            sample_count,
+        });
+    }
+}
+
 /// Push each replicated `DisplayTrack` change into its `Aircraft` view and
 /// refresh the interpolation baseline (mirrors the fat-mode render bridge).
 fn update_hydrated_tracks(
     mut query: Query<
-        (&DisplayTrack, &mut Aircraft, Option<&mut InterpolationState>),
+        (
+            &DisplayTrack,
+            &mut Aircraft,
+            Option<&mut InterpolationState>,
+        ),
         Changed<DisplayTrack>,
     >,
     time: Res<Time<Real>>,
@@ -369,7 +608,12 @@ fn draw_estimated_cones(
     list_state: Res<AircraftListState>,
     follow_state: Res<CameraFollowState>,
     local_origin: Res<LocalOrigin>,
-    tracks: Query<(&DisplayEstimate, &DisplayTrack, &Aircraft, Option<&InterpolationState>)>,
+    tracks: Query<(
+        &DisplayEstimate,
+        &DisplayTrack,
+        &Aircraft,
+        Option<&InterpolationState>,
+    )>,
 ) {
     if !config.enabled {
         return;
@@ -447,7 +691,11 @@ fn draw_estimated_cones(
         gizmos.line_2d(left, right, cross);
 
         if i == n - 1 {
-            gizmos.circle_2d(pos, radius.max(200.0), cone_center_color(maneuver_prob, 0.55));
+            gizmos.circle_2d(
+                pos,
+                radius.max(200.0),
+                cone_center_color(maneuver_prob, 0.55),
+            );
         }
 
         prev_center = pos;
@@ -492,5 +740,81 @@ fn draw_sensor_contributions(
             gizmos.circle_2d(pos, 30.0, color);
             gizmos.line_2d(pos, fused, color.with_alpha(0.35));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use airjedi_core::{
+        AltitudeReference, DisplayHistorySample, DisplayProvenance, HeadingReference,
+        HistoryCoverage, HistorySessionId, TrackStatus, VerticalRateReference,
+    };
+
+    #[test]
+    fn selected_history_cache_survives_connected_frame_before_track_replication() {
+        let track_id = TrackId::new();
+        let preview = DisplayTrail {
+            session_id: HistorySessionId::nil(),
+            track_id: track_id.clone(),
+            server_time: chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
+            history_revision: 1,
+            coverage: HistoryCoverage::default(),
+            samples: vec![DisplayHistorySample {
+                sample_sequence: 1,
+                state_time: chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
+                latitude: 37.0,
+                longitude: -97.0,
+                altitude_ft: Some(30_000),
+                altitude_reference: AltitudeReference::Barometric,
+                ground_speed_kts: Some(400.0),
+                heading: Some(90.0),
+                heading_reference: HeadingReference::GroundTrack,
+                vertical_rate: None,
+                vertical_rate_reference: VerticalRateReference::Unknown,
+                position_source: None,
+                status: TrackStatus::Confirmed,
+                estimated: false,
+                provenance: DisplayProvenance::default(),
+                segment_id: 0,
+                break_reason: None,
+            }],
+            preview_window: chrono::Duration::minutes(5),
+            preview_truncated: false,
+            sample_sequence_start: None,
+            sample_sequence_end: None,
+        };
+        let mut store = ClientHistoryStore::default();
+        assert_eq!(
+            store.install_preview(&preview),
+            airjedi_net::HistoryApplyResult::Applied
+        );
+        assert!(store
+            .prepare_request(&track_id, HistoryRequestPriority::Selected)
+            .request
+            .is_some());
+
+        let mut app = App::new();
+        app.insert_resource(State::new(ClientState::Connected))
+            .insert_resource(AircraftListState {
+                selected_icao: Some("PROBE01".to_string()),
+                ..AircraftListState::default()
+            })
+            .insert_resource(SelectedHistoryTrack(Some(track_id.clone())))
+            .insert_resource(store)
+            .init_resource::<HistoryChartActions>()
+            .add_message::<HistoryClientMessage>()
+            .add_systems(Update, request_history_transfers);
+
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<ClientHistoryStore>()
+                .track(&track_id)
+                .filter(|history| history.samples.len() == 1)
+                .is_some(),
+            "one Connected frame without replicated tracks must not discard selected cached history"
+        );
     }
 }

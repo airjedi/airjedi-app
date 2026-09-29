@@ -5,10 +5,11 @@ use crate::filter::surface::{Surface4Dof, SurfaceConfig};
 use crate::filter::transition::{ConstantVelocity3D, TransitionModel};
 use crate::filter::ukf::{Ukf, UkfConfig};
 use crate::filter::{FilterVariant, OosmConfig, TrackFilter, TrackerState};
+use crate::history::HistoryConfig;
 use crate::prelude_imports::*;
 use crate::sensor::FusionTier;
 use crate::store::StoreConfig;
-use crate::track::initiation::{InitiationConfig, MofNInitiator};
+use crate::track::initiation::InitiationConfig;
 use crate::track::LifecycleProfiles;
 use crate::transport::NatsTransportConfig;
 use crate::types::{StateVectorType, TargetCategory};
@@ -25,6 +26,7 @@ pub enum FilterStrategy {
 #[derive(Resource, Debug, Clone)]
 pub struct FusionConfig {
     pub store: StoreConfig,
+    pub history: HistoryConfig,
     pub lifecycle: LifecycleProfiles,
     pub associator: AssociatorConfig,
     pub filter_defaults: ProcessNoiseConfig,
@@ -40,6 +42,7 @@ impl Default for FusionConfig {
     fn default() -> Self {
         Self {
             store: StoreConfig::default(),
+            history: HistoryConfig::default(),
             lifecycle: LifecycleProfiles::default(),
             associator: AssociatorConfig::default(),
             filter_defaults: ProcessNoiseConfig::default(),
@@ -91,6 +94,8 @@ impl FusionConfig {
                     variant: FilterVariant::new(ImmFilter::new(filters, tm)),
                     state_type: StateVectorType::Cartesian6Dof,
                     last_update: None,
+                    processed_observations: std::collections::HashSet::new(),
+                    processed_store_indices: std::collections::HashSet::new(),
                 }
             }
             FilterStrategy::Ukf => {
@@ -102,12 +107,16 @@ impl FusionConfig {
                     variant: FilterVariant::new(Ukf::new(6, model, UkfConfig::default())),
                     state_type: StateVectorType::Cartesian6Dof,
                     last_update: None,
+                    processed_observations: std::collections::HashSet::new(),
+                    processed_store_indices: std::collections::HashSet::new(),
                 }
             }
             FilterStrategy::Surface => TrackerState {
                 variant: FilterVariant::new(Surface4Dof::new(SurfaceConfig::default())),
                 state_type: StateVectorType::Surface4Dof,
                 last_update: None,
+                processed_observations: std::collections::HashSet::new(),
+                processed_store_indices: std::collections::HashSet::new(),
             },
             FilterStrategy::Ekf => TrackerState::new_6dof(self.filter_defaults.clone()),
         }

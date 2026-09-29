@@ -25,6 +25,10 @@ pub use basestation::BaseStationParser;
 pub use beast::BeastParser;
 
 use std::fmt;
+use std::ops::Deref;
+
+use airjedi_core::{ObservationIdentity, TimeSourceQuality};
+use chrono::{DateTime, Utc};
 use thiserror::Error;
 
 /// ICAO 24-bit aircraft address.
@@ -95,6 +99,54 @@ pub struct AircraftMessage {
     pub signal_level: Option<f32>,
     /// The message payload.
     pub payload: MessagePayload,
+}
+
+/// Timestamp and identity carried with one or more decoded payloads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MessageTiming {
+    /// Measurement time, or the receipt-time fallback when no measurement time
+    /// was available.
+    pub observation_time: DateTime<Utc>,
+    /// Time at which the source delivered the report to this process.
+    pub receipt_time: DateTime<Utc>,
+    /// Quality and origin of `observation_time`.
+    pub time_source: TimeSourceQuality,
+    /// Stable identity for this logical report within the source session.
+    pub identity: ObservationIdentity,
+}
+
+impl MessageTiming {
+    #[must_use]
+    pub fn receipt_time(receipt_time: DateTime<Utc>, identity: ObservationIdentity) -> Self {
+        Self {
+            observation_time: receipt_time,
+            receipt_time,
+            time_source: TimeSourceQuality::ReceiptTime,
+            identity,
+        }
+    }
+}
+
+/// A decoded payload plus the timing and identity needed by tracking and fusion.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DecodedMessage {
+    pub message: AircraftMessage,
+    pub timing: MessageTiming,
+}
+
+impl DecodedMessage {
+    #[must_use]
+    pub fn new(message: AircraftMessage, timing: MessageTiming) -> Self {
+        Self { message, timing }
+    }
+}
+
+impl Deref for DecodedMessage {
+    type Target = AircraftMessage;
+
+    fn deref(&self) -> &Self::Target {
+        &self.message
+    }
 }
 
 impl AircraftMessage {

@@ -8,13 +8,16 @@
 use std::net::{Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
-use airjedi_core::{DisplayTrack, PositionSource, TrackId, TrackStatus};
+use airjedi_core::{
+    AltitudeReference, DisplayHistorySample, DisplayTrack, DisplayTrail, HeadingReference,
+    HistoryCoverage, HistorySessionId, PositionSource, TrackId, TrackStatus, VerticalRateReference,
+};
 use airjedi_net::{create_client, create_server, register_replicated};
 use bevy::prelude::*;
 use bevy::state::app::StatesPlugin;
 use bevy_replicon::prelude::*;
 use bevy_replicon_renet::RepliconRenetPlugins;
-use chrono::Utc;
+use chrono::{Duration as ChronoDuration, Utc};
 
 // A distinct port so the test never collides with a running agent (DEFAULT_PORT).
 const TEST_PORT: u16 = 5601;
@@ -27,9 +30,16 @@ fn sample_track() -> DisplayTrack {
         latitude: 38.1234,
         longitude: -97.5678,
         altitude_ft: Some(30_000),
+        position_freshness: None,
+        altitude_freshness: None,
+        velocity_freshness: None,
+        altitude_reference: airjedi_core::AltitudeReference::Barometric,
         heading: Some(270.0),
+        heading_reference: airjedi_core::HeadingReference::GroundTrack,
         velocity_kts: Some(420.0),
+        airspeed_kts: None,
         vertical_rate: Some(0),
+        vertical_rate_reference: airjedi_core::VerticalRateReference::FeetPerMinute,
         roll_angle: None,
         track_angle_rate: None,
         squawk: Some("1200".to_string()),
@@ -46,6 +56,49 @@ fn sample_track() -> DisplayTrack {
         mode_probabilities: Some(vec![0.7, 0.3]),
         dominant_mode: Some(0),
         observation_count: 12,
+        provenance: airjedi_core::DisplayProvenance::default(),
+    }
+}
+
+fn sample_trail() -> DisplayTrail {
+    let timestamp = Utc::now();
+    DisplayTrail {
+        session_id: HistorySessionId::nil(),
+        track_id: TrackId::new(),
+        server_time: timestamp,
+        history_revision: 7,
+        coverage: HistoryCoverage {
+            first_seen: Some(timestamp),
+            retained_from: Some(timestamp),
+            retained_to: Some(timestamp),
+            retained_sample_count: 1,
+            retained_duration: ChronoDuration::zero(),
+            sampling_interval: ChronoDuration::seconds(2),
+            truncation_reason: None,
+        },
+        samples: vec![DisplayHistorySample {
+            sample_sequence: 3,
+            state_time: timestamp,
+            latitude: 38.1234,
+            longitude: -97.5678,
+            altitude_ft: Some(30_000),
+            altitude_reference: AltitudeReference::Barometric,
+            ground_speed_kts: Some(420.0),
+            heading: Some(270.0),
+            heading_reference: HeadingReference::GroundTrack,
+            vertical_rate: Some(0),
+            vertical_rate_reference: VerticalRateReference::FeetPerMinute,
+            position_source: Some(PositionSource::Mlat),
+            status: TrackStatus::Confirmed,
+            estimated: false,
+            provenance: airjedi_core::DisplayProvenance::default(),
+            segment_id: 0,
+            break_reason: None,
+        }],
+        preview_window: ChronoDuration::minutes(5),
+        preview_truncated: false,
+        sample_sequence_start: Some(3),
+        sample_sequence_end: Some(3),
     }
 }
 
@@ -70,7 +123,7 @@ fn setup_server(mut commands: Commands, channels: Res<RepliconChannels>) {
     .expect("server transport should start");
     commands.insert_resource(server);
     commands.insert_resource(transport);
-    commands.spawn((Replicated, sample_track()));
+    commands.spawn((Replicated, sample_track(), sample_trail()));
 }
 
 fn setup_client(mut commands: Commands, channels: Res<RepliconChannels>) {
@@ -133,4 +186,14 @@ fn display_track_replicates_agent_to_client() {
     assert_eq!(dt.status, TrackStatus::Confirmed);
     assert_eq!(dt.filter_type, "IMM");
     assert!((dt.latitude - 38.1234).abs() < 1e-9);
+
+    let world = client.world_mut();
+    let mut trail_query = world.query::<&DisplayTrail>();
+    let trail = trail_query
+        .iter(world)
+        .next()
+        .expect("replicated DisplayTrail present");
+    assert_eq!(trail.history_revision, 7);
+    assert_eq!(trail.samples[0].sample_sequence, 3);
+    assert_eq!(trail.samples[0].state_time, trail.server_time);
 }

@@ -1,5 +1,5 @@
 use crate::sensor::SensorObservation;
-use crate::types::{Timestamp, TrackId};
+use crate::types::Timestamp;
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -52,18 +52,21 @@ impl MofNInitiator {
             None => return InitiationDecision::SinglePoint,
         };
 
-        let entry = self.candidates.entry(key.clone()).or_insert_with(|| {
-            CandidateTrack {
+        let entry = self
+            .candidates
+            .entry(key.clone())
+            .or_insert_with(|| CandidateTrack {
                 detections: Vec::new(),
                 last_observation: obs.clone(),
                 created_at: now,
-            }
-        });
+            });
 
         entry.last_observation = obs.clone();
         entry.detections.push(now);
 
-        let window_start = now - chrono::Duration::from_std(self.config.scan_window).unwrap_or(chrono::Duration::seconds(10));
+        let window_start = now
+            - chrono::Duration::from_std(self.config.scan_window)
+                .unwrap_or(chrono::Duration::seconds(10));
         entry.detections.retain(|t| *t >= window_start);
 
         if entry.detections.len() >= self.config.required_detections as usize {
@@ -78,9 +81,8 @@ impl MofNInitiator {
     pub fn evict_stale(&mut self, now: Timestamp) {
         let window = chrono::Duration::from_std(self.config.scan_window)
             .unwrap_or(chrono::Duration::seconds(10));
-        self.candidates.retain(|_, c| {
-            now.signed_duration_since(c.created_at) <= window
-        });
+        self.candidates
+            .retain(|_, c| now.signed_duration_since(c.created_at) <= window);
 
         while self.candidates.len() > self.config.max_candidates {
             if let Some(oldest_key) = self
@@ -197,7 +199,8 @@ mod tests {
         initiator.process_observation(&make_obs("DEF"), now);
         assert_eq!(initiator.candidate_count(), 2);
 
-        let result = initiator.process_observation(&make_obs("ABC"), now + chrono::Duration::seconds(1));
+        let result =
+            initiator.process_observation(&make_obs("ABC"), now + chrono::Duration::seconds(1));
         assert!(matches!(result, InitiationDecision::Promote(_)));
         assert_eq!(initiator.candidate_count(), 1);
     }

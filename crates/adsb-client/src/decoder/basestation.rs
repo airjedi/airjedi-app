@@ -1,9 +1,11 @@
 use log::warn;
 
 use crate::framing::{Frame, FrameType};
-use crate::protocol::{AircraftMessage, BaseStationParser, Protocol};
+use crate::protocol::{BaseStationParser, Protocol};
 
-use super::Decoder;
+use super::{decorate_messages, Decoder};
+use airjedi_core::TimeSourceQuality;
+use chrono::{DateTime, Utc};
 
 /// Decoder for BaseStation/SBS-1 text frames.
 ///
@@ -35,13 +37,19 @@ impl Default for BaseStationDecoder {
 }
 
 impl Decoder for BaseStationDecoder {
-    fn decode(&mut self, frame: &Frame) -> Vec<AircraftMessage> {
+    fn decode_at(&mut self, frame: &Frame, receipt_time: DateTime<Utc>) -> Vec<super::DecodedMessage> {
         if frame.frame_type != FrameType::TextLine {
             return vec![];
         }
 
         match self.parser.parse(&frame.data) {
-            Ok(Some(msg)) => vec![msg],
+            Ok(Some(msg)) => decorate_messages(
+                frame,
+                receipt_time,
+                receipt_time,
+                TimeSourceQuality::ReceiptTime,
+                vec![msg],
+            ),
             Ok(None) => vec![],
             Err(e) => {
                 warn!("BaseStation parse error: {}", e);
@@ -66,6 +74,7 @@ mod tests {
 
     fn text_frame(line: &str) -> Frame {
         Frame {
+            sequence: 0,
             timestamp: None,
             signal_level: None,
             data: Bytes::copy_from_slice(line.as_bytes()),
@@ -75,6 +84,7 @@ mod tests {
 
     fn binary_frame(data: &[u8], frame_type: FrameType) -> Frame {
         Frame {
+            sequence: 0,
             timestamp: None,
             signal_level: None,
             data: Bytes::copy_from_slice(data),

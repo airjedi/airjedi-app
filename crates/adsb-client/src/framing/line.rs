@@ -5,12 +5,14 @@ use super::{Frame, FrameType, Framer};
 #[derive(Debug)]
 pub struct LineFramer {
     buffer: Vec<u8>,
+    next_sequence: u64,
 }
 
 impl LineFramer {
     pub fn new() -> Self {
         Self {
             buffer: Vec::with_capacity(1024),
+            next_sequence: 0,
         }
     }
 }
@@ -40,7 +42,10 @@ impl Framer for LineFramer {
             if end == 0 {
                 continue;
             }
+            let sequence = self.next_sequence;
+            self.next_sequence = self.next_sequence.wrapping_add(1);
             return Some(Frame {
+                sequence,
                 timestamp: None,
                 signal_level: None,
                 data: Bytes::copy_from_slice(&line[..end]),

@@ -27,6 +27,8 @@ pub enum FrameType {
 /// A protocol frame extracted from a byte stream.
 #[derive(Debug, Clone)]
 pub struct Frame {
+    /// Monotonic sequence assigned by the framer for this source session.
+    pub sequence: u64,
     /// MLAT timestamp from the receiver, if available (BEAST only).
     pub timestamp: Option<u64>,
     /// Signal level / RSSI (0.0 - 1.0), if available.
