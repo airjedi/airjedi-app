@@ -279,6 +279,50 @@ fn correction_to_pre_cutoff_sample_survives_snapshot_handoff() {
 }
 
 #[test]
+#[ignore = "known history regression: newer windowed preview drops buffered correction"]
+fn newer_windowed_preview_preserves_buffered_correction_outside_preview() {
+    let session = HistorySessionId::nil();
+    let track = TrackId::new();
+    let original = sample(1, 0, 30_000, 400.0);
+    let newer_preview_sample = sample(3, 600, 31_000, 420.0);
+    let mut store = ClientHistoryStore::default();
+    store.install_preview(&preview(
+        session,
+        track.clone(),
+        vec![newer_preview_sample],
+        12,
+    ));
+    let request = store
+        .prepare_request(&track, HistoryRequestPriority::Selected)
+        .request
+        .expect("history request");
+
+    assert_eq!(
+        store.apply(&chunk(&request, vec![original], 0, 1, 10)),
+        HistoryApplyResult::Applied
+    );
+    assert_eq!(
+        store.apply(&operation(
+            &request,
+            11,
+            HistoryOperationKind::Correction(sample(1, 0, 33_000, 440.0)),
+        )),
+        HistoryApplyResult::Applied
+    );
+    assert_eq!(
+        store.apply(&complete(&request, 1, 10)),
+        HistoryApplyResult::Applied
+    );
+
+    let history = store.track(&track).expect("history installed");
+    assert_eq!(
+        history.sample(1).and_then(|sample| sample.altitude_ft),
+        Some(33_000),
+        "a newer preview window must not suppress a buffered correction to an older snapshot sample"
+    );
+}
+
+#[test]
 fn retention_during_transfer_is_applied_after_snapshot_installation() {
     let session = HistorySessionId::nil();
     let track = TrackId::new();
