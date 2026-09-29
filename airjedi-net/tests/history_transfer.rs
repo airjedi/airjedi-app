@@ -532,6 +532,10 @@ fn completed_background_requests_are_released_for_fair_cache_fill() {
         store.track(&track).unwrap().loading,
         airjedi_net::HistoryLoadingState::Complete
     );
+    assert!(store
+        .prepare_request(&track, HistoryRequestPriority::Background)
+        .request
+        .is_none());
 }
 
 #[test]

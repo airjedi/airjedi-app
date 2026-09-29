@@ -227,7 +227,20 @@ impl HistoryRecorder {
         display: &airjedi_core::DisplayTrack,
         now: DateTime<Utc>,
     ) -> bool {
-        let input = DisplayHistoryInput::from(display);
+        self.record_display_track_at(display, display.last_seen, now)
+    }
+
+    /// Record a projected state at an explicit state time. Coasting states use
+    /// the current fusion time because their position is a prediction for now,
+    /// not the timestamp of the last received observation.
+    pub fn record_display_track_at(
+        &mut self,
+        display: &airjedi_core::DisplayTrack,
+        state_time: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) -> bool {
+        let mut input = DisplayHistoryInput::from(display);
+        input.state_time = state_time;
         let recorded = self.record_input(&display.track_id, input);
         self.prune(now);
         recorded
@@ -556,7 +569,11 @@ pub fn record_history_system(
         }
         let hint = raw_observation_hint_for(&store, track);
         let display = derive_display_track(track, tracker, quality, hint.as_ref(), None);
-        recorder.record_display_track(&display, now);
+        if display.status == TrackStatus::Coasting {
+            recorder.record_display_track_at(&display, now, now);
+        } else {
+            recorder.record_display_track(&display, now);
+        }
     }
     recorder.prune(now);
     recorder.retain_tracks(&live_tracks);

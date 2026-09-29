@@ -111,6 +111,33 @@ fn accumulates_before_client_connection_and_returns_bounded_preview() {
 }
 
 #[test]
+fn coasting_history_uses_prediction_time_for_each_cadence() {
+    let track_id = TrackId::new();
+    let start = start();
+    let mut recorder = recorder(HistoryConfig {
+        sampling_interval: Duration::from_secs(2),
+        ..Default::default()
+    });
+
+    let display = display(&track_id, start, 37.0, TrackStatus::Coasting, true);
+    let first_time = start + ChronoDuration::seconds(2);
+    let second_time = first_time + ChronoDuration::seconds(2);
+    assert!(recorder.record_display_track_at(&display, first_time, first_time));
+    assert!(recorder.record_display_track_at(&display, second_time, second_time));
+
+    let snapshot = recorder.snapshot(&track_id, second_time).unwrap();
+    assert_eq!(
+        snapshot
+            .samples
+            .iter()
+            .map(|sample| sample.state_time)
+            .collect::<Vec<_>>(),
+        vec![first_time, second_time]
+    );
+    assert!(snapshot.samples.iter().all(|sample| sample.estimated));
+}
+
+#[test]
 fn samples_keep_original_times_and_never_use_interpolation_or_session_time() {
     let track_id = TrackId::new();
     let start = start();

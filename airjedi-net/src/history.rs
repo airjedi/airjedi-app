@@ -416,6 +416,13 @@ impl ClientHistoryStore {
             return HistoryRequestPlan::default();
         }
 
+        // A completed transfer is already the authoritative full-history
+        // cache for this session. Preview updates merge into it, so starting a
+        // new request every frame would waste bandwidth and defeat cache reuse.
+        if history_loading == HistoryLoadingState::Complete {
+            return HistoryRequestPlan::default();
+        }
+
         if let Some(active) = self.active.get(track_id) {
             if active.request.priority == priority
                 && !matches!(history_loading, HistoryLoadingState::RetryableError)
@@ -520,9 +527,11 @@ impl ClientHistoryStore {
             self.retry_after.remove(&track_id);
             if let Some(history) = self.histories.get_mut(&track_id) {
                 history.request_id = None;
-                if !request.completed {
-                    history.loading = HistoryLoadingState::Preview;
-                }
+                history.loading = if request.completed {
+                    HistoryLoadingState::Partial
+                } else {
+                    HistoryLoadingState::Preview
+                };
             }
         }
     }

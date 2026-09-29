@@ -20,7 +20,25 @@ impl Plugin for FusionIntegrationPlugin {
         use airjedi_fusion::FusionPlugin;
 
         if !app.world().contains_resource::<FusionConfig>() {
-            app.insert_resource(FusionConfig::default());
+            let mut config = FusionConfig::default();
+            if let Some(app_config) = app.world().get_resource::<crate::config::AppConfig>() {
+                config.history.retention = std::time::Duration::from_secs(
+                    app_config.trails.history_retention_seconds.max(1),
+                );
+                config.history.sampling_interval = std::time::Duration::from_secs(
+                    app_config
+                        .trails
+                        .history_sampling_interval_seconds
+                        .max(1),
+                );
+                config.history.max_samples_per_track = config
+                    .history
+                    .retention
+                    .as_secs()
+                    .div_ceil(config.history.sampling_interval.as_secs())
+                    .saturating_add(1) as usize;
+            }
+            app.insert_resource(config);
         }
 
         app.add_plugins(FusionPlugin)

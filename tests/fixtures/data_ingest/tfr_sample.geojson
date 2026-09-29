@@ -64,7 +64,7 @@
         "NAME": "TEMPORARY FLIGHT RESTRICTION FOR SECURITY",
         "TYPE": "SECURITY",
         "EFFECTIVE": "2026-03-01T00:00:00Z",
-        "EXPIRE": "2026-06-30T23:59:00Z",
+        "EXPIRE": "2027-06-30T23:59:00Z",
         "LOWALT": "SFC",
         "HIGHALT": "FL180"
       }

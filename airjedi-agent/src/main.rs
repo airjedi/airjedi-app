@@ -16,6 +16,8 @@
 //!                                      - verification client: print replicated
 //!                                        DisplayTracks from a running agent.
 //! - `--fixture <dir>`                  - override the capture directory.
+//! - `--history-retention-minutes N`    - retain N minutes of server history.
+//! - `--history-sampling-seconds N`     - sample server history every N seconds.
 
 mod history_transport;
 mod ingest;
@@ -31,7 +33,9 @@ use airjedi_core::{
 };
 use airjedi_fusion::sensor::SensorKind;
 use airjedi_fusion::systems::{FusionSet, ObservationBuffer};
-use airjedi_fusion::{FusionConfig, FusionPlugin, HistoryRecorder, TimelineStore, Track};
+use airjedi_fusion::{
+    FusionConfig, FusionPlugin, HistoryConfig, HistoryRecorder, TimelineStore, Track,
+};
 use airjedi_net::{create_client, create_server, register_replicated, DEFAULT_PORT};
 use bevy::app::ScheduleRunnerPlugin;
 use bevy::prelude::*;
@@ -105,11 +109,12 @@ fn main() {
     let port = flag_value(&args, "--port")
         .and_then(|s| s.parse::<u16>().ok())
         .unwrap_or(DEFAULT_PORT);
+    let history_config = history_config(&args);
 
     // A live BEAST feed replaces fixture replay and needs no capture files.
     if let Some(feed_addr) = flag_value(&args, "--feed") {
         eprintln!("[agent] live BEAST ingest from {feed_addr}");
-        run_server(Ingest::Live(feed_addr), port);
+        run_server(Ingest::Live(feed_addr), port, history_config);
     }
 
     let dir = flag_value(&args, "--fixture")
@@ -136,7 +141,7 @@ fn main() {
     if selftest {
         run_selftest(scene);
     } else {
-        run_server(Ingest::Fixture(scene), port);
+        run_server(Ingest::Fixture(scene), port, history_config);
     }
 }
 
@@ -145,6 +150,26 @@ fn flag_value(args: &[String], flag: &str) -> Option<String> {
         .position(|a| a == flag)
         .and_then(|i| args.get(i + 1))
         .cloned()
+}
+
+fn history_config(args: &[String]) -> HistoryConfig {
+    let mut config = HistoryConfig::default();
+    if let Some(minutes) = flag_value(args, "--history-retention-minutes")
+        .and_then(|value| value.parse::<u64>().ok())
+    {
+        config.retention = Duration::from_secs(minutes.max(1) * 60);
+    }
+    if let Some(seconds) = flag_value(args, "--history-sampling-seconds")
+        .and_then(|value| value.parse::<u64>().ok())
+    {
+        config.sampling_interval = Duration::from_secs(seconds.max(1));
+    }
+    config.max_samples_per_track = config
+        .retention
+        .as_secs()
+        .div_ceil(config.sampling_interval.as_secs())
+        .saturating_add(1) as usize;
+    config
 }
 
 /// Add the fusion engine + the agent-side projection to `app`.
@@ -282,7 +307,7 @@ fn run_selftest(scene: Scene) -> ! {
 }
 
 /// Run the replicating server: fusion agent + renet transport, ticked ~60 Hz.
-fn run_server(ingest: Ingest, port: u16) -> ! {
+fn run_server(ingest: Ingest, port: u16, history_config: HistoryConfig) -> ! {
     let mut app = App::new();
     app.add_plugins((
         MinimalPlugins.set(ScheduleRunnerPlugin::run_loop(Duration::from_millis(16))),
@@ -300,6 +325,9 @@ fn run_server(ingest: Ingest, port: u16) -> ! {
         Ingest::Fixture(scene) => scene.mlat_set.clone(),
         Ingest::Live(_) => Default::default(),
     };
+    let mut fusion_config = FusionConfig::default();
+    fusion_config.history = history_config;
+    app.insert_resource(fusion_config);
     add_fusion_and_projection(&mut app, mlat_set);
     app.add_systems(
         Update,
