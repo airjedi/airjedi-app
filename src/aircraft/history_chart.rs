@@ -894,4 +894,110 @@ mod tests {
         assert_eq!(state.loading, HistoryChartLoading::Waiting);
         assert!(state.session_id.is_none());
     }
+
+    #[test]
+    #[ignore = "known history regression: selected embedded chart uses the preview instead of full trail history"]
+    fn selected_full_history_trail_and_chart_expose_the_same_samples() {
+        use crate::aircraft::components::{Aircraft, FusionTrackLink};
+        use crate::aircraft::trails::TrailHistory;
+        use bevy::prelude::{App, Update};
+
+        let track_id = TrackId::new();
+        let server_time = DateTime::from_timestamp(1_700_000_600, 0).unwrap();
+        let full_samples: Vec<_> = (0..=300)
+            .map(|index| {
+                sample(
+                    index,
+                    server_time.timestamp() - 600 + index as i64 * 2,
+                    Some(30_000 + index as i32),
+                    Some(400.0),
+                    false,
+                    0,
+                    None,
+                )
+            })
+            .collect();
+        let preview_samples = full_samples[150..].to_vec();
+        let coverage = HistoryCoverage {
+            retained_sample_count: full_samples.len(),
+            sampling_interval: Duration::seconds(2),
+            ..HistoryCoverage::default()
+        };
+
+        let mut app = App::new();
+        app.insert_resource(AircraftListState {
+            selected_icao: Some("PROBE01".to_string()),
+            ..AircraftListState::default()
+        })
+        .init_resource::<HistoryChartState>()
+        .add_systems(Update, sync_embedded_history_chart);
+
+        let track_entity = app
+            .world_mut()
+            .spawn(DisplayTrail {
+                session_id: HistorySessionId::nil(),
+                track_id: track_id.clone(),
+                server_time,
+                history_revision: 600,
+                coverage,
+                samples: preview_samples,
+                preview_window: Duration::minutes(5),
+                preview_truncated: true,
+                sample_sequence_start: Some(150),
+                sample_sequence_end: Some(300),
+            })
+            .id();
+        let mut trail = TrailHistory::default();
+        trail.replace_from_samples(
+            &full_samples,
+            server_time,
+            &crate::aircraft::SessionClock::default(),
+        );
+        let visual_entity = app
+            .world_mut()
+            .spawn((
+                Aircraft {
+                    icao: "PROBE01".to_string(),
+                    callsign: None,
+                    latitude: 37.0,
+                    longitude: -97.0,
+                    altitude: Some(30_000),
+                    heading: Some(90.0),
+                    velocity: Some(400.0),
+                    vertical_rate: None,
+                    roll_angle: None,
+                    track_angle_rate: None,
+                    roll_last_seen: None,
+                    squawk: None,
+                    is_on_ground: Some(false),
+                    alert: None,
+                    emergency: None,
+                    spi: None,
+                    last_seen: server_time,
+                },
+                FusionTrackLink {
+                    track_entity,
+                    track_id,
+                },
+                trail,
+            ))
+            .id();
+
+        app.update();
+
+        let chart = app.world().resource::<HistoryChartState>();
+        let trail = app.world().get::<TrailHistory>(visual_entity).unwrap();
+        assert_eq!(
+            chart
+                .samples
+                .iter()
+                .map(|sample| sample.sample_sequence)
+                .collect::<Vec<_>>(),
+            trail
+                .points
+                .iter()
+                .map(|point| point.sample_sequence.unwrap())
+                .collect::<Vec<_>>(),
+        );
+    }
 }

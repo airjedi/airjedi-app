@@ -345,3 +345,104 @@ pub fn cleanup_orphaned_visuals(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::aircraft::SessionClock;
+    use airjedi_fusion::filter::ekf::ProcessNoiseConfig;
+    use airjedi_fusion::store::StoreConfig;
+    use airjedi_fusion::{HistoryConfig, TargetDomain, TargetId};
+    use chrono::TimeZone;
+
+    #[derive(Resource, Default)]
+    struct TrailRewriteCount(usize);
+
+    fn count_trail_rewrites(
+        mut count: ResMut<TrailRewriteCount>,
+        changed_trails: Query<&TrailHistory, Changed<TrailHistory>>,
+    ) {
+        count.0 += changed_trails.iter().count();
+    }
+
+    #[test]
+    #[ignore = "known history regression: static embedded history rewrites TrailHistory every frame"]
+    fn static_embedded_history_does_not_rewrite_the_visual_trail_each_frame() {
+        let now = chrono::Utc.with_ymd_and_hms(2026, 9, 29, 12, 0, 0).unwrap();
+        let track_id = airjedi_fusion::TrackId::new();
+        let mut app = App::new();
+        app.insert_resource(TimelineStore::new(StoreConfig::default()))
+            .insert_resource(HistoryRecorder::new(HistoryConfig::default()))
+            .insert_resource(FusionClock::fixed(now))
+            .insert_resource(crate::fusion_integration::clock::SimClock::fixed(now))
+            .insert_resource(SessionClock::default())
+            .insert_resource(AircraftListState::default())
+            .insert_resource(MapState::default())
+            .insert_resource(LocalOrigin::from_latlon(37.0, -97.0))
+            .insert_resource(view3d::View3DState::default())
+            .init_resource::<TrailRewriteCount>()
+            .add_systems(
+                Update,
+                (sync_tracks_to_visuals, count_trail_rewrites).chain(),
+            );
+
+        let track_entity = app
+            .world_mut()
+            .spawn((
+                Track {
+                    id: track_id.clone(),
+                    cooperative_ids: vec![TargetId {
+                        domain: TargetDomain::Air,
+                        id: "PROBE01".to_string(),
+                        id_type: IdentifierType::Icao,
+                    }],
+                    created_at: now,
+                    last_update: now,
+                    is_on_ground: false,
+                },
+                TrackerState::new_6dof(ProcessNoiseConfig::default()),
+                TrackQuality {
+                    status: TrackStatus::Confirmed,
+                    ..TrackQuality::default()
+                },
+                TargetClassification::default(),
+            ))
+            .id();
+        app.world_mut().spawn((
+            FusionTrackLink {
+                track_entity,
+                track_id,
+            },
+            Aircraft {
+                icao: "PROBE01".to_string(),
+                callsign: None,
+                latitude: 0.0,
+                longitude: 0.0,
+                altitude: None,
+                heading: None,
+                velocity: None,
+                vertical_rate: None,
+                roll_angle: None,
+                track_angle_rate: None,
+                roll_last_seen: None,
+                squawk: None,
+                is_on_ground: None,
+                alert: None,
+                emergency: None,
+                spi: None,
+                last_seen: now,
+            },
+            TrailHistory::default(),
+        ));
+
+        app.update();
+        app.world_mut().resource_mut::<TrailRewriteCount>().0 = 0;
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<TrailRewriteCount>().0,
+            0,
+            "unchanged embedded history must not rewrite the visual TrailHistory"
+        );
+    }
+}

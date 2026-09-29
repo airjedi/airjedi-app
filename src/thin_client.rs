@@ -736,3 +736,80 @@ fn draw_sensor_contributions(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use airjedi_core::{
+        AltitudeReference, DisplayHistorySample, DisplayProvenance, HeadingReference,
+        HistoryCoverage, HistorySessionId, TrackStatus, VerticalRateReference,
+    };
+
+    #[test]
+    #[ignore = "known history regression: reconnect hydration purges selected cached history"]
+    fn selected_history_cache_survives_connected_frame_before_track_replication() {
+        let track_id = TrackId::new();
+        let preview = DisplayTrail {
+            session_id: HistorySessionId::nil(),
+            track_id: track_id.clone(),
+            server_time: chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
+            history_revision: 1,
+            coverage: HistoryCoverage::default(),
+            samples: vec![DisplayHistorySample {
+                sample_sequence: 1,
+                state_time: chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
+                latitude: 37.0,
+                longitude: -97.0,
+                altitude_ft: Some(30_000),
+                altitude_reference: AltitudeReference::Barometric,
+                ground_speed_kts: Some(400.0),
+                heading: Some(90.0),
+                heading_reference: HeadingReference::GroundTrack,
+                vertical_rate: None,
+                vertical_rate_reference: VerticalRateReference::Unknown,
+                position_source: None,
+                status: TrackStatus::Confirmed,
+                estimated: false,
+                provenance: DisplayProvenance::default(),
+                segment_id: 0,
+                break_reason: None,
+            }],
+            preview_window: chrono::Duration::minutes(5),
+            preview_truncated: false,
+            sample_sequence_start: None,
+            sample_sequence_end: None,
+        };
+        let mut store = ClientHistoryStore::default();
+        assert_eq!(
+            store.install_preview(&preview),
+            airjedi_net::HistoryApplyResult::Applied
+        );
+        assert!(store
+            .prepare_request(&track_id, HistoryRequestPriority::Selected)
+            .request
+            .is_some());
+
+        let mut app = App::new();
+        app.insert_resource(State::new(ClientState::Connected))
+            .insert_resource(AircraftListState {
+                selected_icao: Some("PROBE01".to_string()),
+                ..AircraftListState::default()
+            })
+            .insert_resource(SelectedHistoryTrack(Some(track_id.clone())))
+            .insert_resource(store)
+            .init_resource::<HistoryChartActions>()
+            .add_message::<HistoryClientMessage>()
+            .add_systems(Update, request_history_transfers);
+
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<ClientHistoryStore>()
+                .track(&track_id)
+                .filter(|history| history.samples.len() == 1)
+                .is_some(),
+            "one Connected frame without replicated tracks must not discard selected cached history"
+        );
+    }
+}
