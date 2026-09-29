@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
 
 use airjedi_core::{
-    AltitudeReference, DisplayHistorySample, DisplayTrail, HistoryCoverage, HistorySessionId,
-    Timestamp, TrackId,
+    AltitudeReference, DisplayHistorySample, DisplayTrail, HeadingReference, HistoryCoverage,
+    HistorySessionId, Timestamp, TrackId, TrackStatus, VerticalRateReference,
 };
 use bevy::prelude::Resource;
 use bevy_egui::egui;
@@ -10,6 +10,7 @@ use chrono::{DateTime, Duration, Utc};
 
 use super::components::{Aircraft, FusionTrackLink};
 use super::list_panel::AircraftListState;
+use super::trails::TrailHistory;
 
 const DEFAULT_MAX_POINTS: usize = 160;
 const CHART_HEIGHT: f32 = 132.0;
@@ -336,22 +337,22 @@ pub fn downsample_points(points: Vec<ChartPoint>, max_points: usize) -> Vec<Char
 /// linked fusion entity. Thin mode replaces this source with the T5 store.
 pub fn sync_embedded_history_chart(
     list_state: bevy::prelude::Res<AircraftListState>,
-    visuals: bevy::prelude::Query<(&Aircraft, &FusionTrackLink)>,
+    visuals: bevy::prelude::Query<(&Aircraft, &FusionTrackLink, &TrailHistory)>,
     trails: bevy::prelude::Query<&DisplayTrail>,
     mut chart: bevy::prelude::ResMut<HistoryChartState>,
 ) {
     let selected = list_state.selected_icao.as_ref().and_then(|icao| {
         visuals
             .iter()
-            .find(|(aircraft, _)| &aircraft.icao == icao)
-            .map(|(_, link)| link.track_id.clone())
+            .find(|(aircraft, _, _)| &aircraft.icao == icao)
+            .map(|(_, link, _)| link.track_id.clone())
     });
     chart.select(selected.clone());
 
     let Some(track_id) = selected else {
         return;
     };
-    let Some((_, link)) = visuals.iter().find(|(aircraft, _)| {
+    let Some((_, link, trail)) = visuals.iter().find(|(aircraft, _, _)| {
         list_state
             .selected_icao
             .as_ref()
@@ -370,6 +371,30 @@ pub fn sync_embedded_history_chart(
     } else {
         HistoryChartLoading::Complete
     };
+    let samples: Vec<DisplayHistorySample> = trail
+        .points
+        .iter()
+        .enumerate()
+        .map(|(index, point)| DisplayHistorySample {
+            sample_sequence: point.sample_sequence.unwrap_or(index as u64),
+            state_time: point.timestamp_utc.unwrap_or(preview.server_time),
+            latitude: point.lat,
+            longitude: point.lon,
+            altitude_ft: point.altitude,
+            altitude_reference: point.altitude_reference,
+            ground_speed_kts: point.ground_speed_kts,
+            heading: None,
+            heading_reference: HeadingReference::Unknown,
+            vertical_rate: None,
+            vertical_rate_reference: VerticalRateReference::Unknown,
+            position_source: None,
+            status: TrackStatus::Confirmed,
+            estimated: point.estimated,
+            provenance: point.provenance.clone(),
+            segment_id: point.segment_id,
+            break_reason: point.break_reason,
+        })
+        .collect();
     chart.set_history(
         preview.session_id,
         preview.server_time,
@@ -377,7 +402,7 @@ pub fn sync_embedded_history_chart(
         preview.coverage.clone(),
         loading,
         None,
-        &preview.samples,
+        &samples,
     );
     debug_assert_eq!(track_id, preview.track_id);
 }
@@ -896,7 +921,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "known history regression: selected embedded chart uses the preview instead of full trail history"]
     fn selected_full_history_trail_and_chart_expose_the_same_samples() {
         use crate::aircraft::components::{Aircraft, FusionTrackLink};
         use crate::aircraft::trails::TrailHistory;

@@ -57,6 +57,21 @@ field provenance, sequence identity, gaps, revisions, coverage, selected and
 background loading, chart points, 2D/3D trail continuity, recorder parity, and
 existing playback format compatibility.
 
+## Regression Probes
+
+The final integration worktree also enables the seven probes that previously
+documented known history regressions:
+
+- Telemetry-only updates use their freshest field identity instead of a stale position identity.
+- Timeline FIFO eviction releases observation identities and bounds deduplication memory.
+- Track initiation releases processed identities after source observations are evicted.
+- A newer preview does not suppress a buffered correction outside its preview window.
+- Static embedded history does not rewrite the visual trail every frame.
+- Embedded charts consume the same full selected history as the trail.
+- Reconnect hydration preserves selected cached history before replicated entities arrive.
+
+These probes run as ordinary tests rather than ignored tests.
+
 ## Verification Limits
 
 The deterministic and headless checks run on the development host. No target

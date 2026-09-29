@@ -346,7 +346,13 @@ fn request_history_transfers(
         .iter()
         .map(|(track, _)| track.track_id.clone())
         .collect();
-    for cancel in store.retain_tracks(&live_tracks) {
+    let mut retained_tracks = live_tracks;
+    // Keep the selected read model while the replicated entity is between
+    // connections. The entity can arrive on a later frame than its preview.
+    if let Some(track_id) = selected.0.clone() {
+        retained_tracks.insert(track_id);
+    }
+    for cancel in store.retain_tracks(&retained_tracks) {
         messages.write(HistoryClientMessage::Cancel(cancel));
     }
 
@@ -746,7 +752,6 @@ mod tests {
     };
 
     #[test]
-    #[ignore = "known history regression: reconnect hydration purges selected cached history"]
     fn selected_history_cache_survives_connected_frame_before_track_replication() {
         let track_id = TrackId::new();
         let preview = DisplayTrail {

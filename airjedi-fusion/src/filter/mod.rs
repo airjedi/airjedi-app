@@ -244,6 +244,13 @@ impl TrackerState {
         }
     }
 
+    pub fn prune_processed(&mut self, store: &crate::store::TimelineStore) {
+        self.processed_observations
+            .retain(|key| store.contains_observation_key(key));
+        self.processed_store_indices
+            .retain(|index| store.contains_store_index(*index));
+    }
+
     #[must_use]
     pub fn mode_info(&self) -> Option<ModeInfo> {
         self.variant.mode_info()

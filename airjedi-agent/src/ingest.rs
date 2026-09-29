@@ -284,6 +284,27 @@ pub fn make_observation(c: &Contact, kind: SensorKind) -> SensorObservation {
     let cov = DMatrix::from_diagonal(&DVector::from_vec(vec![
         pos_var, pos_var, pos_var, 100.0, 100.0, 100.0,
     ]));
+    let freshest = [
+        c.position_freshness,
+        c.altitude_freshness,
+        c.velocity_freshness,
+    ]
+    .into_iter()
+    .flatten()
+    .max_by_key(|freshness| freshness.observation_time);
+    let observation_time = freshest
+        .map(|freshness| freshness.observation_time)
+        .unwrap_or(c.observation_time);
+    let receipt_time = freshest
+        .map(|freshness| freshness.receipt_time)
+        .unwrap_or(c.receipt_time);
+    let observation_id = freshest
+        .map(|freshness| freshness.identity)
+        .unwrap_or(c.observation_id);
+    let time_source = freshest
+        .map(|freshness| freshness.time_source)
+        .unwrap_or(c.time_source);
+
     SensorObservation {
         sensor_id: SensorId {
             id: match kind {
@@ -294,8 +315,8 @@ pub fn make_observation(c: &Contact, kind: SensorKind) -> SensorObservation {
             tier: FusionTier::Regional,
             coordinate_frame: CoordinateFrame::Wgs84,
         },
-        timestamp: c.observation_time,
-        receipt_time: c.receipt_time,
+        timestamp: observation_time,
+        receipt_time,
         target_id: Some(TargetId {
             domain: TargetDomain::Air,
             id: format!("{}", Icao(c.icao)),
@@ -313,8 +334,8 @@ pub fn make_observation(c: &Contact, kind: SensorKind) -> SensorObservation {
         covariance: ObservationCovariance { matrix: cov },
         classification_hint: Some(TargetCategory::FixedWing),
         metadata: ObservationMetadata {
-            observation_id: Some(c.observation_id),
-            time_source: Some(c.time_source),
+            observation_id: Some(observation_id),
+            time_source: Some(time_source),
             position_freshness: c.position_freshness,
             altitude_freshness: c.altitude_freshness,
             velocity_freshness: c.velocity_freshness,
@@ -433,7 +454,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "known history regression: telemetry-only updates reuse stale position identity"]
     fn telemetry_only_update_survives_stale_position_identity_deduplication() {
         let position_time = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
         let telemetry_time = position_time + chrono::Duration::seconds(1);

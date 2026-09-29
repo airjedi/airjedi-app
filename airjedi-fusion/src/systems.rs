@@ -88,6 +88,7 @@ pub fn fusion_update_system(
     let now = clock.now_utc();
 
     for (mut track, mut tracker, mut quality) in &mut tracks {
+        tracker.prune_processed(&store);
         // Always predict, even when coasting or lost. Skipping predict() during coasting
         // freezes the filter covariance, causing returning observations to exceed the
         // Mahalanobis gate and be rejected as outliers, preventing reacquisition.
@@ -185,6 +186,10 @@ pub fn track_initiation_system(
     clock: Res<FusionClock>,
 ) {
     use std::collections::HashSet;
+
+    initiator
+        .processed_observations
+        .retain(|key| store.contains_observation_key(key));
 
     if store.unassociated().is_empty() {
         return;
@@ -358,7 +363,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "known history regression: track initiator retains dedup identities after store eviction"]
     fn initiator_releases_dedup_identities_after_the_store_evicts_their_source_observations() {
         let timestamp = chrono::DateTime::from_timestamp(1_700_000_000, 0)
             .expect("fixed test timestamp is valid");

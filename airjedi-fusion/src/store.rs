@@ -89,12 +89,19 @@ impl TimelineStore {
         let mut obs = self.unassociated_obs.remove(unassociated_idx);
         obs.associated_track = Some(track_id.clone());
 
-        let buffer = self.by_track.entry(track_id.clone()).or_default();
-
-        if buffer.len() >= self.config.max_observations_per_track {
-            buffer.pop_front();
+        let evicted = {
+            let buffer = self.by_track.entry(track_id.clone()).or_default();
+            let evicted = if buffer.len() >= self.config.max_observations_per_track {
+                buffer.pop_front()
+            } else {
+                None
+            };
+            buffer.push_back(obs);
+            evicted
+        };
+        if let Some(evicted) = evicted {
+            self.forget_observation(&evicted.observation);
         }
-        buffer.push_back(obs);
     }
 
     #[must_use]
@@ -169,6 +176,23 @@ impl TimelineStore {
         if let Some(key) = observation_key(observation) {
             self.seen_observations.remove(&key);
         }
+    }
+
+    #[must_use]
+    pub fn contains_observation_key(&self, key: &ObservationKey) -> bool {
+        self.seen_observations.contains(key)
+    }
+
+    #[must_use]
+    pub fn contains_store_index(&self, store_index: usize) -> bool {
+        self.by_track.values().any(|buffer| {
+            buffer
+                .iter()
+                .any(|stored| stored.store_index == store_index)
+        }) || self
+            .unassociated_obs
+            .iter()
+            .any(|stored| stored.store_index == store_index)
     }
 
     pub fn evict_old(&mut self, now: Timestamp) {
@@ -428,7 +452,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "known history regression: per-track FIFO eviction retains dedup identity"]
     fn per_track_fifo_releases_an_evicted_observation_identity() {
         let config = StoreConfig {
             max_observations_per_track: 1,
@@ -451,7 +474,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "known history regression: per-track FIFO leaves dedup memory unbounded"]
     fn per_track_fifo_bounds_dedup_identity_memory() {
         let config = StoreConfig {
             max_observations_per_track: 1,

@@ -2,7 +2,7 @@ use crate::adsb::connection::FeedConnectionManager;
 use crate::adsb::enrichment::{EnrichmentConnectionManager, PositionSource};
 use crate::adsb::sync::AircraftModelRegistry;
 use crate::aircraft::components::{
-    Aircraft, AuthoritativeHistory, FusionDiagnostics, FusionTrackLink,
+    Aircraft, AuthoritativeHistory, FusionDiagnostics, FusionTrackLink, HistoryMaterialized,
 };
 use crate::aircraft::picking::{on_aircraft_click, on_aircraft_hover, on_aircraft_out};
 use crate::aircraft::{AircraftListState, InterpolationState, TrailHistory};
@@ -34,6 +34,7 @@ pub fn sync_tracks_to_visuals(
         Option<&mut InterpolationState>,
         Option<&mut FusionDiagnostics>,
         &mut TrailHistory,
+        Option<&HistoryMaterialized>,
     )>,
     visual_lookup: Query<(Entity, &FusionTrackLink)>,
     model_registry: Option<Res<AircraftModelRegistry>>,
@@ -89,7 +90,7 @@ pub fn sync_tracks_to_visuals(
         }
 
         if let Some((visual_entity, _)) = existing_visual {
-            if let Ok((_, mut aircraft, interp_opt, diag_opt, mut trail)) =
+            if let Ok((_, mut aircraft, interp_opt, diag_opt, mut trail, materialized)) =
                 visuals.get_mut(visual_entity)
             {
                 let position_changed = (dt.latitude - aircraft.latitude).abs() > f64::EPSILON
@@ -111,14 +112,43 @@ pub fn sync_tracks_to_visuals(
                     aircraft.roll_last_seen = Some(dt.last_seen);
                 }
                 aircraft.last_seen = dt.last_seen;
-                if let Some(snapshot) = selected_history.as_ref() {
-                    trail.replace_from_samples(
-                        &snapshot.samples,
-                        snapshot.server_time,
-                        &session_clock,
-                    );
-                } else {
-                    trail.replace_from_display(&preview, &session_clock);
+                let full = selected_history.is_some();
+                let (session_id, revision, sample_count) = selected_history.as_ref().map_or(
+                    (
+                        preview.session_id,
+                        preview.history_revision,
+                        preview.samples.len(),
+                    ),
+                    |snapshot| {
+                        (
+                            snapshot.session_id,
+                            snapshot.revision,
+                            snapshot.samples.len(),
+                        )
+                    },
+                );
+                let unchanged = materialized.is_some_and(|materialized| {
+                    materialized.session_id == Some(session_id)
+                        && materialized.revision == revision
+                        && materialized.full == full
+                        && materialized.sample_count == sample_count
+                });
+                if !unchanged {
+                    if let Some(snapshot) = selected_history.as_ref() {
+                        trail.replace_from_samples(
+                            &snapshot.samples,
+                            snapshot.server_time,
+                            &session_clock,
+                        );
+                    } else {
+                        trail.replace_from_display(&preview, &session_clock);
+                    }
+                    commands.entity(visual_entity).insert(HistoryMaterialized {
+                        session_id: Some(session_id),
+                        revision,
+                        full,
+                        sample_count,
+                    });
                 }
                 if dt.squawk.is_some() {
                     aircraft.squawk = dt.squawk.clone();
@@ -229,6 +259,7 @@ pub fn sync_tracks_to_visuals(
                     track_id: track.id.clone(),
                 },
                 AuthoritativeHistory,
+                HistoryMaterialized::default(),
                 make_diagnostics(tracker, quality, position_source),
                 TrailHistory::default(),
                 InterpolationState::new(
@@ -366,7 +397,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "known history regression: static embedded history rewrites TrailHistory every frame"]
     fn static_embedded_history_does_not_rewrite_the_visual_trail_each_frame() {
         let now = chrono::Utc.with_ymd_and_hms(2026, 9, 29, 12, 0, 0).unwrap();
         let track_id = airjedi_fusion::TrackId::new();

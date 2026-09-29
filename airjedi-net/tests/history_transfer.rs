@@ -279,7 +279,6 @@ fn correction_to_pre_cutoff_sample_survives_snapshot_handoff() {
 }
 
 #[test]
-#[ignore = "known history regression: newer windowed preview drops buffered correction"]
 fn newer_windowed_preview_preserves_buffered_correction_outside_preview() {
     let session = HistorySessionId::nil();
     let track = TrackId::new();

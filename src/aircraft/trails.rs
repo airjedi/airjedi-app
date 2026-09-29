@@ -51,6 +51,7 @@ pub struct TrailPoint {
     pub lat: f64,
     pub lon: f64,
     pub altitude: Option<i32>,
+    pub ground_speed_kts: Option<f64>,
     /// Reference for the altitude when one is present.
     #[serde(default = "default_altitude_reference")]
     pub altitude_reference: AltitudeReference,
@@ -91,6 +92,7 @@ impl TrailPoint {
             lat: sample.latitude,
             lon: sample.longitude,
             altitude: sample.altitude_ft,
+            ground_speed_kts: sample.ground_speed_kts,
             altitude_reference: sample.altitude_reference,
             timestamp: local_timestamp_for_server_time(
                 local_now_secs,
@@ -186,6 +188,7 @@ impl TrailHistory {
             lat,
             lon,
             altitude,
+            ground_speed_kts: None,
             altitude_reference: AltitudeReference::Unknown,
             timestamp: clock.now_secs(),
             estimated,

@@ -777,7 +777,10 @@ impl ClientHistoryStore {
         history.request_id = Some(request_id);
         self.last_sync_latency_ms = Some(sync_latency_ms);
 
-        let baseline_revision = preview_revision.max(complete.snapshot_revision);
+        // The preview may have a later global revision for an unrelated sample.
+        // Buffered operations are ordered against the snapshot watermark, not
+        // against that preview revision, or an older correction can be skipped.
+        let baseline_revision = complete.snapshot_revision;
         if let Some(active) = self.active.get_mut(&track_id) {
             active.last_applied_revision = baseline_revision;
         }
