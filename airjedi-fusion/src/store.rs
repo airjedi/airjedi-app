@@ -301,6 +301,19 @@ mod tests {
         }
     }
 
+    fn make_identified_test_obs(frame_sequence: u64) -> SensorObservation {
+        let timestamp = chrono::DateTime::from_timestamp(1_700_000_000 + frame_sequence as i64, 0)
+            .expect("fixed test timestamp is valid");
+        let mut observation = make_test_obs("adsb-history-probe");
+        observation.timestamp = timestamp;
+        observation.receipt_time = timestamp;
+        observation.metadata.observation_id = Some(ObservationIdentity {
+            frame_sequence,
+            payload_index: 0,
+        });
+        observation
+    }
+
     #[test]
     fn insert_and_retrieve_unassociated() {
         let mut store = TimelineStore::new(StoreConfig::default());
@@ -412,5 +425,50 @@ mod tests {
         independent.metadata.observation_id = Some(identity);
         assert!(store.insert(independent));
         assert_eq!(store.total_observation_count(), 2);
+    }
+
+    #[test]
+    #[ignore = "known history regression: per-track FIFO eviction retains dedup identity"]
+    fn per_track_fifo_releases_an_evicted_observation_identity() {
+        let config = StoreConfig {
+            max_observations_per_track: 1,
+            ..Default::default()
+        };
+        let mut store = TimelineStore::new(config);
+        let track_id = TrackId::new();
+
+        let first = make_identified_test_obs(1);
+        assert!(store.insert(first.clone()));
+        store.associate(0, &track_id);
+        assert!(store.insert(make_identified_test_obs(2)));
+        store.associate(0, &track_id);
+        assert_eq!(store.track_observation_count(&track_id), 1);
+
+        assert!(
+            store.insert(first),
+            "the identity of an observation discarded by the per-track FIFO must be reusable"
+        );
+    }
+
+    #[test]
+    #[ignore = "known history regression: per-track FIFO leaves dedup memory unbounded"]
+    fn per_track_fifo_bounds_dedup_identity_memory() {
+        let config = StoreConfig {
+            max_observations_per_track: 1,
+            ..Default::default()
+        };
+        let mut store = TimelineStore::new(config);
+        let track_id = TrackId::new();
+
+        for frame_sequence in 1..=32 {
+            assert!(store.insert(make_identified_test_obs(frame_sequence)));
+            store.associate(0, &track_id);
+        }
+
+        assert_eq!(store.track_observation_count(&track_id), 1);
+        assert!(
+            store.seen_observations.len() <= 1,
+            "FIFO retention of one observation must retain at most one dedup identity"
+        );
     }
 }

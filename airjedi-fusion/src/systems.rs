@@ -296,3 +296,117 @@ pub fn track_cleanup_system(
 pub fn store_eviction_system(mut store: ResMut<TimelineStore>, clock: Res<FusionClock>) {
     store.evict_old(clock.now_utc());
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::clock::FusionClock;
+    use crate::config::FusionConfig;
+    use crate::coord::CoordinateFrame;
+    use crate::sensor::{
+        FusionTier, Measurement, ObservationCovariance, ObservationMetadata, SensorId, SensorKind,
+    };
+    use crate::store::StoreConfig;
+    use crate::track::initiation::{InitiationConfig, MofNInitiator};
+    use crate::types::Timestamp;
+    use airjedi_core::{ObservationFreshness, ObservationIdentity, TimeSourceQuality};
+    use chrono::Duration as ChronoDuration;
+    use nalgebra::DMatrix;
+    use std::collections::HashSet;
+    use std::time::Duration;
+
+    fn telemetry_observation(timestamp: Timestamp, frame_sequence: u64) -> SensorObservation {
+        let identity = ObservationIdentity {
+            frame_sequence,
+            payload_index: 0,
+        };
+        let freshness = ObservationFreshness {
+            observation_time: timestamp,
+            receipt_time: timestamp,
+            time_source: TimeSourceQuality::ProtocolTimestamp,
+            identity,
+        };
+        SensorObservation {
+            sensor_id: SensorId {
+                id: "initiator-history-probe".to_string(),
+                kind: SensorKind::AdsbReceiver,
+                tier: FusionTier::Regional,
+                coordinate_frame: CoordinateFrame::Wgs84,
+            },
+            timestamp,
+            receipt_time: timestamp,
+            target_id: None,
+            measurement: Measurement::PositionVelocity3D {
+                lat_deg: 37.0,
+                lon_deg: -97.0,
+                alt_m: Some(10_000.0),
+                vel_north_mps: None,
+                vel_east_mps: None,
+                vel_down_mps: None,
+                heading_deg: None,
+            },
+            covariance: ObservationCovariance {
+                matrix: DMatrix::identity(3, 3),
+            },
+            classification_hint: None,
+            metadata: ObservationMetadata {
+                observation_id: Some(identity),
+                altitude_freshness: Some(freshness),
+                ..Default::default()
+            },
+        }
+    }
+
+    #[test]
+    #[ignore = "known history regression: track initiator retains dedup identities after store eviction"]
+    fn initiator_releases_dedup_identities_after_the_store_evicts_their_source_observations() {
+        let timestamp = chrono::DateTime::from_timestamp(1_700_000_000, 0)
+            .expect("fixed test timestamp is valid");
+        let mut app = App::new();
+        app.insert_resource(TimelineStore::new(StoreConfig {
+            hot_retention: Duration::ZERO,
+            ..Default::default()
+        }))
+        .insert_resource(FusionConfig::default())
+        .insert_resource(FusionClock::fixed(timestamp))
+        .insert_resource(TrackInitiator {
+            initiator: MofNInitiator::new(InitiationConfig::default()),
+            processed_observations: HashSet::new(),
+        })
+        .add_systems(Update, track_initiation_system);
+
+        {
+            let mut store = app.world_mut().resource_mut::<TimelineStore>();
+            for frame_sequence in 1..=32 {
+                assert!(store.insert(telemetry_observation(timestamp, frame_sequence)));
+            }
+        }
+        app.update();
+        assert_eq!(
+            app.world()
+                .resource::<TrackInitiator>()
+                .processed_observations
+                .len(),
+            32
+        );
+
+        app.world_mut()
+            .resource_mut::<TimelineStore>()
+            .evict_old(timestamp + ChronoDuration::seconds(1));
+        assert_eq!(
+            app.world()
+                .resource::<TimelineStore>()
+                .total_observation_count(),
+            0
+        );
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<TrackInitiator>()
+                .processed_observations
+                .is_empty(),
+            "initiator dedup identities must be released once their source observations leave the store"
+        );
+    }
+}

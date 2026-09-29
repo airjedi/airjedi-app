@@ -338,6 +338,54 @@ pub fn make_observation(c: &Contact, kind: SensorKind) -> SensorObservation {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use airjedi_fusion::store::StoreConfig;
+    use airjedi_fusion::TimelineStore;
+
+    fn freshness(observation_time: DateTime<Utc>, frame_sequence: u64) -> ObservationFreshness {
+        ObservationFreshness {
+            observation_time,
+            receipt_time: observation_time,
+            time_source: TimeSourceQuality::ProtocolTimestamp,
+            identity: ObservationIdentity {
+                frame_sequence,
+                payload_index: 0,
+            },
+        }
+    }
+
+    fn contact(
+        observation_time: DateTime<Utc>,
+        observation_id: ObservationIdentity,
+        position_freshness: Option<ObservationFreshness>,
+        altitude_freshness: Option<ObservationFreshness>,
+        velocity_freshness: Option<ObservationFreshness>,
+    ) -> Contact {
+        Contact {
+            icao: 0xA1B2C3,
+            lat: 34.0,
+            lon: -118.5,
+            alt_ft: Some(35_000),
+            track: Some(90.0),
+            vel_kts: Some(100.0),
+            vertical_rate: None,
+            airspeed_kts: None,
+            callsign: None,
+            squawk: None,
+            is_on_ground: None,
+            alert: None,
+            emergency: None,
+            spi: None,
+            roll_angle: None,
+            track_angle_rate: None,
+            observation_time,
+            receipt_time: observation_time,
+            time_source: TimeSourceQuality::ProtocolTimestamp,
+            observation_id,
+            position_freshness,
+            altitude_freshness,
+            velocity_freshness,
+        }
+    }
 
     #[test]
     fn cached_contact_reuses_source_timing_and_identity() {
@@ -382,5 +430,41 @@ mod tests {
             second.metadata.observation_id
         );
         assert_eq!(first.metadata.time_source, second.metadata.time_source);
+    }
+
+    #[test]
+    #[ignore = "known history regression: telemetry-only updates reuse stale position identity"]
+    fn telemetry_only_update_survives_stale_position_identity_deduplication() {
+        let position_time = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        let telemetry_time = position_time + chrono::Duration::seconds(1);
+        let position_identity = ObservationIdentity {
+            frame_sequence: 10,
+            payload_index: 0,
+        };
+        let first = contact(
+            position_time,
+            position_identity,
+            Some(freshness(position_time, 10)),
+            Some(freshness(position_time, 10)),
+            Some(freshness(position_time, 10)),
+        );
+        let second = contact(
+            position_time,
+            position_identity,
+            None,
+            Some(freshness(telemetry_time, 11)),
+            Some(freshness(telemetry_time, 12)),
+        );
+
+        let first_observation = make_observation(&first, SensorKind::AdsbReceiver);
+        let second_observation = make_observation(&second, SensorKind::AdsbReceiver);
+        assert!(second_observation.is_telemetry_only());
+
+        let mut store = TimelineStore::new(StoreConfig::default());
+        assert!(store.insert(first_observation));
+        assert!(
+            store.insert(second_observation),
+            "a telemetry-only update with fresh altitude and velocity must not be discarded because its position identity is stale"
+        );
     }
 }
