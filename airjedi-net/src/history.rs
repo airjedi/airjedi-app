@@ -197,6 +197,8 @@ pub struct ClientHistoryDiagnostics {
     pub retained_samples: usize,
     pub retained_bytes: usize,
     pub active_requests: usize,
+    pub received_chunks: usize,
+    pub total_chunks: usize,
     pub buffered_operations: usize,
     pub buffered_operation_bytes: usize,
     pub retries: usize,
@@ -321,6 +323,17 @@ impl ClientHistoryStore {
 
     #[must_use]
     pub fn diagnostics(&self) -> ClientHistoryDiagnostics {
+        let (received_chunks, total_chunks) = self
+            .histories
+            .values()
+            .filter_map(|history| history.transfer)
+            .fold((0usize, 0usize), |(received, total), progress| {
+                (
+                    received + progress.received_chunks as usize,
+                    total + progress.total_chunks as usize,
+                )
+            });
+
         ClientHistoryDiagnostics {
             session_id: self.session_id,
             tracks: self.histories.len(),
@@ -332,6 +345,8 @@ impl ClientHistoryStore {
                 .map(estimate_history_sample_bytes)
                 .sum(),
             active_requests: self.active.len(),
+            received_chunks,
+            total_chunks,
             buffered_operations: self
                 .active
                 .values()

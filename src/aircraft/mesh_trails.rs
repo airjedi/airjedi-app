@@ -107,6 +107,16 @@ pub fn update_mesh_trails(
     }
 
     let converter = CoordinateConverter::new(&local_origin);
+    let (min_trail_altitude_3d, width_scale_3d) = if is_3d {
+        let ground_y = view3d_state.altitude_to_z(view3d_state.ground_elevation_ft);
+        let distance = view3d_state.altitude_to_distance();
+        (
+            ground_y + (distance * 0.0015).clamp(40.0, 400.0),
+            (distance / 120_000.0).clamp(1.0, 1.8),
+        )
+    } else {
+        (0.0, 1.0)
+    };
 
     // Scale trail width by meters_per_tile_pixel so trails have consistent screen size
     let tile_size_meters =
@@ -145,12 +155,16 @@ pub fn update_mesh_trails(
                 Vec2::Y
             };
             let from_z = if is_3d {
-                view3d_state.altitude_to_z(from.altitude.expect("3D pairs have altitude"))
+                view3d_state
+                    .altitude_to_z(from.altitude.expect("3D pairs have altitude"))
+                    .max(min_trail_altitude_3d)
             } else {
                 2.0
             };
             let to_z = if is_3d {
-                view3d_state.altitude_to_z(to.altitude.expect("3D pairs have altitude"))
+                view3d_state
+                    .altitude_to_z(to.altitude.expect("3D pairs have altitude"))
+                    .max(min_trail_altitude_3d)
             } else {
                 2.0
             };
@@ -158,7 +172,7 @@ pub fn update_mesh_trails(
                 .min(point_opacity(to, &clock, &trail_config, is_selected));
             let linear = altitude_color(from.altitude).to_linear();
             let base_half_width = if is_3d {
-                trail_config.trail_width_3d * meters_per_tile_pixel / 2.0
+                trail_config.trail_width_3d * width_scale_3d / 2.0
             } else {
                 trail_config.trail_width_2d * meters_per_tile_pixel / 2.0
             };

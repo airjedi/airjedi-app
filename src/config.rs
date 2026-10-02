@@ -28,8 +28,8 @@ impl BasemapStyle {
     /// Get the tile URL endpoint for this basemap style
     pub fn endpoint_url(&self) -> &'static str {
         match self {
-            BasemapStyle::CartoDark => "https://basemaps.cartocdn.com/dark_all",
-            BasemapStyle::CartoLight => "https://basemaps.cartocdn.com/light_all",
+            BasemapStyle::CartoDark => "https://basemaps.cartocdn.com/rastertiles/dark_all",
+            BasemapStyle::CartoLight => "https://basemaps.cartocdn.com/rastertiles/light_all",
             BasemapStyle::OpenStreetMap => "https://tile.openstreetmap.org",
             BasemapStyle::EsriSatellite => {
                 "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile"
@@ -96,8 +96,9 @@ impl BasemapStyle {
     /// Short identifier for cache directory naming.
     pub fn cache_key(&self) -> &'static str {
         match self {
-            BasemapStyle::CartoDark => "carto-dark",
-            BasemapStyle::CartoLight => "carto-light",
+            // Don't reuse tiles cached while Carto served API-key-required watermarks.
+            BasemapStyle::CartoDark => "carto-dark-v2",
+            BasemapStyle::CartoLight => "carto-light-v2",
             BasemapStyle::OpenStreetMap => "osm",
             BasemapStyle::EsriSatellite => "esri-satellite",
         }

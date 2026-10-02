@@ -544,12 +544,16 @@ pub fn update_3d_camera(
     }
 
     let cam_distance = state.altitude_to_distance();
-    let far_plane = (cam_distance * 3.0).max(500_000.0);
+    // Bound the projection depth ratio across camera altitudes to reduce
+    // z-buffer precision loss between the tile surface and aircraft geometry.
+    let near_plane = (cam_distance * 0.001).clamp(25.0, 500.0);
+    let far_plane = (cam_distance * 4.0).clamp(80_000.0, 1_500_000.0);
 
     if t > 0.999 {
         // Pure 3D
         let perspective = PerspectiveProjection {
             fov: base_fov,
+            near: near_plane,
             far: far_plane,
             ..default()
         };
@@ -592,7 +596,8 @@ pub fn update_3d_camera(
 
         let perspective = PerspectiveProjection {
             fov,
-            far: far_plane.max(dolly_height * 3.0),
+            near: near_plane,
+            far: far_plane.max(dolly_height * 4.0),
             ..default()
         };
         *proj_3d = Projection::Perspective(perspective.clone());
@@ -839,7 +844,9 @@ pub fn update_aircraft_3d_transform(
 ) {
     if state.is_3d_active() {
         let ground_y = state.altitude_to_z(state.ground_elevation_ft);
-        let min_aircraft_y = ground_y + 10.0;
+        let depth_clearance = (state.altitude_to_distance() * 0.002).clamp(200.0, 1_200.0);
+        let model_clearance = crate::constants::AIRCRAFT_MODEL_SCALE * 10.0 * 4.0;
+        let min_aircraft_y = ground_y + model_clearance.max(depth_clearance);
 
         for (aircraft, interp_opt, mut transform) in aircraft_query.iter_mut() {
             let px = transform.translation.x;
@@ -868,10 +875,6 @@ pub fn update_aircraft_3d_transform(
             } else {
                 transform.rotation = base_rot;
             }
-        }
-    } else if !state.is_transitioning() {
-        for (_aircraft, _interp, mut transform) in aircraft_query.iter_mut() {
-            transform.translation.z = crate::constants::AIRCRAFT_Z_LAYER;
         }
     }
 }

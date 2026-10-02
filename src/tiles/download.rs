@@ -16,6 +16,8 @@ use super::coords::SlippyTileCoordinates;
 #[derive(Clone, Resource)]
 pub struct TileDownloadSettings {
     pub endpoint: String,
+    /// Carto raster API key, sourced only from AIRJEDI_CARTO_API_KEY.
+    pub carto_api_key: Option<String>,
     pub tiles_directory: PathBuf,
     pub max_concurrent_downloads: usize,
     pub max_retries: u32,
@@ -29,7 +31,7 @@ pub struct TileDownloadSettings {
     pub supports_retina: bool,
     /// Whether this provider uses file extensions in tile URLs.
     pub uses_extension_in_url: bool,
-    /// Basemap style key for per-style cache directories (e.g. "carto-dark").
+    /// Basemap style key for per-style cache directories (e.g. "carto-dark-v2").
     pub cache_key: String,
 }
 
@@ -37,6 +39,7 @@ impl Default for TileDownloadSettings {
     fn default() -> Self {
         Self {
             endpoint: "https://tile.openstreetmap.org".into(),
+            carto_api_key: None,
             tiles_directory: PathBuf::from("tiles/"),
             max_concurrent_downloads: 16,
             max_retries: 3,
@@ -47,7 +50,7 @@ impl Default for TileDownloadSettings {
             reverse_axes: false,
             supports_retina: true,
             uses_extension_in_url: true,
-            cache_key: "carto-dark".into(),
+            cache_key: "carto-dark-v2".into(),
         }
     }
 }
@@ -366,6 +369,7 @@ fn spawn_download(
     active: &mut ActiveDownloads,
 ) {
     let url = tile_url(&endpoint, &key, settings);
+    let log_url = redact_api_key(&url);
     let accept_mime = key.tile_format.accept_mime().to_string();
     let max_retries = settings.max_retries;
     let sem = Arc::clone(&semaphore.0);
@@ -377,7 +381,7 @@ fn spawn_download(
 
         loop {
             if retries >= max_retries {
-                warn!("Max retries for tile {}", url);
+                warn!("Max retries for tile {}", log_url);
                 return TileDownloadResult {
                     key: key_clone,
                     path: PathBuf::from(&filename),
@@ -403,10 +407,16 @@ fn spawn_download(
 
             match result {
                 Ok(response) if response.status == 200 => {
+                    if is_carto_watermark(&response) {
+                        warn!("Carto returned an API-key-required watermark for {}; not caching it", log_url);
+                        retries += 1;
+                        continue;
+                    }
+
                     let bytes = &response.bytes;
 
                     if !validate_tile_bytes(bytes, &key_clone.tile_format) {
-                        warn!("Invalid tile content from {}", url);
+                        warn!("Invalid tile content from {}", log_url);
                         retries += 1;
                         continue;
                     }
@@ -425,11 +435,11 @@ fn spawn_download(
                     };
                 }
                 Ok(response) => {
-                    warn!("HTTP {} for tile {}", response.status, url);
+                    warn!("HTTP {} for tile {}", response.status, log_url);
                     retries += 1;
                 }
                 Err(e) => {
-                    warn!("Download error for {}: {}", url, e);
+                    warn!("Download error for {}: {}", log_url, e);
                     retries += 1;
                 }
             }
@@ -452,12 +462,49 @@ fn tile_url(endpoint: &str, key: &TileKey, settings: &TileDownloadSettings) -> S
         (key.x, key.y)
     };
 
-    if settings.uses_extension_in_url {
+    let mut url = if settings.uses_extension_in_url {
         let ext = key.tile_format.extension();
         format!("{}/{}/{}/{}{}.{}", endpoint, key.zoom, first, second, postfix, ext)
     } else {
         format!("{}/{}/{}/{}", endpoint, key.zoom, first, second)
+    };
+
+    if endpoint.contains("basemaps.cartocdn.com") {
+        if let Some(api_key) = settings.carto_api_key.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            url.push_str(if url.contains('?') { "&key=" } else { "?key=" });
+            url.push_str(&encode_query_value(api_key));
+        }
     }
+
+    url
+}
+
+fn encode_query_value(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
+fn redact_api_key(url: &str) -> String {
+    for marker in ["?key=", "&key="] {
+        if let Some((prefix, _)) = url.split_once(marker) {
+            return format!("{prefix}{marker}[redacted]");
+        }
+    }
+    url.to_string()
+}
+
+fn is_carto_watermark(response: &ehttp::Response) -> bool {
+    response
+        .headers
+        .get("etag")
+        .is_some_and(|etag| etag.trim_matches('"').starts_with("wm-"))
 }
 
 fn tile_filename(settings: &TileDownloadSettings, key: &TileKey) -> String {
@@ -526,6 +573,57 @@ fn atomic_write(path: &Path, data: &[u8]) -> std::io::Result<()> {
     std::fs::write(&tmp, data)?;
     std::fs::rename(&tmp, path)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_key() -> TileKey {
+        TileKey { x: 12, y: 34, zoom: 5, tile_size: TileSize::Large, tile_format: TileFormat::Png }
+    }
+
+    #[test]
+    fn carto_api_key_is_added_to_tile_url_and_encoded() {
+        let settings = TileDownloadSettings {
+            carto_api_key: Some("key+with/slash".into()),
+            supports_retina: true,
+            ..default()
+        };
+        assert_eq!(
+            tile_url("https://basemaps.cartocdn.com/rastertiles/dark_all", &test_key(), &settings),
+            "https://basemaps.cartocdn.com/rastertiles/dark_all/5/12/34@2x.png?key=key%2Bwith%2Fslash"
+        );
+    }
+
+    #[test]
+    fn api_key_is_not_added_to_non_carto_urls() {
+        let settings = TileDownloadSettings { carto_api_key: Some("secret".into()), ..default() };
+        let url = tile_url("https://tiles.example.test", &test_key(), &settings);
+        assert!(!url.contains("secret"));
+        assert!(!url.contains("?key="));
+    }
+
+    #[test]
+    fn request_logs_redact_carto_key() {
+        assert_eq!(
+            redact_api_key("https://tiles.example.test/tile.png?key=secret"),
+            "https://tiles.example.test/tile.png?key=[redacted]"
+        );
+    }
+
+    #[test]
+    fn watermark_etag_is_detected() {
+        let response = ehttp::Response {
+            url: "https://basemaps.cartocdn.com/tile.png".into(),
+            ok: true,
+            status: 200,
+            status_text: "OK".into(),
+            headers: ehttp::Headers::new(&[("ETag", "\"wm-da89c20e77c1-dark\"")]),
+            bytes: Vec::new(),
+        };
+        assert!(is_carto_watermark(&response));
+    }
 }
 
 /// Clear the downloaded tiles tracking set. Used when basemap changes.

@@ -85,7 +85,9 @@ impl Plugin for CameraPlugin {
         )
         .add_systems(
             Update,
-            scale_aircraft_and_labels.after(crate::zoom::apply_camera_zoom),
+            scale_aircraft_and_labels
+                .after(crate::zoom::apply_camera_zoom)
+                .after(view3d::update_aircraft_3d_transform),
         )
         .add_systems(
             Update,
@@ -257,10 +259,16 @@ fn scale_aircraft_and_labels(
     };
 
     let scale_2d = constants::AIRCRAFT_MODEL_SCALE * meters_per_tile_pixel / zoom_state.camera_zoom;
-    let scale_3d = constants::AIRCRAFT_MODEL_SCALE * meters_per_tile_pixel * 10.0;
+    // Perspective mode uses world-space scale. The 2D tile-pixel conversion
+    // makes the model grow with zoom and lets the loaded tile surface occlude it.
+    let scale_3d = constants::AIRCRAFT_MODEL_SCALE * 10.0;
     let scale = scale_2d + (scale_3d - scale_2d) * t_3d;
     for mut transform in aircraft_query.iter_mut() {
         transform.scale = Vec3::splat(scale);
+        if t_3d == 0.0 {
+            // Keep the full model in front of the opaque 2D tile plane.
+            transform.translation.z = (scale * 12.0).max(constants::AIRCRAFT_Z_LAYER);
+        }
     }
 }
 

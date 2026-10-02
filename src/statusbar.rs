@@ -52,6 +52,10 @@ const MSG_RATE_INTERVAL_SECS: f32 = 1.0;
 pub struct ThinClientStatus {
     pub connected: bool,
     pub aircraft: usize,
+    pub history_tracks: usize,
+    pub history_active_requests: usize,
+    pub history_received_chunks: usize,
+    pub history_total_chunks: usize,
 }
 
 pub fn render_statusbar(
@@ -224,10 +228,21 @@ fn render_feed_status_section(
     // of local feeds (there are none).
     if let Some(thin) = thin_status {
         let primary = to_egui_color32(theme.text_primary());
-        let (dot_color, label) = if thin.connected {
-            (to_egui_color32(theme.text_success()), "Agent".to_string())
-        } else {
+        let (dot_color, label) = if !thin.connected {
             (to_egui_color32(theme.text_warn()), "Agent: reconnecting".to_string())
+        } else if thin.aircraft > 0 {
+            (to_egui_color32(theme.text_success()), "Agent".to_string())
+        } else if thin.history_total_chunks > 0 {
+            (
+                to_egui_color32(theme.text_warn()),
+                format!("Loading history {}/{} chunks", thin.history_received_chunks, thin.history_total_chunks),
+            )
+        } else if thin.history_active_requests > 0 {
+            (to_egui_color32(theme.text_warn()), "Loading history".to_string())
+        } else if thin.history_tracks > 0 {
+            (to_egui_color32(theme.text_warn()), "Loading targets".to_string())
+        } else {
+            (to_egui_color32(theme.text_warn()), "Waiting for targets".to_string())
         };
         let response = ui.horizontal(|ui| {
             let (rect, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
@@ -239,6 +254,19 @@ fn render_feed_status_section(
                     .size(FONT_SIZE)
                     .color(primary),
             );
+            if thin.connected && thin.aircraft == 0 && thin.history_total_chunks > 0 {
+                let progress = (thin.history_received_chunks as f32
+                    / thin.history_total_chunks as f32)
+                    .clamp(0.0, 1.0);
+                ui.add(
+                    egui::ProgressBar::new(progress)
+                        .desired_width(72.0)
+                        .text(format!(
+                            "{}/{}",
+                            thin.history_received_chunks, thin.history_total_chunks
+                        )),
+                );
+            }
         });
         return response.response.interact(egui::Sense::click());
     }

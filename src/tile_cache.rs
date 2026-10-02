@@ -14,7 +14,7 @@ pub fn tile_cache_dir() -> PathBuf {
 
 /// Returns the tile cache directory for a specific basemap style.
 /// Each style gets its own subdirectory so different providers' tiles
-/// don't collide (e.g. `~/Library/Caches/airjedi/tiles/carto-dark/`).
+/// don't collide (e.g. `~/Library/Caches/airjedi/tiles/carto-dark-v2/`).
 pub fn tile_cache_dir_for_style(style_key: &str) -> PathBuf {
     crate::paths::cache_dir().join("tiles").join(style_key)
 }

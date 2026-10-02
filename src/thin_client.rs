@@ -176,24 +176,41 @@ fn manage_connection(
     addr: Res<ThinAgentAddr>,
     stale: Query<Entity, With<DisplayTrack>>,
     mut commands: Commands,
+    mut connection_attempted: Local<bool>,
 ) {
+    let client_state = *state.get();
+
     // Step 1: disconnected but the stale client is still present - remove it so
     // the next insert reads as a brand-new connection, and despawn the now-stale
     // replicated aircraft so a reconnect repopulates cleanly instead of doubling.
-    if *state.get() == ClientState::Disconnected && client.is_some() {
-        commands.remove_resource::<RenetClient>();
-        commands.remove_resource::<NetcodeClientTransport>();
-        for entity in &stale {
-            commands.entity(entity).despawn();
+    if client.is_some() {
+        match client_state {
+            ClientState::Disconnected
+                if should_discard_client(client_state, *connection_attempted) =>
+            {
+                commands.remove_resource::<RenetClient>();
+                commands.remove_resource::<NetcodeClientTransport>();
+                for entity in &stale {
+                    commands.entity(entity).despawn();
+                }
+                *connection_attempted = false;
+                return;
+            }
+            ClientState::Disconnected => {
+                // Replicon starts Disconnected. Its backend requests Connecting
+                // during PreUpdate, with that state applied on the next frame.
+                // Preserve the fresh client long enough to send its first packet.
+                return;
+            }
+            ClientState::Connecting | ClientState::Connected => {
+                *connection_attempted = true;
+                backoff.0.reset();
+                return;
+            }
         }
-        return;
     }
 
-    // Connecting or connected: keep the backoff primed for the next drop.
-    if client.is_some() {
-        backoff.0.reset();
-        return;
-    }
+    *connection_attempted = false;
 
     // Step 2: no client - (re)connect once the backoff elapses.
     backoff.0.tick(time.delta());
@@ -210,14 +227,24 @@ fn manage_connection(
     }
 }
 
+fn should_discard_client(state: ClientState, connection_attempted: bool) -> bool {
+    state == ClientState::Disconnected && connection_attempted
+}
+
 /// Publish agent-connection status + replicated aircraft count for the status bar.
 fn update_thin_status(
     state: Res<State<ClientState>>,
     aircraft: Query<(), With<Aircraft>>,
+    history: Res<ClientHistoryStore>,
     mut status: ResMut<ThinClientStatus>,
 ) {
     status.connected = *state.get() == ClientState::Connected;
     status.aircraft = aircraft.iter().count();
+    let diagnostics = history.diagnostics();
+    status.history_tracks = diagnostics.tracks;
+    status.history_active_requests = diagnostics.active_requests;
+    status.history_received_chunks = diagnostics.received_chunks;
+    status.history_total_chunks = diagnostics.total_chunks;
 }
 
 /// Build the app's `Aircraft` view from a replicated `DisplayTrack`.
@@ -750,6 +777,22 @@ mod tests {
         AltitudeReference, DisplayHistorySample, DisplayProvenance, HeadingReference,
         HistoryCoverage, HistorySessionId, TrackStatus, VerticalRateReference,
     };
+
+    #[test]
+    fn initial_disconnected_state_keeps_fresh_client_for_first_handshake() {
+        assert!(!should_discard_client(ClientState::Disconnected, false));
+    }
+
+    #[test]
+    fn disconnected_state_after_connection_attempt_discards_stale_client() {
+        assert!(should_discard_client(ClientState::Disconnected, true));
+    }
+
+    #[test]
+    fn connecting_and_connected_clients_are_not_discarded() {
+        assert!(!should_discard_client(ClientState::Connecting, true));
+        assert!(!should_discard_client(ClientState::Connected, true));
+    }
 
     #[test]
     fn selected_history_cache_survives_connected_frame_before_track_replication() {

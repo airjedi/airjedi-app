@@ -253,6 +253,10 @@ fn main() {
     ))
     .insert_resource(TileDownloadSettings {
         endpoint: config::BasemapStyle::default().endpoint_url().to_string(),
+        carto_api_key: std::env::var("AIRJEDI_CARTO_API_KEY")
+            .ok()
+            .map(|key| key.trim().to_string())
+            .filter(|key| !key.is_empty()),
         tiles_directory: std::path::PathBuf::from("tiles/"),
         max_concurrent_downloads: 8,
         rate_limit_requests: 24,
