@@ -18,6 +18,15 @@ use crate::{clamp_latitude, clamp_longitude, Aircraft, ZoomDebugLogger, ZoomSet}
 /// Then heading rotation is applied around Y axis.
 pub(crate) const BASE_ROT_YUP: Quat = Quat::from_xyzw(0.0, 1.0, 0.0, 0.0); // 180 deg around Y
 
+/// Upper bound for the 2D-mode aircraft Z offset above the opaque tile plane.
+/// `AircraftCamera` syncs its `OrthographicProjection` from `MapCamera`, whose
+/// default 2D projection clips at `near: -1000.0, far: 1000.0` around a camera
+/// sitting at `z = 0`. Anything offset further than this is silently clipped by
+/// the far plane - invisible regardless of `Visibility`/`InheritedVisibility` -
+/// so this cap must stay comfortably inside that range even as `scale` grows
+/// into the thousands at close zoom levels.
+const AIRCRAFT_MAX_Z_OFFSET_2D: f32 = 500.0;
+
 // =============================================================================
 // Components and Resources
 // =============================================================================
@@ -266,8 +275,14 @@ fn scale_aircraft_and_labels(
     for mut transform in aircraft_query.iter_mut() {
         transform.scale = Vec3::splat(scale);
         if t_3d == 0.0 {
-            // Keep the full model in front of the opaque 2D tile plane.
-            transform.translation.z = (scale * 12.0).max(constants::AIRCRAFT_Z_LAYER);
+            // Keep the full model in front of the opaque 2D tile plane, but
+            // never approach the AircraftCamera's far clip plane (see
+            // AIRCRAFT_MAX_Z_OFFSET_2D) - at close zoom levels `scale` grows
+            // into the thousands, and multiplying it unbounded pushed every
+            // aircraft past the clip range, making them invisible regardless
+            // of position or Visibility state.
+            transform.translation.z =
+                (scale * 12.0).min(AIRCRAFT_MAX_Z_OFFSET_2D).max(constants::AIRCRAFT_Z_LAYER);
         }
     }
 }
@@ -364,5 +379,113 @@ fn cull_offscreen_aircraft(
         if *visibility != target {
             *visibility = target;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::map::{MapState, ZoomState};
+    use crate::view3d::View3DState;
+
+    fn minimal_aircraft() -> Aircraft {
+        Aircraft {
+            icao: "TEST01".to_string(),
+            callsign: None,
+            latitude: 0.0,
+            longitude: 0.0,
+            altitude: None,
+            heading: None,
+            velocity: None,
+            vertical_rate: None,
+            roll_angle: None,
+            track_angle_rate: None,
+            roll_last_seen: None,
+            squawk: None,
+            is_on_ground: None,
+            alert: None,
+            emergency: None,
+            spi: None,
+            last_seen: chrono::Utc::now(),
+        }
+    }
+
+    /// Regression test for the b4ad80a z-translation bug: at the minimum
+    /// allowed 2D camera zoom, `scale` grows into the thousands, and the
+    /// unbounded `scale * 12.0` offset pushed every aircraft's Z translation
+    /// far past the AircraftCamera's synced orthographic far clip plane
+    /// (1000.0), making aircraft invisible regardless of XY position or
+    /// Visibility state. The Z offset must stay bounded inside that range.
+    #[test]
+    fn aircraft_z_offset_stays_inside_the_2d_camera_clip_range_at_minimum_zoom() {
+        let mut app = App::new();
+        app.insert_resource(ZoomState {
+            camera_zoom: constants::MIN_CAMERA_ZOOM,
+            ..ZoomState::new()
+        })
+        .insert_resource(MapState::default())
+        .insert_resource(View3DState::default())
+        .add_systems(Update, scale_aircraft_and_labels);
+
+        let entity = app
+            .world_mut()
+            .spawn((minimal_aircraft(), Transform::default()))
+            .id();
+
+        app.update();
+
+        let z = app
+            .world()
+            .entity(entity)
+            .get::<Transform>()
+            .unwrap()
+            .translation
+            .z;
+        assert!(
+            z <= AIRCRAFT_MAX_Z_OFFSET_2D,
+            "aircraft Z offset {z} exceeded the documented cap {AIRCRAFT_MAX_Z_OFFSET_2D}"
+        );
+        assert!(
+            z < 1000.0,
+            "aircraft Z offset {z} must stay inside the AircraftCamera's far clip plane (1000.0), \
+             or the aircraft will be invisible regardless of Visibility state"
+        );
+    }
+
+    /// At a sufficiently zoomed-in discrete tile level, the proportional
+    /// offset stays below the cap - the clamp only engages at the larger
+    /// `scale` values typical of less-zoomed discrete tile levels (see the
+    /// minimum-zoom test above), so this confirms the proportional branch
+    /// still does something rather than the cap always winning.
+    #[test]
+    fn aircraft_z_offset_scales_with_model_size_below_the_cap() {
+        let mut app = App::new();
+        app.insert_resource(ZoomState {
+            camera_zoom: constants::MAX_CAMERA_ZOOM,
+            ..ZoomState::new()
+        })
+        .insert_resource(MapState {
+            zoom_level: crate::tiles::ZoomLevel::L15,
+            ..MapState::default()
+        })
+        .insert_resource(View3DState::default())
+        .add_systems(Update, scale_aircraft_and_labels);
+
+        let entity = app
+            .world_mut()
+            .spawn((minimal_aircraft(), Transform::default()))
+            .id();
+
+        app.update();
+
+        let z = app
+            .world()
+            .entity(entity)
+            .get::<Transform>()
+            .unwrap()
+            .translation
+            .z;
+        assert!(z >= constants::AIRCRAFT_Z_LAYER);
+        assert!(z < AIRCRAFT_MAX_Z_OFFSET_2D);
     }
 }
