@@ -1,0 +1,295 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2200 1400" width="2200" height="1400" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow-peach" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#fab387"/>
+    </marker>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#a6e3a1"/>
+    </marker>
+    <marker id="arrow-yellow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#f9e2af"/>
+    </marker>
+    <marker id="arrow-sky" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#89dceb"/>
+    </marker>
+    <filter id="softShadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="3" stdDeviation="5" flood-color="#000000" flood-opacity="0.45"/>
+    </filter>
+    <style>
+      .title-main{font-weight:700;font-size:32px;fill:#cdd6f4}
+      .title-sub{font-weight:400;font-size:15px;fill:#a6adc8}
+      .section-label{font-weight:700;font-size:12.5px;fill:#7f849c;letter-spacing:2px;text-anchor:middle}
+      .lane-label{font-weight:700;font-size:13px;letter-spacing:1px}
+      .flow-box{fill:#24243a;stroke-width:2}
+      .flow-box-dashed{fill:#24243a;stroke-width:2;stroke-dasharray:7,4}
+      .box-title{font-weight:700;font-size:12.5px;fill:#eef0fb;text-anchor:middle}
+      .box-line{font-weight:400;font-size:10.8px;fill:#a6adc8;text-anchor:middle}
+      .box-step{font-weight:400;font-size:11.5px;fill:#cdd6f4;text-anchor:middle}
+      .mega-title{font-weight:700;font-size:15px;text-anchor:middle}
+      .mega-sub{font-weight:400;font-size:11px;fill:#a6adc8;text-anchor:middle}
+      .mega-row-title{font-weight:700;font-size:12.5px;fill:#eef0fb;text-anchor:middle}
+      .mega-row-sub{font-weight:400;font-size:10.5px;fill:#a6adc8;text-anchor:middle}
+      .feedback-label{font-weight:400;font-style:italic;font-size:10.5px;fill:#89dceb;text-anchor:middle}
+      .legend-title{font-weight:700;font-size:13px;fill:#7f849c;letter-spacing:2px}
+      .legend-text{font-weight:400;font-size:12.5px;fill:#a6adc8}
+      .footer-text{font-weight:400;font-size:11px;fill:#7f849c;text-anchor:middle}
+      .shared-title{font-weight:700;font-size:11.5px;fill:#eef0fb;text-anchor:middle}
+      .shared-sub{font-weight:400;font-size:10.2px;fill:#a6adc8;text-anchor:middle}
+    </style>
+  </defs>
+
+  <!-- ============ Background ============ -->
+  <rect x="0" y="0" width="2200" height="1400" fill="#1e1e2e"/>
+
+  <!-- ============ Title ============ -->
+  <text class="title-main" x="1100" y="50" text-anchor="middle">AirJedi &#8212; Data Flow Through the System</text>
+  <text class="title-sub" x="1100" y="80" text-anchor="middle">How ADS-B, map tiles, and aviation data become pixels on screen &#183; airjedi_bevy (src/)</text>
+
+  <!-- ============ Stage headers ============ -->
+  <text class="section-label" x="180" y="188">EXTERNAL SOURCES</text>
+  <text class="section-label" x="510" y="188">INGEST / DECODE</text>
+  <text class="section-label" x="860" y="188">PROCESS / TRANSFORM</text>
+  <text class="section-label" x="1240" y="188" fill="#cba6f7">ECS WORLD</text>
+  <text class="section-label" x="1600" y="188">RENDER SYSTEMS</text>
+  <text class="section-label" x="1970" y="188">SCREEN</text>
+
+  <!-- ============ Mega bands (drawn behind lanes) ============ -->
+  <rect x="1060" y="225" width="360" height="910" rx="24" fill="#cba6f7" fill-opacity="0.07" stroke="#cba6f7" stroke-width="2"/>
+  <text class="mega-title" x="1240" y="255" fill="#e6d9fb">ECS WORLD</text>
+  <text class="mega-sub" x="1240" y="273">single Bevy App / World</text>
+
+  <rect x="1780" y="225" width="380" height="910" rx="24" fill="#cdd6f4" fill-opacity="0.05" stroke="#cdd6f4" stroke-width="2"/>
+  <text class="mega-title" x="1970" y="255" fill="#eef0fb">SCREEN</text>
+  <text class="mega-sub" x="1970" y="273">composited output</text>
+
+  <text class="mega-row-title" x="1970" y="332">AircraftCamera (3D, order 0)</text>
+  <text class="mega-row-sub" x="1970" y="350">tiles &#183; aircraft &#183; airspace/terrain meshes</text>
+
+  <text class="mega-row-title" x="1970" y="422">MapCamera (2D, order 1)</text>
+  <text class="mega-row-sub" x="1970" y="440">gizmos &#183; labels &#183; weather icons &#183; overlays</text>
+
+  <text class="mega-row-title" x="1970" y="512">UI Camera (order 100)</text>
+  <text class="mega-row-sub" x="1970" y="530">egui panels: toolbar, dock, HUD</text>
+
+  <text class="footer-text" x="1970" y="1100" font-style="italic">&#8594; pixels on your monitor</text>
+
+  <!-- ============ Lane backgrounds ============ -->
+  <rect x="20" y="225" width="1040" height="275" fill="#fab387" fill-opacity="0.06"/>
+  <rect x="20" y="225" width="8" height="275" fill="#fab387"/>
+  <text class="lane-label" x="40" y="248" fill="#fab387">LANE 1 &#8212; AIRCRAFT TRACKING (hero flow)</text>
+
+  <rect x="20" y="610" width="1040" height="220" fill="#a6e3a1" fill-opacity="0.06"/>
+  <rect x="20" y="610" width="8" height="220" fill="#a6e3a1"/>
+  <text class="lane-label" x="40" y="633" fill="#a6e3a1">LANE 2 &#8212; MAP &amp; TILES</text>
+
+  <rect x="20" y="930" width="1040" height="205" fill="#f9e2af" fill-opacity="0.06"/>
+  <rect x="20" y="930" width="8" height="205" fill="#f9e2af"/>
+  <text class="lane-label" x="40" y="953" fill="#f9e2af">LANE 3 &#8212; AVIATION &amp; WEATHER DATA</text>
+
+  <!-- ============ Flow arrows (per lane, in the gaps between stages) ============ -->
+  <g stroke-width="3" stroke-linecap="round">
+    <!-- Lane 1 @ y=365 -->
+    <line x1="320" y1="365" x2="356" y2="365" stroke="#fab387" marker-end="url(#arrow-peach)"/>
+    <line x1="660" y1="365" x2="696" y2="365" stroke="#fab387" marker-end="url(#arrow-peach)"/>
+    <line x1="1020" y1="365" x2="1056" y2="365" stroke="#fab387" marker-end="url(#arrow-peach)"/>
+    <line x1="1420" y1="365" x2="1456" y2="365" stroke="#fab387" marker-end="url(#arrow-peach)"/>
+    <line x1="1740" y1="365" x2="1776" y2="365" stroke="#fab387" marker-end="url(#arrow-peach)"/>
+    <!-- Lane 2 @ y=720 -->
+    <line x1="320" y1="720" x2="356" y2="720" stroke="#a6e3a1" marker-end="url(#arrow-green)"/>
+    <line x1="660" y1="720" x2="696" y2="720" stroke="#a6e3a1" marker-end="url(#arrow-green)"/>
+    <line x1="1020" y1="720" x2="1056" y2="720" stroke="#a6e3a1" marker-end="url(#arrow-green)"/>
+    <line x1="1420" y1="720" x2="1456" y2="720" stroke="#a6e3a1" marker-end="url(#arrow-green)"/>
+    <line x1="1740" y1="720" x2="1776" y2="720" stroke="#a6e3a1" marker-end="url(#arrow-green)"/>
+    <!-- Lane 3 @ y=1032 -->
+    <line x1="320" y1="1032" x2="356" y2="1032" stroke="#f9e2af" marker-end="url(#arrow-yellow)"/>
+    <line x1="660" y1="1032" x2="696" y2="1032" stroke="#f9e2af" marker-end="url(#arrow-yellow)"/>
+    <line x1="1020" y1="1032" x2="1056" y2="1032" stroke="#f9e2af" marker-end="url(#arrow-yellow)"/>
+    <line x1="1420" y1="1032" x2="1456" y2="1032" stroke="#f9e2af" marker-end="url(#arrow-yellow)"/>
+    <line x1="1740" y1="1032" x2="1776" y2="1032" stroke="#f9e2af" marker-end="url(#arrow-yellow)"/>
+  </g>
+
+  <!-- ============ Shared resources (between Lane 1 and Lane 2) ============ -->
+  <line x1="1240" y1="440" x2="1240" y2="525" stroke="#9399b2" stroke-width="1.5" stroke-dasharray="3,3"/>
+  <line x1="1240" y1="585" x2="1240" y2="665" stroke="#9399b2" stroke-width="1.5" stroke-dasharray="3,3"/>
+  <rect class="flow-box" x="1080" y="525" width="320" height="60" rx="10" stroke="#9399b2"/>
+  <text class="shared-title" x="1240" y="550">Shared Resources</text>
+  <text class="shared-sub" x="1240" y="568">MapState &#183; ZoomState &#183; AppConfig &#183; LocalOrigin</text>
+
+  <!-- ================================================================= -->
+  <!-- LANE 1: AIRCRAFT TRACKING                                          -->
+  <!-- ================================================================= -->
+  <g filter="url(#softShadow)">
+    <rect class="flow-box-dashed" x="40" y="300" width="280" height="130" rx="12" stroke="#fab387"/>
+  </g>
+  <text class="box-title" x="180" y="326">ADS-B Feed(s)</text>
+  <text class="box-line" x="180" y="348">TCP :30003 (SBS-1) or</text>
+  <text class="box-line" x="180" y="364">:30005 (BEAST binary)</text>
+  <text class="box-line" x="180" y="382">or SDR dongle</text>
+  <text class="box-line" x="180" y="404" font-style="italic">external network / RF source</text>
+
+  <g filter="url(#softShadow)">
+    <rect class="flow-box" x="360" y="280" width="300" height="170" rx="12" stroke="#fab387"/>
+  </g>
+  <text class="box-title" x="510" y="306">adsb-client (background thread)</text>
+  <text class="box-line" x="510" y="328">Transport&#8594;Framing&#8594;Decoder&#8594;Tracker</text>
+  <line x1="400" y1="342" x2="620" y2="342" stroke="#3b3b52" stroke-width="1"/>
+  <text class="box-step" x="510" y="368">FeedConnectionManager</text>
+  <text class="box-line" x="510" y="388">per-feed Vec&lt;Aircraft&gt;</text>
+  <text class="box-line" x="510" y="404">(mutex-shared with main thread)</text>
+  <text class="box-line" x="510" y="424" font-style="italic">one thread per configured feed</text>
+
+  <g filter="url(#softShadow)">
+    <rect class="flow-box" x="700" y="260" width="320" height="210" rx="12" stroke="#fab387"/>
+  </g>
+  <text class="box-title" x="860" y="288">Fusion pipeline (every frame)</text>
+  <text class="box-step" x="860" y="314">1. adsb_to_fusion_system</text>
+  <text class="box-line" x="860" y="330">Aircraft &#8594; SensorObservation</text>
+  <text class="box-step" x="860" y="352">2. Drain &#8594; TimelineStore</text>
+  <text class="box-step" x="860" y="376">3. Associate: SpatialIndex + GNN</text>
+  <text class="box-step" x="860" y="400">4. Fuse: EKF / UKF / IMM</text>
+  <text class="box-line" x="860" y="416">predict(dt) then update(obs)</text>
+  <text class="box-step" x="860" y="440">5. Lifecycle: status &#183; initiate &#183; cleanup</text>
+  <text class="box-line" x="860" y="458" font-style="italic">FusionSet: Drain&#8594;Associate&#8594;Fuse&#8594;Lifecycle</text>
+
+  <g filter="url(#softShadow)">
+    <rect class="flow-box" x="1080" y="290" width="320" height="150" rx="12" stroke="#fab387"/>
+  </g>
+  <text class="box-title" x="1240" y="316">ECS entities</text>
+  <text class="box-step" x="1240" y="342">Track + TrackerState</text>
+  <text class="box-line" x="1240" y="358">(fused ground truth)</text>
+  <text class="box-line" x="1240" y="378">&#8597; FusionTrackLink</text>
+  <text class="box-step" x="1240" y="400">Aircraft + Transform + Trail</text>
+  <text class="box-line" x="1240" y="416">(visual entity, render_bridge)</text>
+
+  <g filter="url(#softShadow)">
+    <rect class="flow-box" x="1460" y="315" width="280" height="100" rx="12" stroke="#fab387"/>
+  </g>
+  <text class="box-title" x="1600" y="342">Aircraft render systems</text>
+  <text class="box-line" x="1600" y="364">interpolation &#183; trails</text>
+  <text class="box-line" x="1600" y="380">staleness / altitude color</text>
+  <text class="box-line" x="1600" y="396">picking &#183; predictions</text>
+
+  <!-- ================================================================= -->
+  <!-- LANE 2: MAP & TILES                                                -->
+  <!-- ================================================================= -->
+  <g filter="url(#softShadow)">
+    <rect class="flow-box-dashed" x="40" y="660" width="280" height="120" rx="12" stroke="#a6e3a1"/>
+  </g>
+  <text class="box-title" x="180" y="688">Basemap Tile Server</text>
+  <text class="box-line" x="180" y="710">XYZ / WMTS HTTP endpoint</text>
+  <text class="box-line" x="180" y="726">(OSM / vector styles)</text>
+  <text class="box-line" x="180" y="746" font-style="italic">external network source</text>
+
+  <g filter="url(#softShadow)">
+    <rect class="flow-box" x="360" y="650" width="300" height="140" rx="12" stroke="#a6e3a1"/>
+  </g>
+  <text class="box-title" x="510" y="678">Tile download system</text>
+  <text class="box-line" x="510" y="700">check CachedTileSet /</text>
+  <text class="box-line" x="510" y="716">DownloadedTiles for a hit</text>
+  <text class="box-line" x="510" y="736">HTTP GET only on a cache miss</text>
+  <text class="box-line" x="510" y="756" font-style="italic">DownloadTilesRequest message</text>
+
+  <g filter="url(#softShadow)">
+    <rect class="flow-box" x="700" y="650" width="320" height="140" rx="12" stroke="#a6e3a1"/>
+  </g>
+  <text class="box-title" x="860" y="678">Disk tile_cache</text>
+  <text class="box-line" x="860" y="698">save PNG &#183; fires TileReady</text>
+  <line x1="740" y1="712" x2="980" y2="712" stroke="#3b3b52" stroke-width="1"/>
+  <text class="box-step" x="860" y="736">Image decode &#8594; texture</text>
+  <text class="box-line" x="860" y="756" font-style="italic">render.rs consumes TileReady</text>
+
+  <g filter="url(#softShadow)">
+    <rect class="flow-box" x="1080" y="665" width="320" height="110" rx="12" stroke="#a6e3a1"/>
+  </g>
+  <text class="box-title" x="1240" y="692">ECS entities</text>
+  <text class="box-step" x="1240" y="716">MapTile (pooled Mesh3d)</text>
+  <text class="box-line" x="1240" y="736">positioned via Web Mercator</text>
+  <text class="box-line" x="1240" y="752">+ LocalOrigin (floating origin)</text>
+
+  <g filter="url(#softShadow)">
+    <rect class="flow-box" x="1460" y="675" width="280" height="90" rx="12" stroke="#a6e3a1"/>
+  </g>
+  <text class="box-title" x="1600" y="704">Tile pool / mesh render</text>
+  <text class="box-line" x="1600" y="726">activate pooled tile quad</text>
+  <text class="box-line" x="1600" y="742">(entity reuse, no spawn churn)</text>
+
+  <!-- ================================================================= -->
+  <!-- LANE 3: AVIATION & WEATHER DATA                                    -->
+  <!-- ================================================================= -->
+  <g filter="url(#softShadow)">
+    <rect class="flow-box-dashed" x="40" y="957" width="280" height="150" rx="12" stroke="#f9e2af"/>
+  </g>
+  <text class="box-title" x="180" y="984">External APIs</text>
+  <text class="box-line" x="180" y="1006">METAR/TAF/SIGMET/AIRMET/PIREP</text>
+  <text class="box-line" x="180" y="1022">OurAirports &#183; FAA NASR &#183; OpenAIP</text>
+  <text class="box-line" x="180" y="1038">NOTAMs &#183; TFRs &#183; FAA Airspace</text>
+  <text class="box-line" x="180" y="1058" font-style="italic">external network sources</text>
+
+  <g filter="url(#softShadow)">
+    <rect class="flow-box" x="360" y="967" width="300" height="130" rx="12" stroke="#f9e2af"/>
+  </g>
+  <text class="box-title" x="510" y="994">Background scheduler thread</text>
+  <text class="box-line" x="510" y="1016">tokio-cron-scheduler</text>
+  <text class="box-line" x="510" y="1032">per-provider fetch() on its</text>
+  <text class="box-line" x="510" y="1048">own cron schedule</text>
+  <text class="box-line" x="510" y="1068" font-style="italic">also saves raw JSON to disk</text>
+
+  <g filter="url(#softShadow)">
+    <rect class="flow-box" x="700" y="967" width="320" height="130" rx="12" stroke="#f9e2af"/>
+  </g>
+  <text class="box-title" x="860" y="994">Pipeline: Fetch&#8594;Parse&#8594;Transform</text>
+  <text class="box-line" x="860" y="1014">&#8594; CanonicalRecord</text>
+  <line x1="740" y1="1028" x2="980" y2="1028" stroke="#3b3b52" stroke-width="1"/>
+  <text class="box-step" x="860" y="1050">crossbeam channel &#8594; drain</text>
+  <text class="box-line" x="860" y="1068">classify &#8594; Bevy Messages</text>
+  <text class="box-line" x="860" y="1086" font-style="italic">Weather / Navigation / Notice events</text>
+
+  <g filter="url(#softShadow)">
+    <rect class="flow-box" x="1080" y="982" width="320" height="100" rx="12" stroke="#f9e2af"/>
+  </g>
+  <text class="box-title" x="1240" y="1008">ECS entities / resources</text>
+  <text class="box-line" x="1240" y="1030">Airport / Runway / Navaid /</text>
+  <text class="box-line" x="1240" y="1046">Airspace entities</text>
+  <text class="box-line" x="1240" y="1064">+ METAR / weather resources</text>
+
+  <g filter="url(#softShadow)">
+    <rect class="flow-box" x="1460" y="987" width="280" height="90" rx="12" stroke="#f9e2af"/>
+  </g>
+  <text class="box-title" x="1600" y="1016">Reference-layer render</text>
+  <text class="box-line" x="1600" y="1038">AviationPlugin &#183; AirspacePlugin</text>
+  <text class="box-line" x="1600" y="1054">WeatherPlugin</text>
+
+  <!-- ================================================================= -->
+  <!-- FEEDBACK LOOP: user input drives new upstream requests             -->
+  <!-- ================================================================= -->
+  <g filter="url(#softShadow)">
+    <rect class="flow-box" x="1080" y="1180" width="320" height="95" rx="14" stroke="#89dceb"/>
+  </g>
+  <text class="box-title" x="1240" y="1208" fill="#c9f0f7">User Input</text>
+  <text class="box-line" x="1240" y="1228">mouse drag/scroll &#183; clicks &#183; keyboard</text>
+  <text class="box-line" x="1240" y="1246" font-style="italic">+ triggers on-demand fetch via</text>
+  <text class="box-line" x="1240" y="1260" font-style="italic">the Data Sources panel</text>
+
+  <g fill="none" stroke="#89dceb" stroke-width="2.5" stroke-dasharray="7,4">
+    <path d="M1780,1135 L1400,1135 L1400,1180" marker-end="url(#arrow-sky)"/>
+    <path d="M1400,1227 L1450,1227 L1450,555 L1400,555" marker-end="url(#arrow-sky)"/>
+    <path d="M1080,1227 L340,1227 L340,791 L360,791" marker-end="url(#arrow-sky)"/>
+  </g>
+  <text class="feedback-label" x="1600" y="1155">user sees the rendered frame</text>
+  <text class="feedback-label" x="1600" y="1205" text-anchor="start">updates MapState / ZoomState</text>
+  <text class="feedback-label" x="700" y="1213">pan/zoom &#8594; new DownloadTilesRequest</text>
+
+  <!-- ============ Legend ============ -->
+  <text class="legend-title" x="60" y="1335">LEGEND</text>
+
+  <line x1="60" y1="1358" x2="105" y2="1358" stroke="#fab387" stroke-width="3" marker-end="url(#arrow-peach)"/>
+  <text class="legend-text" x="115" y="1362">Pipeline data flow (color = lane)</text>
+
+  <line x1="480" y1="1358" x2="525" y2="1358" stroke="#89dceb" stroke-width="2.5" stroke-dasharray="7,4" marker-end="url(#arrow-sky)"/>
+  <text class="legend-text" x="535" y="1362">Feedback loop (user interaction re-triggers upstream)</text>
+
+  <rect x="1060" y="1348" width="34" height="18" rx="4" fill="#24243a" stroke="#9399b2" stroke-width="2" stroke-dasharray="5,3"/>
+  <text class="legend-text" x="1104" y="1362">External system (network / OS input)</text>
+
+  <text class="footer-text" x="1100" y="1390">Scope: airjedi_bevy desktop app. Background threads (adsb-client, ingest scheduler) cross into the main-thread ECS via mutexes / crossbeam channels, drained once per frame.</text>
+</svg>

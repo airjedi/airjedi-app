@@ -1,0 +1,266 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1900 1330" width="1900" height="1330" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <defs>
+    <radialGradient id="hubGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#cba6f7" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#cba6f7" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="softShadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="3" stdDeviation="5" flood-color="#000000" flood-opacity="0.45"/>
+    </filter>
+    <filter id="hubGlowShadow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="0" stdDeviation="10" flood-color="#cba6f7" flood-opacity="0.55"/>
+    </filter>
+    <style>
+      .title-main{font-weight:700;font-size:34px;fill:#cdd6f4}
+      .title-sub{font-weight:400;font-size:16px;fill:#a6adc8}
+      .section-label{font-weight:700;font-size:12.5px;fill:#7f849c;letter-spacing:2px}
+      .hub-box{fill:#45475a;stroke:#cba6f7;stroke-width:3}
+      .hub-title{font-weight:700;font-size:22px;fill:#f5e9ff;text-anchor:middle}
+      .hub-text{font-weight:400;font-size:13px;fill:#dce0f5;text-anchor:middle}
+      .hub-kicker{font-weight:700;font-size:11px;fill:#cba6f7;letter-spacing:2px;text-anchor:middle}
+      .cluster-box{fill:#313244;stroke-width:2}
+      .cluster-title{font-weight:700;font-size:16.5px}
+      .chip{fill:#24243a;stroke:#3b3b52;stroke-width:1}
+      .chip-dashed{fill:#24243a;stroke-width:1.5;stroke-dasharray:5,3}
+      .chip-title{font-weight:700;font-size:12px;fill:#e6e9f7;text-anchor:middle}
+      .chip-title-sm{font-weight:700;font-size:11px;fill:#e6e9f7;text-anchor:middle}
+      .chip-sub{font-weight:400;font-size:10.5px;fill:#9399b2;text-anchor:middle}
+      .dep-box{fill:#2d1f26;stroke:#f38ba8;stroke-width:2;stroke-dasharray:7,4}
+      .dep-title{font-weight:700;font-size:15px;fill:#f5c2e7;text-anchor:middle}
+      .dep-sub{font-weight:400;font-size:10.5px;fill:#dbb3c4;text-anchor:middle}
+      .legend-text{font-weight:400;font-size:12.5px;fill:#a6adc8}
+      .legend-title{font-weight:700;font-size:13px;fill:#7f849c;letter-spacing:2px}
+      .footer-text{font-weight:400;font-size:11.5px;fill:#7f849c;text-anchor:middle}
+    </style>
+  </defs>
+
+  <!-- ============ Background ============ -->
+  <rect class="bg" x="0" y="0" width="1900" height="1330" fill="#1e1e2e"/>
+
+  <!-- Core glow behind the hub, to reinforce ECS-as-center -->
+  <circle cx="850" cy="650" r="300" fill="url(#hubGlow)"/>
+
+  <!-- ============ Title ============ -->
+  <text class="title-main" x="950" y="55" text-anchor="middle">AirJedi &#8212; Desktop App Architecture</text>
+  <text class="title-sub" x="950" y="85" text-anchor="middle">ECS-centric component overview &#183; Bevy 0.19 &#183; airjedi_bevy (src/)</text>
+
+  <!-- ============ Connecting lines (hub &lt;-&gt; clusters) ============ -->
+  <g stroke-linecap="round" fill="none" opacity="0.9">
+    <line x1="630" y1="650" x2="380" y2="650" stroke="#89b4fa" stroke-width="2.5"/>           <!-- Hub -> Rendering & Camera -->
+    <line x1="850" y1="540" x2="850" y2="380" stroke="#a6e3a1" stroke-width="2.5"/>           <!-- Hub -> Map & Tiles -->
+    <line x1="1070" y1="580" x2="1150" y2="280" stroke="#fab387" stroke-width="3"/>           <!-- Hub -> Aircraft & Live Tracking -->
+    <line x1="1070" y1="650" x2="1150" y2="570" stroke="#f9e2af" stroke-width="2.5"/>         <!-- Hub -> Aviation Reference Data -->
+    <line x1="1070" y1="700" x2="1150" y2="870" stroke="#94e2d5" stroke-width="2.5"/>         <!-- Hub -> Tools & Session -->
+    <line x1="850" y1="760" x2="850" y2="1020" stroke="#b4befe" stroke-width="2.5"/>          <!-- Hub -> UI Shell -->
+    <line x1="630" y1="700" x2="380" y2="990" stroke="#9399b2" stroke-width="2.5"/>           <!-- Hub -> Support / Infra -->
+  </g>
+
+  <!-- External-crate dependency lines (dashed, from Aircraft & Tracking only) -->
+  <g stroke="#f38ba8" stroke-width="2.5" stroke-dasharray="7,4" stroke-linecap="round">
+    <line x1="1560" y1="195" x2="1600" y2="195"/>  <!-- -> adsb-client -->
+    <line x1="1560" y1="305" x2="1600" y2="305"/>  <!-- -> airjedi-fusion -->
+  </g>
+
+  <!-- Endpoint dots -->
+  <g>
+    <circle cx="630" cy="650" r="4" fill="#89b4fa"/><circle cx="380" cy="650" r="4" fill="#89b4fa"/>
+    <circle cx="850" cy="540" r="4" fill="#a6e3a1"/><circle cx="850" cy="380" r="4" fill="#a6e3a1"/>
+    <circle cx="1070" cy="580" r="4" fill="#fab387"/><circle cx="1150" cy="280" r="4" fill="#fab387"/>
+    <circle cx="1070" cy="650" r="4" fill="#f9e2af"/><circle cx="1150" cy="570" r="4" fill="#f9e2af"/>
+    <circle cx="1070" cy="700" r="4" fill="#94e2d5"/><circle cx="1150" cy="870" r="4" fill="#94e2d5"/>
+    <circle cx="850" cy="760" r="4" fill="#b4befe"/><circle cx="850" cy="1020" r="4" fill="#b4befe"/>
+    <circle cx="630" cy="700" r="4" fill="#9399b2"/><circle cx="380" cy="990" r="4" fill="#9399b2"/>
+    <circle cx="1560" cy="195" r="3.5" fill="#f38ba8"/><circle cx="1600" cy="195" r="3.5" fill="#f38ba8"/>
+    <circle cx="1560" cy="305" r="3.5" fill="#f38ba8"/><circle cx="1600" cy="305" r="3.5" fill="#f38ba8"/>
+  </g>
+
+  <!-- ============ HUB: Bevy App / ECS World ============ -->
+  <g filter="url(#hubGlowShadow)">
+    <rect class="hub-box" x="630" y="540" width="440" height="220" rx="20"/>
+  </g>
+  <text class="hub-kicker" x="850" y="568">ECS CORE</text>
+  <text class="hub-title" x="850" y="596">Bevy App / ECS World</text>
+  <text class="hub-text" x="850" y="622">Schedules: Startup &#8594; Update &#8594; EguiPrimaryContextPass</text>
+  <text class="hub-text" x="850" y="642">Resources: MapState, ZoomState, AppConfig,</text>
+  <text class="hub-text" x="850" y="660">LocalOrigin, Tile*Settings</text>
+  <text class="hub-text" x="850" y="682">System ordering: ZoomSet::Change</text>
+
+  <!-- ============ Cluster 1: Rendering & Camera ============ -->
+  <g filter="url(#softShadow)"><rect class="cluster-box" x="60" y="500" width="320" height="300" rx="14" stroke="#89b4fa"/></g>
+  <rect x="68" y="510" width="6" height="280" rx="3" fill="#89b4fa"/>
+  <text class="cluster-title" x="86" y="532" fill="#89b4fa">Rendering &amp; Camera</text>
+
+  <rect class="chip" x="76" y="552" width="137" height="109" rx="8"/>
+  <text class="chip-title" x="144.5" y="600">CameraPlugin</text>
+  <text class="chip-sub" x="144.5" y="618">3-camera rig</text>
+
+  <rect class="chip" x="227" y="552" width="137" height="109" rx="8"/>
+  <text class="chip-title" x="295.5" y="600">View3DPlugin</text>
+  <text class="chip-sub" x="295.5" y="618">2D/3D transitions</text>
+
+  <rect class="chip" x="76" y="675" width="137" height="109" rx="8"/>
+  <text class="chip-title" x="144.5" y="723">InputPlugin</text>
+  <text class="chip-sub" x="144.5" y="741">pan &amp; zoom</text>
+
+  <rect class="chip" x="227" y="675" width="137" height="109" rx="8"/>
+  <text class="chip-title" x="295.5" y="723">render_layers</text>
+  <text class="chip-sub" x="295.5" y="741">layer defs</text>
+
+  <!-- ============ Cluster 2: Map & Tiles ============ -->
+  <g filter="url(#softShadow)"><rect class="cluster-box" x="630" y="140" width="440" height="240" rx="14" stroke="#a6e3a1"/></g>
+  <rect x="638" y="150" width="6" height="220" rx="3" fill="#a6e3a1"/>
+  <text class="cluster-title" x="656" y="172" fill="#a6e3a1">Map &amp; Tiles</text>
+
+  <rect class="chip" x="646" y="192" width="126" height="79" rx="8"/>
+  <text class="chip-title" x="709" y="228">TilesPlugin</text>
+  <text class="chip-sub" x="709" y="246">render/pool</text>
+
+  <rect class="chip" x="786" y="192" width="126" height="79" rx="8"/>
+  <text class="chip-title" x="849" y="228">ZoomPlugin</text>
+  <text class="chip-sub" x="849" y="246">2-tier zoom</text>
+
+  <rect class="chip" x="926" y="192" width="126" height="79" rx="8"/>
+  <text class="chip-title" x="989" y="228">tile_cache</text>
+  <text class="chip-sub" x="989" y="246">disk cache</text>
+
+  <rect class="chip" x="646" y="285" width="126" height="79" rx="8"/>
+  <text class="chip-title" x="709" y="321">TerrainPlugin</text>
+  <text class="chip-sub" x="709" y="339">elevation</text>
+
+  <rect class="chip" x="786" y="285" width="126" height="79" rx="8"/>
+  <text class="chip-title" x="849" y="321">LocationPlugin</text>
+  <text class="chip-sub" x="849" y="339">geolocate</text>
+
+  <rect class="chip" x="926" y="285" width="126" height="79" rx="8"/>
+  <text class="chip-title" x="989" y="321">geo</text>
+  <text class="chip-sub" x="989" y="339">Mercator math</text>
+
+  <!-- ============ Cluster 3: Aircraft & Live Tracking (hero) ============ -->
+  <g filter="url(#softShadow)"><rect class="cluster-box" x="1150" y="140" width="410" height="280" rx="14" stroke="#fab387" stroke-width="3"/></g>
+  <rect x="1158" y="150" width="7" height="260" rx="3" fill="#fab387"/>
+  <text class="cluster-title" x="1178" y="172" fill="#fab387" font-size="18">Aircraft &amp; Live Tracking</text>
+
+  <rect class="chip" x="1166" y="192" width="182" height="62" rx="8"/>
+  <text class="chip-title" x="1257" y="218">AircraftPlugin</text>
+  <text class="chip-sub" x="1257" y="236">trails, picking, staleness</text>
+
+  <rect class="chip" x="1362" y="192" width="182" height="62" rx="8"/>
+  <text class="chip-title" x="1453" y="218">AdsbPlugin</text>
+  <text class="chip-sub" x="1453" y="236">live ADS-B feeds</text>
+
+  <rect class="chip" x="1166" y="266" width="182" height="62" rx="8"/>
+  <text class="chip-title" x="1257" y="292">FusionIntegration</text>
+  <text class="chip-sub" x="1257" y="310">EKF/UKF track fusion</text>
+
+  <rect class="chip" x="1362" y="266" width="182" height="62" rx="8"/>
+  <text class="chip-title" x="1453" y="292">DataIngestPlugin</text>
+  <text class="chip-sub" x="1453" y="310">provider pipeline</text>
+
+  <rect class="chip" x="1166" y="340" width="378" height="62" rx="8"/>
+  <text class="chip-title" x="1355" y="366">DataSourcesPlugin</text>
+  <text class="chip-sub" x="1355" y="384">feed configuration UI</text>
+
+  <!-- ============ External workspace crates ============ -->
+  <text class="section-label" x="1730" y="128" text-anchor="middle">EXTERNAL CRATES</text>
+
+  <rect class="dep-box" x="1600" y="150" width="260" height="90" rx="10"/>
+  <text class="dep-title" x="1730" y="182">adsb-client</text>
+  <text class="dep-sub" x="1730" y="200">crate &#183; SBS-1 + BEAST</text>
+  <text class="dep-sub" x="1730" y="216">protocol decode &amp; tracker</text>
+
+  <rect class="dep-box" x="1600" y="260" width="260" height="90" rx="10"/>
+  <text class="dep-title" x="1730" y="292">airjedi-fusion</text>
+  <text class="dep-sub" x="1730" y="310">crate &#183; EKF / UKF / IMM</text>
+  <text class="dep-sub" x="1730" y="326">filters &amp; track association</text>
+
+  <!-- ============ Cluster 4: Aviation Reference Data ============ -->
+  <g filter="url(#softShadow)"><rect class="cluster-box" x="1150" y="460" width="410" height="220" rx="14" stroke="#f9e2af"/></g>
+  <rect x="1158" y="470" width="6" height="200" rx="3" fill="#f9e2af"/>
+  <text class="cluster-title" x="1178" y="492" fill="#f9e2af">Aviation Reference Data</text>
+
+  <rect class="chip" x="1166" y="512" width="182" height="69" rx="8"/>
+  <text class="chip-title" x="1257" y="542">AviationPlugin</text>
+  <text class="chip-sub" x="1257" y="560">airports, navaids, runways</text>
+
+  <rect class="chip" x="1362" y="512" width="182" height="69" rx="8"/>
+  <text class="chip-title" x="1453" y="542">AirspacePlugin</text>
+  <text class="chip-sub" x="1453" y="560">airspace boundaries</text>
+
+  <rect class="chip" x="1166" y="595" width="182" height="69" rx="8"/>
+  <text class="chip-title" x="1257" y="625">WeatherPlugin</text>
+  <text class="chip-sub" x="1257" y="643">METAR fetch</text>
+
+  <rect class="chip" x="1362" y="595" width="182" height="69" rx="8"/>
+  <text class="chip-title" x="1453" y="625">CoveragePlugin</text>
+  <text class="chip-sub" x="1453" y="643">ADS-B coverage viz</text>
+
+  <!-- ============ Cluster 5: Tools & Session ============ -->
+  <g filter="url(#softShadow)"><rect class="cluster-box" x="1150" y="760" width="410" height="220" rx="14" stroke="#94e2d5"/></g>
+  <rect x="1158" y="770" width="6" height="200" rx="3" fill="#94e2d5"/>
+  <text class="cluster-title" x="1178" y="792" fill="#94e2d5">Tools &amp; Session</text>
+
+  <rect class="chip" x="1166" y="812" width="182" height="69" rx="8"/>
+  <text class="chip-title" x="1257" y="842">ToolsPlugin</text>
+  <text class="chip-sub" x="1257" y="860">measurement tools</text>
+
+  <rect class="chip" x="1362" y="812" width="182" height="69" rx="8"/>
+  <text class="chip-title" x="1453" y="842">RecordingPlugin</text>
+  <text class="chip-sub" x="1453" y="860">record &amp; playback</text>
+
+  <rect class="chip" x="1166" y="895" width="182" height="69" rx="8"/>
+  <text class="chip-title" x="1257" y="925">BookmarksPlugin</text>
+  <text class="chip-sub" x="1257" y="943">saved map locations</text>
+
+  <rect class="chip" x="1362" y="895" width="182" height="69" rx="8"/>
+  <text class="chip-title" x="1453" y="925">ExportPlugin</text>
+  <text class="chip-sub" x="1453" y="943">data export</text>
+
+  <!-- ============ Cluster 6: UI Shell (egui) ============ -->
+  <g filter="url(#softShadow)"><rect class="cluster-box" x="560" y="1020" width="580" height="200" rx="14" stroke="#b4befe"/></g>
+  <rect x="568" y="1030" width="6" height="180" rx="3" fill="#b4befe"/>
+  <text class="cluster-title" x="586" y="1052" fill="#b4befe">UI Shell (egui)</text>
+
+  <rect class="chip" x="576" y="1072" width="129" height="37" rx="7"/><text class="chip-title-sm" x="640.5" y="1095">dock</text>
+  <rect class="chip" x="715" y="1072" width="129" height="37" rx="7"/><text class="chip-title-sm" x="779.5" y="1095">toolbar</text>
+  <rect class="chip" x="854" y="1072" width="129" height="37" rx="7"/><text class="chip-title-sm" x="918.5" y="1095">statusbar</text>
+  <rect class="chip" x="993" y="1072" width="129" height="37" rx="7"/><text class="chip-title-sm" x="1057.5" y="1095">theme</text>
+
+  <rect class="chip" x="576" y="1119" width="129" height="37" rx="7"/><text class="chip-title-sm" x="640.5" y="1142">widgets</text>
+  <rect class="chip" x="715" y="1119" width="129" height="37" rx="7"/><text class="chip-title-sm" x="779.5" y="1142">tools_window</text>
+  <rect class="chip" x="854" y="1119" width="129" height="37" rx="7"/><text class="chip-title-sm" x="918.5" y="1142">ui_panels</text>
+  <rect class="chip" x="993" y="1119" width="129" height="37" rx="7"/><text class="chip-title-sm" x="1057.5" y="1142">keyboard</text>
+
+  <rect class="chip" x="576" y="1166" width="129" height="37" rx="7"/><text class="chip-title-sm" x="640.5" y="1189">inspector</text>
+  <rect class="chip" x="715" y="1166" width="129" height="37" rx="7"/><text class="chip-title-sm" x="779.5" y="1189">debug_panel</text>
+  <rect class="chip" x="854" y="1166" width="129" height="37" rx="7"/><text class="chip-title-sm" x="918.5" y="1189">hud</text>
+  <rect class="chip" x="993" y="1166" width="129" height="37" rx="7"/><text class="chip-title-sm" x="1057.5" y="1189">debug_3d_hud</text>
+
+  <!-- ============ Cluster 7: Support / Infra ============ -->
+  <g filter="url(#softShadow)"><rect class="cluster-box" x="60" y="900" width="320" height="180" rx="14" stroke="#9399b2"/></g>
+  <rect x="68" y="910" width="6" height="160" rx="3" fill="#9399b2"/>
+  <text class="cluster-title" x="86" y="932" fill="#9399b2">Support / Infra</text>
+
+  <rect class="chip" x="76" y="952" width="137" height="49" rx="7"/>
+  <text class="chip-title-sm" x="144.5" y="980">ConfigPlugin</text>
+
+  <rect class="chip" x="227" y="952" width="137" height="49" rx="7"/>
+  <text class="chip-title-sm" x="295.5" y="980">paths</text>
+
+  <rect class="chip" x="76" y="1015" width="137" height="49" rx="7"/>
+  <text class="chip-title-sm" x="144.5" y="1043">build_info</text>
+
+  <rect class="chip-dashed" x="227" y="1015" width="137" height="49" rx="7" stroke="#9399b2"/>
+  <text class="chip-title-sm" x="295.5" y="1043">brp *</text>
+
+  <!-- ============ Legend ============ -->
+  <text class="legend-title" x="100" y="1250">LEGEND</text>
+
+  <line x1="100" y1="1275" x2="140" y2="1275" stroke="#cdd6f4" stroke-width="2.5" stroke-linecap="round"/>
+  <text class="legend-text" x="150" y="1279">Plugin registered into the Bevy App / ECS</text>
+
+  <line x1="100" y1="1298" x2="140" y2="1298" stroke="#f38ba8" stroke-width="2.5" stroke-dasharray="7,4" stroke-linecap="round"/>
+  <text class="legend-text" x="150" y="1302">Depends on an external workspace crate</text>
+
+  <text class="footer-text" x="950" y="1313">Scope: airjedi_bevy desktop app (src/). Companion crates shown as dependencies; airjedi-web (browser client) is a separate workspace member, out of scope here.</text>
+  <text class="footer-text" x="950" y="1300" font-style="italic">* brp = optional Bevy Remote Protocol feature (default-on)</text>
+</svg>
