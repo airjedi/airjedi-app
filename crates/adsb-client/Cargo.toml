@@ -69,3 +69,7 @@ required-features = ["decoder-native"]
 [[example]]
 name = "beast_diag"
 required-features = ["decoder-native"]
+
+[[example]]
+name = "bds50_diag"
+required-features = ["decoder-native"]
