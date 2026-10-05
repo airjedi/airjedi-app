@@ -24,12 +24,14 @@ mod ingest;
 mod live_ingest;
 mod replicate_tracks;
 
+use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use airjedi_core::{
     DisplayEstimate, DisplayTrack, ObservationIdentity, PositionSource, SensorContributions,
+    TrackId,
 };
 use airjedi_fusion::sensor::SensorKind;
 use airjedi_fusion::systems::{FusionSet, ObservationBuffer};
@@ -154,13 +156,13 @@ fn flag_value(args: &[String], flag: &str) -> Option<String> {
 
 fn history_config(args: &[String]) -> HistoryConfig {
     let mut config = HistoryConfig::default();
-    if let Some(minutes) = flag_value(args, "--history-retention-minutes")
-        .and_then(|value| value.parse::<u64>().ok())
+    if let Some(minutes) =
+        flag_value(args, "--history-retention-minutes").and_then(|value| value.parse::<u64>().ok())
     {
         config.retention = Duration::from_secs(minutes.max(1) * 60);
     }
-    if let Some(seconds) = flag_value(args, "--history-sampling-seconds")
-        .and_then(|value| value.parse::<u64>().ok())
+    if let Some(seconds) =
+        flag_value(args, "--history-sampling-seconds").and_then(|value| value.parse::<u64>().ok())
     {
         config.sampling_interval = Duration::from_secs(seconds.max(1));
     }
@@ -492,6 +494,11 @@ fn feed_live_observations(
 #[derive(Resource)]
 struct ProbeTarget(SocketAddr);
 
+#[derive(Resource, Default)]
+struct ProbeMotionStats {
+    previous_positions: HashMap<TrackId, (f64, f64)>,
+}
+
 /// Run a thin verification client: connect to a running agent, then print the
 /// replicated DisplayTracks once per second for `secs` seconds, and exit.
 fn run_probe(connect: SocketAddr, secs: u64) -> ! {
@@ -506,6 +513,7 @@ fn run_probe(connect: SocketAddr, secs: u64) -> ! {
     ));
     register_replicated(&mut app);
     app.insert_resource(ProbeTarget(connect));
+    app.init_resource::<ProbeMotionStats>();
     app.add_systems(Startup, setup_probe_client);
     // Manual update loop: do run()'s implicit finish/cleanup ourselves.
     app.finish();
@@ -561,10 +569,72 @@ fn report_probe(app: &mut App) {
     let mut sq = world.query::<&SensorContributions>();
     let sensor_sources: usize = sq.iter(world).map(|c| c.sources.len()).sum();
 
+    let moved_tracks = {
+        let mut stats = world.resource_mut::<ProbeMotionStats>();
+        let mut moved = 0usize;
+        for track in &tracks {
+            let key = track.track_id.clone();
+            let position = (track.latitude, track.longitude);
+            if let Some((prev_lat, prev_lon)) = stats.previous_positions.get(&key) {
+                // ~1.1m at equator - avoids floating noise while still detecting
+                // real motion.
+                let lat_changed = (position.0 - prev_lat).abs() > 1.0e-5;
+                let lon_changed = (position.1 - prev_lon).abs() > 1.0e-5;
+                if lat_changed || lon_changed {
+                    moved = moved.saturating_add(1);
+                }
+            }
+            stats.previous_positions.insert(key, position);
+        }
+        moved
+    };
+
     println!(
-        "[probe] DisplayTracks: {} (mlat {mlat}) | estimates w/ samples: {estimates_with_samples} | sensor reports: {sensor_sources}",
-        tracks.len()
+        "[probe] DisplayTracks: {} (mlat {mlat}) | moved since last: {moved_tracks} | estimates w/ samples: {estimates_with_samples} | sensor reports: {sensor_sources}",
+        tracks.len(),
     );
+
+    if let Ok(raw_watch) = std::env::var("AIRJEDI_PROBE_WATCH") {
+        let watch: Vec<String> = raw_watch
+            .split(',')
+            .map(str::trim)
+            .filter(|token| !token.is_empty())
+            .map(|token| token.to_ascii_uppercase())
+            .collect();
+        if !watch.is_empty() {
+            let now = chrono::Utc::now();
+            let mut matched = 0usize;
+            for t in &tracks {
+                let callsign_upper = t.callsign.as_ref().map(|c| c.trim().to_ascii_uppercase());
+                let icao_upper = t.icao.to_ascii_uppercase();
+                let hit = watch.iter().any(|needle| {
+                    callsign_upper.as_deref() == Some(needle.as_str()) || icao_upper == *needle
+                });
+                if !hit {
+                    continue;
+                }
+
+                matched = matched.saturating_add(1);
+                let age_s = (now - t.last_seen).num_milliseconds() as f64 / 1000.0;
+                println!(
+                    "[probe-watch] needle={:?} callsign={:?} icao={} track_id={} status={:?} lat={:.5} lon={:.5} vel_kts={:?} age_s={:.1}",
+                    watch,
+                    t.callsign,
+                    t.icao,
+                    t.track_id.0,
+                    t.status,
+                    t.latitude,
+                    t.longitude,
+                    t.velocity_kts,
+                    age_s,
+                );
+            }
+            if matched == 0 {
+                println!("[probe-watch] no tracks matched {:?}", watch);
+            }
+        }
+    }
+
     for t in tracks
         .iter()
         .filter(|t| t.position_source == Some(PositionSource::Mlat))
@@ -620,5 +690,98 @@ fn feed_observations(
             SensorKind::MlatNetwork,
             feed.sequence,
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use airjedi_fusion::store::observation_key;
+
+    #[test]
+    fn replay_sequence_rewrites_observation_identity() {
+        let scene = load_scene(&default_fixture_dir()).expect("fixture scene should load");
+        let contact = scene
+            .adsb
+            .first()
+            .or_else(|| scene.mlat.first())
+            .expect("fixture scene should include at least one contact");
+
+        let first = make_replay_observation(contact, SensorKind::AdsbReceiver, 1);
+        let second = make_replay_observation(contact, SensorKind::AdsbReceiver, 2);
+
+        let first_key = observation_key(&first).expect("replay observation should carry identity");
+        let second_key =
+            observation_key(&second).expect("replay observation should carry identity");
+
+        assert_ne!(
+            first_key.identity, second_key.identity,
+            "replay sequence must produce unique observation identities across ticks"
+        );
+    }
+
+    #[test]
+    fn fixture_replay_produces_tracks_in_server_like_app() {
+        let scene = load_scene(&default_fixture_dir()).expect("fixture scene should load");
+
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            StatesPlugin,
+            RepliconPlugins,
+            RepliconRenetPlugins,
+        ));
+        register_replicated(&mut app);
+
+        let mut fusion_config = FusionConfig::default();
+        fusion_config.history = HistoryConfig::default();
+        app.insert_resource(fusion_config);
+        add_fusion_and_projection(&mut app, scene.mlat_set.clone());
+
+        app.insert_resource(ReplayFeed {
+            adsb: scene.adsb,
+            mlat: scene.mlat,
+            timer: Timer::from_seconds(0.05, TimerMode::Repeating),
+            primed: false,
+            sequence: 0,
+        })
+        .insert_resource(ServerPort(0))
+        .insert_resource(ServerPublicAddr(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))))
+        .add_systems(Startup, setup_server)
+        .add_systems(Update, feed_observations.before(FusionSet::Drain));
+
+        app.finish();
+        app.cleanup();
+
+        for _ in 0..300 {
+            app.update();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        let track_count = {
+            let world = app.world_mut();
+            let mut query = world.query::<&Track>();
+            query.iter(world).count()
+        };
+        let display_count = {
+            let world = app.world_mut();
+            let mut query = world.query::<&DisplayTrack>();
+            query.iter(world).count()
+        };
+        let recorder = app.world().resource::<HistoryRecorder>();
+        let diagnostics = recorder.diagnostics();
+
+        assert!(
+            track_count > 0,
+            "fixture replay should spawn tracks in server-like app"
+        );
+        assert!(
+            display_count > 0,
+            "track projection should spawn replicated DisplayTrack entities"
+        );
+        assert!(
+            diagnostics.track_count > 0,
+            "history recorder should observe active tracks"
+        );
     }
 }

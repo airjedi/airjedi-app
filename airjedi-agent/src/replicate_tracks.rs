@@ -43,12 +43,23 @@ fn track_icao_u32(track: &Track) -> Option<u32> {
         .map(|i| i.0)
 }
 
-/// Upsert the replicated display components (`DisplayTrack` + `DisplayEstimate` +
-/// `SensorContributions`) per changed fused track, and despawn display entities
-/// whose fused track has gone away (or been marked `Lost`).
+/// Upsert the replicated live display components (`DisplayTrack` +
+/// `DisplayEstimate` + `SensorContributions`) per changed fused track, and
+/// despawn display entities whose fused track has gone away (or been marked
+/// `Lost`).
+/// Runs on both kinematic changes (`TrackerState`) and quality/status changes
+/// (`TrackQuality`) so stale tracks transition and cull promptly even when
+/// their tracker state itself no longer changes.
+///
+/// `DisplayTrail` is seeded on spawn, then maintained by
+/// [`sync_replicated_history`]. Re-inserting the full trail every tracker tick
+/// can saturate the replication channel and starve higher-frequency live state.
 pub fn sync_replicated_tracks(
     mut commands: Commands,
-    changed: Query<(&Track, &TrackerState, &TrackQuality), Changed<TrackerState>>,
+    changed: Query<
+        (&Track, &TrackerState, &TrackQuality),
+        Or<(Changed<TrackerState>, Changed<TrackQuality>)>,
+    >,
     all_tracks: Query<&Track>,
     existing: Query<(), With<DisplayTrack>>,
     timeline_store: Res<TimelineStore>,
@@ -74,13 +85,14 @@ pub fn sync_replicated_tracks(
             None => None,
         };
 
-        // The full render set, all derived agent-side from the fused track:
+        // The live render set, derived agent-side from the fused track:
         //  - DisplayTrack: same projection the fat-mode app uses.
         //  - DisplayEstimate: straight-flight forward-prediction cone.
         //  - SensorContributions: latest per-sensor raw positions from the store.
+        //
+        // Trail replication is handled separately by sync_replicated_history.
         let hint = raw_observation_hint_for(&timeline_store, track);
         let dt = derive_display_track(track, tracker, quality, hint.as_ref(), position_source);
-        let trail = history.preview(&track_id, fusion_clock.now_utc());
         let estimate = sample_estimate(tracker);
         let contributions = contributions_for(&timeline_store, track);
 
@@ -88,9 +100,10 @@ pub fn sync_replicated_tracks(
             Some(entity) if existing.contains(entity) => {
                 commands
                     .entity(entity)
-                    .insert((dt, trail, estimate, contributions));
+                    .insert((dt, estimate, contributions));
             }
             _ => {
+                let trail = history.preview(&track_id, fusion_clock.now_utc());
                 let entity = commands
                     .spawn((Replicated, dt, trail, estimate, contributions))
                     .id();

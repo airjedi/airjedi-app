@@ -292,16 +292,23 @@ pub fn make_observation(c: &Contact, kind: SensorKind) -> SensorObservation {
     .into_iter()
     .flatten()
     .max_by_key(|freshness| freshness.observation_time);
-    let observation_time = freshest
+
+    // Position-bearing updates own track kinematics. Keep the observation
+    // identity/time anchored to the latest position freshness when available,
+    // so unrelated telemetry-only refreshes do not repeatedly re-ingest the
+    // same stale position fix.
+    let identity_anchor = c.position_freshness.or(freshest);
+
+    let observation_time = identity_anchor
         .map(|freshness| freshness.observation_time)
         .unwrap_or(c.observation_time);
-    let receipt_time = freshest
+    let receipt_time = identity_anchor
         .map(|freshness| freshness.receipt_time)
         .unwrap_or(c.receipt_time);
-    let observation_id = freshest
+    let observation_id = identity_anchor
         .map(|freshness| freshness.identity)
         .unwrap_or(c.observation_id);
-    let time_source = freshest
+    let time_source = identity_anchor
         .map(|freshness| freshness.time_source)
         .unwrap_or(c.time_source);
 
@@ -485,6 +492,53 @@ mod tests {
         assert!(
             store.insert(second_observation),
             "a telemetry-only update with fresh altitude and velocity must not be discarded because its position identity is stale"
+        );
+    }
+
+    #[test]
+    fn stale_position_fix_is_not_reingested_when_only_velocity_refreshes() {
+        let position_time = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        let telemetry_time = position_time + chrono::Duration::seconds(5);
+        let position_identity = ObservationIdentity {
+            frame_sequence: 42,
+            payload_index: 0,
+        };
+
+        let first = contact(
+            position_time,
+            position_identity,
+            Some(freshness(position_time, 42)),
+            Some(freshness(position_time, 42)),
+            Some(freshness(position_time, 42)),
+        );
+
+        // Position freshness did not advance, but velocity did.
+        // This should not create a second position-bearing observation with a
+        // new identity that keeps a stale track alive.
+        let second = contact(
+            position_time,
+            ObservationIdentity {
+                frame_sequence: 99,
+                payload_index: 0,
+            },
+            Some(freshness(position_time, 42)),
+            Some(freshness(telemetry_time, 98)),
+            Some(freshness(telemetry_time, 99)),
+        );
+
+        let first_observation = make_observation(&first, SensorKind::AdsbReceiver);
+        let second_observation = make_observation(&second, SensorKind::AdsbReceiver);
+
+        assert_eq!(
+            first_observation.metadata.observation_id, second_observation.metadata.observation_id,
+            "position freshness identity should anchor deduplication for position-bearing updates"
+        );
+
+        let mut store = TimelineStore::new(StoreConfig::default());
+        assert!(store.insert(first_observation));
+        assert!(
+            !store.insert(second_observation),
+            "stale position fixes must not be repeatedly re-ingested because unrelated telemetry fields refreshed"
         );
     }
 }

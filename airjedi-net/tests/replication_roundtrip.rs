@@ -21,6 +21,10 @@ use chrono::{Duration as ChronoDuration, Utc};
 
 // A distinct port so the test never collides with a running agent (DEFAULT_PORT).
 const TEST_PORT: u16 = 5601;
+const UPDATE_TEST_PORT: u16 = 5602;
+
+#[derive(Resource)]
+struct TestPort(u16);
 
 fn sample_track() -> DisplayTrack {
     DisplayTrack {
@@ -114,11 +118,11 @@ fn base_app() -> App {
     app
 }
 
-fn setup_server(mut commands: Commands, channels: Res<RepliconChannels>) {
+fn setup_server(mut commands: Commands, channels: Res<RepliconChannels>, port: Res<TestPort>) {
     let (server, transport) = create_server(
         &channels,
-        TEST_PORT,
-        SocketAddr::from((Ipv4Addr::LOCALHOST, TEST_PORT)),
+        port.0,
+        SocketAddr::from((Ipv4Addr::LOCALHOST, port.0)),
     )
     .expect("server transport should start");
     commands.insert_resource(server);
@@ -126,17 +130,30 @@ fn setup_server(mut commands: Commands, channels: Res<RepliconChannels>) {
     commands.spawn((Replicated, sample_track(), sample_trail()));
 }
 
-fn setup_client(mut commands: Commands, channels: Res<RepliconChannels>) {
-    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, TEST_PORT));
+fn setup_client(mut commands: Commands, channels: Res<RepliconChannels>, port: Res<TestPort>) {
+    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port.0));
     let (client, transport) =
         create_client(&channels, addr).expect("client transport should start");
     commands.insert_resource(client);
     commands.insert_resource(transport);
 }
 
+#[derive(Resource, Default)]
+struct ChangedTrackSamples(Vec<f64>);
+
+fn record_changed_tracks(
+    changed: Query<&DisplayTrack, Changed<DisplayTrack>>,
+    mut samples: ResMut<ChangedTrackSamples>,
+) {
+    for track in &changed {
+        samples.0.push(track.latitude);
+    }
+}
+
 #[test]
 fn display_track_replicates_agent_to_client() {
     let mut server = base_app();
+    server.insert_resource(TestPort(TEST_PORT));
     server.add_systems(Startup, setup_server);
     // Driving an App with update() by hand skips run()'s implicit finish/cleanup,
     // which is where plugins (incl. replicon channel setup) complete. Do it here
@@ -145,6 +162,7 @@ fn display_track_replicates_agent_to_client() {
     server.cleanup();
 
     let mut client = base_app();
+    client.insert_resource(TestPort(TEST_PORT));
     client.add_systems(Startup, setup_client);
     client.finish();
     client.cleanup();
@@ -196,4 +214,87 @@ fn display_track_replicates_agent_to_client() {
     assert_eq!(trail.history_revision, 7);
     assert_eq!(trail.samples[0].sample_sequence, 3);
     assert_eq!(trail.samples[0].state_time, trail.server_time);
+}
+
+#[test]
+fn display_track_updates_replicate_after_initial_spawn() {
+    let mut server = base_app();
+    server.insert_resource(TestPort(UPDATE_TEST_PORT));
+    server.add_systems(Startup, setup_server);
+    server.finish();
+    server.cleanup();
+
+    let mut client = base_app();
+    client.insert_resource(TestPort(UPDATE_TEST_PORT));
+    client.add_systems(Startup, setup_client);
+    client.init_resource::<ChangedTrackSamples>();
+    client.add_systems(Update, record_changed_tracks);
+    client.finish();
+    client.cleanup();
+
+    // Wait for initial spawn replication.
+    let mut initial_received = false;
+    for _ in 0..800 {
+        server.update();
+        client.update();
+        std::thread::sleep(Duration::from_millis(8));
+        let received = client
+            .world_mut()
+            .query::<&DisplayTrack>()
+            .iter(client.world())
+            .count();
+        if received >= 1 {
+            initial_received = true;
+            break;
+        }
+    }
+    assert!(
+        initial_received,
+        "client never received initial replicated DisplayTrack"
+    );
+
+    // Mutate the authoritative server component in-place.
+    {
+        let world = server.world_mut();
+        let mut q = world.query::<&mut DisplayTrack>();
+        let mut dt = q
+            .iter_mut(world)
+            .next()
+            .expect("server replicated DisplayTrack missing");
+        dt.latitude = 40.25;
+        dt.longitude = -98.75;
+        dt.velocity_kts = Some(515.0);
+    }
+
+    // Wait for the updated state to reach the client.
+    let mut updated = false;
+    for _ in 0..800 {
+        server.update();
+        client.update();
+        std::thread::sleep(Duration::from_millis(8));
+
+        let world = client.world_mut();
+        let mut q = world.query::<&DisplayTrack>();
+        if let Some(dt) = q.iter(world).next() {
+            let location_matches =
+                (dt.latitude - 40.25).abs() < 1e-9 && (dt.longitude - (-98.75)).abs() < 1e-9;
+            if location_matches && dt.velocity_kts == Some(515.0) {
+                updated = true;
+                break;
+            }
+        }
+    }
+
+    assert!(
+        updated,
+        "client never received replicated DisplayTrack updates"
+    );
+
+    let changed_samples = &client.world().resource::<ChangedTrackSamples>().0;
+    assert!(
+        changed_samples
+            .iter()
+            .any(|lat| (*lat - 40.25).abs() < 1e-9),
+        "replicon-applied component updates should satisfy Changed<DisplayTrack> on the client"
+    );
 }

@@ -39,7 +39,7 @@ use crate::aircraft::interpolation::update_interpolation_on_adsb;
 use crate::aircraft::picking::{on_aircraft_click, on_aircraft_hover, on_aircraft_out};
 use crate::aircraft::{
     AircraftListState, AircraftTypeDatabase, CameraFollowState, InterpolationState, SessionClock,
-    TrailHistory,
+    TrailConfig, TrailHistory, TrailRenderer,
 };
 use crate::config::AppConfig;
 use crate::fusion_integration::estimated_track::EstimatedTrackConfig;
@@ -101,6 +101,10 @@ impl Plugin for ThinClientPlugin {
             .add_systems(Startup, connect_to_agent)
             .add_systems(
                 Update,
+                enforce_safe_trail_renderers.after(crate::config::sync_config_to_render_states),
+            )
+            .add_systems(
+                Update,
                 (
                     manage_connection,
                     update_thin_status,
@@ -119,6 +123,42 @@ impl Plugin for ThinClientPlugin {
                 (draw_estimated_cones, draw_sensor_contributions)
                     .after(crate::aircraft::interpolation::interpolate_aircraft_positions),
             );
+    }
+}
+
+/// Mesh-strip trails are currently unstable for high-churn replicated entities
+/// in thin mode (Bevy 0.19 can emit slab allocator use-after-free errors).
+/// Force both trail renderers to Gizmo in thin mode so replicated aircraft keep
+/// moving reliably.
+fn enforce_safe_trail_renderers(
+    mut app_config: ResMut<AppConfig>,
+    mut trail_config: Option<ResMut<TrailConfig>>,
+    mut warned: Local<bool>,
+) {
+    let mut forced = false;
+    if app_config.trails.renderer_2d == TrailRenderer::MeshStrip {
+        app_config.trails.renderer_2d = TrailRenderer::Gizmo;
+        forced = true;
+    }
+    if app_config.trails.renderer_3d == TrailRenderer::MeshStrip {
+        app_config.trails.renderer_3d = TrailRenderer::Gizmo;
+        forced = true;
+    }
+
+    if !forced {
+        return;
+    }
+
+    if let Some(ref mut trail_config) = trail_config {
+        trail_config.renderer_2d = app_config.trails.renderer_2d;
+        trail_config.renderer_3d = app_config.trails.renderer_3d;
+    }
+
+    if !*warned {
+        warn!(
+            "thin mode forced trail renderer from MeshStrip to Gizmo to avoid render-world instability"
+        );
+        *warned = true;
     }
 }
 
@@ -859,5 +899,32 @@ mod tests {
                 .is_some(),
             "one Connected frame without replicated tracks must not discard selected cached history"
         );
+    }
+
+    #[test]
+    fn thin_mode_forces_mesh_strip_trails_to_gizmo() {
+        let mut app = App::new();
+
+        let mut app_config = AppConfig::default();
+        app_config.trails.renderer_2d = TrailRenderer::MeshStrip;
+        app_config.trails.renderer_3d = TrailRenderer::MeshStrip;
+
+        let mut trail_config = TrailConfig::default();
+        trail_config.renderer_2d = TrailRenderer::MeshStrip;
+        trail_config.renderer_3d = TrailRenderer::MeshStrip;
+
+        app.insert_resource(app_config)
+            .insert_resource(trail_config)
+            .add_systems(Update, enforce_safe_trail_renderers);
+
+        app.update();
+
+        let app_config = app.world().resource::<AppConfig>();
+        let trail_config = app.world().resource::<TrailConfig>();
+
+        assert_eq!(app_config.trails.renderer_2d, TrailRenderer::Gizmo);
+        assert_eq!(app_config.trails.renderer_3d, TrailRenderer::Gizmo);
+        assert_eq!(trail_config.renderer_2d, TrailRenderer::Gizmo);
+        assert_eq!(trail_config.renderer_3d, TrailRenderer::Gizmo);
     }
 }

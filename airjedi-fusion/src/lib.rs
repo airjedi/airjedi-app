@@ -89,25 +89,15 @@ impl Plugin for FusionPlugin {
             )
             .add_systems(
                 Update,
-                systems::track_status_system.in_set(FusionSet::Lifecycle),
-            )
-            .add_systems(
-                Update,
-                systems::track_initiation_system.in_set(FusionSet::Lifecycle),
-            )
-            .add_systems(
-                Update,
-                systems::track_cleanup_system.in_set(FusionSet::Lifecycle),
-            )
-            .add_systems(
-                Update,
-                systems::store_eviction_system.in_set(FusionSet::Lifecycle),
-            )
-            .add_systems(
-                Update,
-                history::record_history_system
-                    .in_set(FusionSet::Lifecycle)
-                    .after(systems::track_cleanup_system),
+                (
+                    systems::track_status_system,
+                    systems::track_initiation_system,
+                    systems::track_cleanup_system,
+                    history::record_history_system,
+                    systems::store_eviction_system,
+                )
+                    .chain()
+                    .in_set(FusionSet::Lifecycle),
             );
 
         // Conditionally add NATS transport systems when feature is enabled
