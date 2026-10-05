@@ -269,7 +269,7 @@ From the repo root:
 
 ```bash
 docker buildx build --platform linux/arm64 \
-  -f airjedi-agent/Dockerfile -t airjedi-agent:0.1.2 --load .
+  -f airjedi-agent/Containerfile -t airjedi-agent:0.1.3 --load .
 ```
 
 The build compiles only the agent's dependency graph (no desktop app / egui /
@@ -282,13 +282,13 @@ the flaky home WAN prefer a LAN transfer if you have one, and always verify the
 transfer (see the scp/rsync caveats under "Transferring the capture" above).
 
 ```bash
-docker save airjedi-agent:0.1.2 | gzip > /tmp/airjedi-agent.tar.gz
+docker save airjedi-agent:0.1.3 | gzip > /tmp/airjedi-agent.tar.gz
 scp /tmp/airjedi-agent.tar.gz <PI_SSH_USER>@<PI_HOST>:/tmp/
 ssh <PI_SSH_USER>@<PI_HOST> \
   "gunzip -c /tmp/airjedi-agent.tar.gz | sudo k3s ctr images import -"
 ```
 
-The manifest uses `image: airjedi-agent:0.1.2` with `imagePullPolicy:
+The manifest uses `image: airjedi-agent:0.1.3` with `imagePullPolicy:
 IfNotPresent`, so k3s uses the imported image without trying to pull.
 
 **Option B - registry (avoids the WAN transfer).** Push to a registry the node
@@ -296,8 +296,8 @@ can pull from, and set `image:` in the manifest accordingly:
 
 ```bash
 docker buildx build --platform linux/arm64 \
-  -f airjedi-agent/Dockerfile -t ghcr.io/<owner>/airjedi-agent:0.1.2 --push .
-# then edit airjedi-agent-deployment.yaml: image: ghcr.io/<owner>/airjedi-agent:0.1.2
+  -f airjedi-agent/Containerfile -t ghcr.io/<owner>/airjedi-agent:0.1.3 --push .
+# then edit airjedi-agent-deployment.yaml: image: ghcr.io/<owner>/airjedi-agent:0.1.3
 # (add an imagePullSecret if the package is private)
 ```
 
@@ -328,7 +328,7 @@ Edit the installed bundle's agent address (no rebuild needed):
 ```
 
 or launch with `AIRJEDI_THIN_AGENT=<PI_HOST>:5599 open -a AirJedi`. On a code
-change, bump the tag (`0.1.3`, ...), rebuild/import, update the manifest image,
+change, bump the tag (`0.1.4`, ...), rebuild/import, update the manifest image,
 and `kubectl -n feeders rollout restart deploy/airjedi-agent`.
 
 ### Diagnostics and troubleshooting
@@ -353,7 +353,7 @@ loopback.
 
 The client transport must bind its UDP socket to `0.0.0.0:0`; binding to
 `127.0.0.1:0` prevents replies from a remote agent from reaching the client.
-The corresponding server and client fixes are included in `airjedi-agent:0.1.2`.
+The corresponding server and client fixes are included in `airjedi-agent:0.1.3`.
 
 The observed steady-state baseline on `airjedi.custine.com` is approximately
 `0.4` CPU cores, `43Mi` Kubernetes memory, and `55.8MiB` process RSS, with no

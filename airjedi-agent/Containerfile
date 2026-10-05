@@ -4,7 +4,7 @@
 # node's arch (the airjedi node is arm64):
 #
 #   docker buildx build --platform linux/arm64 \
-#     -f airjedi-agent/Dockerfile -t airjedi-agent:0.1.2 .
+#     -f airjedi-agent/Containerfile -t airjedi-agent:0.1.3 .
 #
 # `cargo build -p airjedi-agent` compiles only the agent's dependency graph
 # (airjedi-core/fusion/net + adsb-client + headless bevy/replicon/renet); the
