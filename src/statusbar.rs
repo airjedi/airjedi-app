@@ -46,10 +46,11 @@ const FPS_SMOOTHING: f32 = 0.05;
 const MSG_RATE_INTERVAL_SECS: f32 = 1.0;
 
 /// Thin-client (design-b) connection status, published by `ThinClientPlugin`.
-/// When present, the status bar shows the agent link + replicated aircraft count
-/// instead of the local-feed status (thin mode runs no local feeds).
+/// When `active` is true, the status bar shows the agent link + replicated aircraft
+/// count instead of the local-feed status (thin mode runs no local feeds).
 #[derive(Resource, Default, Clone, Copy)]
 pub struct ThinClientStatus {
+    pub active: bool,
     pub connected: bool,
     pub aircraft: usize,
     pub history_tracks: usize,
@@ -225,8 +226,8 @@ fn render_feed_status_section(
     msg_rate: f32,
 ) -> egui::Response {
     // Thin-client mode: show the agent link + replicated aircraft count instead
-    // of local feeds (there are none).
-    if let Some(thin) = thin_status {
+    // of local feeds when the agent connection is active.
+    if let Some(thin) = thin_status.filter(|t| t.active) {
         let primary = to_egui_color32(theme.text_primary());
         let (dot_color, label) = if !thin.connected {
             (to_egui_color32(theme.text_warn()), "Agent: reconnecting".to_string())

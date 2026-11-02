@@ -8,11 +8,10 @@ version = "0.1.3"
 edition = "2021"
 
 [features]
-default = ["brp"]
+default = ["brp", "thin-client"]
 brp = ["bevy/bevy_remote", "dep:bevy_brp_extras"]
 # design-b thin client: run the app as a renderer for a headless fusion agent,
-# consuming replicated DisplayTracks instead of running fusion locally. Off by
-# default - fat mode (in-process fusion) is unchanged and pulls no replicon deps.
+# consuming replicated DisplayTracks instead of running fusion locally.
 thin-client = ["dep:bevy_replicon", "dep:bevy_replicon_renet", "dep:airjedi-net"]
 
 [dependencies]

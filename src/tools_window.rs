@@ -65,6 +65,7 @@ pub fn render_tools_window(
     mut ingest_ui: Option<ResMut<crate::data_ingest::IngestUiState>>,
     mut grid_overlay: Option<ResMut<GridOverlay>>,
     mut location_ui: ResMut<crate::location::FeedLocationUiState>,
+    thin_status: Option<Res<crate::statusbar::ThinClientStatus>>,
 ) {
     if !tools_state.open {
         return;
@@ -147,7 +148,13 @@ pub fn render_tools_window(
                     ToolsTab::Airspace => {
                         render_airspace_tab(ui, &mut airspace_display, &mut airspace_data)
                     }
-                    ToolsTab::DataSources => render_data_sources_tab(ui, feed_mgr.as_deref(), &mut app_config, &mut location_ui),
+                    ToolsTab::DataSources => render_data_sources_tab(
+                        ui,
+                        feed_mgr.as_deref(),
+                        thin_status.as_deref(),
+                        &mut app_config,
+                        &mut location_ui,
+                    ),
                     ToolsTab::Export => render_export_tab(ui, &mut export_state),
                     ToolsTab::Recording => render_recording_tab(ui, &mut recording, &mut playback),
                     ToolsTab::View3D => render_view3d_tab(
@@ -301,26 +308,115 @@ pub fn render_airspace_tab(
 pub fn render_data_sources_tab(
     ui: &mut egui::Ui,
     feed_mgr: Option<&FeedConnectionManager>,
+    thin_status: Option<&crate::statusbar::ThinClientStatus>,
     app_config: &mut crate::config::AppConfig,
     location_ui: &mut crate::location::FeedLocationUiState,
 ) {
     use adsb_client::ConnectionState;
     location_ui.sync_buffers_from_config(app_config);
 
+    let mut save = false;
+
+    // =========================================================================
+    // Section 1: Fusion Agent Connection
+    // =========================================================================
+    ui.strong("Fusion Agent");
+    ui.add_space(2.0);
+
+    let mut agent_enabled = app_config.agent.enabled;
+    let (agent_dot_color, agent_status_text) = if !agent_enabled {
+        (egui::Color32::GRAY, "Disabled".to_string())
+    } else if let Some(status) = thin_status {
+        if status.connected {
+            (
+                egui::Color32::GREEN,
+                format!("Connected ({} ac)", status.aircraft),
+            )
+        } else {
+            (egui::Color32::YELLOW, "Connecting...".to_string())
+        }
+    } else {
+        (egui::Color32::YELLOW, "Enabled".to_string())
+    };
+
+    ui.horizontal(|ui| {
+        if ui
+            .checkbox(&mut agent_enabled, "Enable Agent Connection")
+            .on_hover_text(
+                "Connect to a headless AirJedi Fusion Agent.\n\
+                 Enabling this saves and pauses all direct BEAST / SBS-1 / RTL-SDR feeds.",
+            )
+            .changed()
+        {
+            if agent_enabled {
+                app_config.enable_agent();
+            } else {
+                app_config.disable_agent();
+            }
+            save = true;
+        }
+
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(
+                egui::RichText::new(&agent_status_text)
+                    .size(10.0)
+                    .color(egui::Color32::GRAY),
+            );
+            ui.colored_label(agent_dot_color, "\u{25CF}");
+        });
+    });
+
+    ui.indent("agent_connection_config", |ui| {
+        ui.horizontal(|ui| {
+            ui.label("Endpoint:");
+            let resp = ui.add(
+                egui::TextEdit::singleline(&mut app_config.agent.endpoint)
+                    .hint_text("e.g. 192.168.1.10:5599"),
+            );
+            if resp.lost_focus()
+                || (resp.changed() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+            {
+                save = true;
+            }
+        });
+    });
+
+    ui.add_space(6.0);
+    ui.separator();
+
+    // =========================================================================
+    // Section 2: Direct Receiver Feeds (BEAST / SBS-1 / RTL-SDR)
+    // =========================================================================
+    let agent_active = app_config.agent.enabled;
     let total_feeds = app_config.feeds.len();
     let connected = feed_mgr.map(|m| m.connected_count()).unwrap_or(0);
     let aircraft_count = feed_mgr.map(|m| m.unique_aircraft_count()).unwrap_or(0);
 
-    ui.label(format!(
-        "{}/{} feeds connected, {} aircraft",
-        connected, total_feeds, aircraft_count
-    ));
+    ui.strong("Direct Receiver Feeds");
+    if agent_active {
+        let saved_active_count = app_config
+            .feeds
+            .iter()
+            .filter(|f| app_config.feed_saved_or_current_enabled(f))
+            .count();
+        ui.colored_label(
+            egui::Color32::from_rgb(230, 180, 80),
+            format!(
+                "Paused while Fusion Agent is enabled ({}/{} will restore on disconnect).",
+                saved_active_count, total_feeds
+            ),
+        );
+    } else {
+        ui.label(format!(
+            "{}/{} feeds connected, {} aircraft",
+            connected, total_feeds, aircraft_count
+        ));
+    }
 
-    ui.separator();
+    ui.add_space(4.0);
 
     let mut feeds = app_config.feeds.clone();
     let mut changed = false;
-    let mut save = false;
     let mut remove_idx = None;
 
     for (idx, feed) in feeds.iter_mut().enumerate() {
@@ -334,21 +430,46 @@ pub fn render_data_sources_tab(
             .and_then(|c| c.data.try_aircraft_count())
             .unwrap_or(0);
 
-        let (status_color, status_text) = match &conn_state {
-            ConnectionState::Connected => (egui::Color32::GREEN, format!("{} ac", ac_count)),
-            ConnectionState::Connecting => (egui::Color32::YELLOW, "Connecting".to_string()),
-            ConnectionState::Disconnected => {
-                if feed.enabled {
-                    (egui::Color32::RED, "Disconnected".to_string())
-                } else {
-                    (egui::Color32::GRAY, "Disabled".to_string())
-                }
+        let saved_enabled = app_config
+            .agent
+            .saved_feed_states
+            .get(&feed.id)
+            .copied()
+            .unwrap_or(feed.enabled);
+
+        let (status_color, status_text) = if agent_active {
+            if saved_enabled {
+                (
+                    egui::Color32::from_rgb(230, 180, 80),
+                    "Paused (Will restore)".to_string(),
+                )
+            } else {
+                (egui::Color32::GRAY, "Disabled".to_string())
             }
-            ConnectionState::Error(msg) => (egui::Color32::RED, format!("Err: {}", msg)),
+        } else {
+            match &conn_state {
+                ConnectionState::Connected => (egui::Color32::GREEN, format!("{} ac", ac_count)),
+                ConnectionState::Connecting => (egui::Color32::YELLOW, "Connecting".to_string()),
+                ConnectionState::Disconnected => {
+                    if feed.enabled {
+                        (egui::Color32::RED, "Disconnected".to_string())
+                    } else {
+                        (egui::Color32::GRAY, "Disabled".to_string())
+                    }
+                }
+                ConnectionState::Error(msg) => (egui::Color32::RED, format!("Err: {}", msg)),
+            }
         };
 
         ui.horizontal(|ui| {
-            if ui.checkbox(&mut feed.enabled, "").changed() {
+            if agent_active {
+                let mut preview_enabled = saved_enabled;
+                ui.add_enabled(false, egui::Checkbox::new(&mut preview_enabled, ""))
+                    .on_disabled_hover_text(
+                        "Direct feeds are paused while Fusion Agent is enabled.\n\
+                         Disable Agent Connection above to restore previous feed states.",
+                    );
+            } else if ui.checkbox(&mut feed.enabled, "").changed() {
                 changed = true;
                 save = true;
             }
@@ -515,7 +636,8 @@ pub fn render_data_sources_tab(
     }
 
     if let Some(idx) = remove_idx {
-        feeds.remove(idx);
+        let removed = feeds.remove(idx);
+        app_config.agent.saved_feed_states.remove(&removed.id);
         changed = true;
         save = true;
     }
@@ -524,8 +646,12 @@ pub fn render_data_sources_tab(
 
     if ui.button("+ Add Feed").clicked() {
         let count = feeds.len() + 1;
+        let id = crate::config::new_feed_id();
+        if agent_active {
+            app_config.agent.saved_feed_states.insert(id.clone(), false);
+        }
         feeds.push(FeedSourceConfig {
-            id: crate::config::new_feed_id(),
+            id,
             name: format!("Feed {}", count),
             endpoint: String::new(),
             protocol: FeedProtocol::Sbs1,
@@ -1310,5 +1436,84 @@ mod tests {
 
         harness.get_by_label("2D Map");
         harness.get_by_label("3D View");
+    }
+
+    struct DataSourcesTabTestState {
+        config: crate::config::AppConfig,
+        location_ui: crate::location::FeedLocationUiState,
+    }
+
+    impl Default for DataSourcesTabTestState {
+        fn default() -> Self {
+            let mut config = crate::config::AppConfig::default();
+            config.agent.enabled = false;
+            config.feeds = vec![
+                FeedSourceConfig {
+                    id: "feed-beast".to_string(),
+                    name: "Beast Feed".to_string(),
+                    endpoint: "192.168.1.10:30005".to_string(),
+                    protocol: FeedProtocol::Beast,
+                    enabled: true,
+                    device_index: None,
+                    gain: None,
+                    sample_rate: None,
+                    receiver_location: None,
+                },
+                FeedSourceConfig {
+                    id: "feed-sbs".to_string(),
+                    name: "SBS Feed".to_string(),
+                    endpoint: "192.168.1.10:30003".to_string(),
+                    protocol: FeedProtocol::Sbs1,
+                    enabled: false,
+                    device_index: None,
+                    gain: None,
+                    sample_rate: None,
+                    receiver_location: None,
+                },
+            ];
+            Self {
+                config,
+                location_ui: crate::location::FeedLocationUiState::default(),
+            }
+        }
+    }
+
+    #[test]
+    fn test_data_sources_tab_toggling_agent_saves_and_restores_feeds() {
+        let mut harness = Harness::new_ui_state(
+            |ui, state: &mut DataSourcesTabTestState| {
+                render_data_sources_tab(ui, None, None, &mut state.config, &mut state.location_ui);
+            },
+            DataSourcesTabTestState::default(),
+        );
+
+        harness.get_by_label("Fusion Agent");
+        harness.get_by_label("Direct Receiver Feeds");
+
+        // Enable the agent connection via the checkbox
+        harness.get_by_label("Enable Agent Connection").click();
+        harness.run();
+
+        assert!(harness.state().config.agent.enabled);
+        assert!(!harness.state().config.feeds[0].enabled);
+        assert!(!harness.state().config.feeds[1].enabled);
+        assert_eq!(
+            harness.state().config.agent.saved_feed_states.get("feed-beast"),
+            Some(&true)
+        );
+        assert_eq!(
+            harness.state().config.agent.saved_feed_states.get("feed-sbs"),
+            Some(&false)
+        );
+        harness.get_by_label("Paused (Will restore)");
+
+        // Disable the agent connection and verify previous feed states return
+        harness.get_by_label("Enable Agent Connection").click();
+        harness.run();
+
+        assert!(!harness.state().config.agent.enabled);
+        assert!(harness.state().config.feeds[0].enabled);
+        assert!(!harness.state().config.feeds[1].enabled);
+        assert!(harness.state().config.agent.saved_feed_states.is_empty());
     }
 }

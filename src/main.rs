@@ -298,29 +298,15 @@ fn main() {
     .add_systems(Update, debug_panel::update_debug_metrics)
     .add_systems(Update, heartbeat_diagnostic);
 
-    // design-b: thin mode replaces in-process fusion with a feed of replicated
-    // DisplayTracks from a headless agent. Building `--features thin-client` (the
-    // macOS bundle default) makes thin mode the default; the agent address comes
-    // from AIRJEDI_THIN_AGENT (set in the bundle's Info.plist LSEnvironment) and
-    // falls back to a localhost agent. Builds without the feature always run fat
-    // mode (in-process fusion), unchanged.
+    app.add_plugins(fusion_integration::FusionIntegrationPlugin);
     #[cfg(feature = "thin-client")]
-    let thin_agent = Some(
-        std::env::var("AIRJEDI_THIN_AGENT")
-            .unwrap_or_else(|_| format!("127.0.0.1:{}", airjedi_net::DEFAULT_PORT)),
-    );
-    #[cfg(not(feature = "thin-client"))]
-    let thin_agent: Option<String> = None;
-
-    match thin_agent {
-        #[cfg(feature = "thin-client")]
-        Some(addr) => {
-            info!("thin-client mode: consuming DisplayTracks from agent at {addr}");
-            app.add_plugins(thin_client::ThinClientPlugin::new(addr));
-        }
-        _ => {
-            app.add_plugins(fusion_integration::FusionIntegrationPlugin);
-        }
+    {
+        let initial_agent = app
+            .world()
+            .get_resource::<config::AppConfig>()
+            .map(|c| c.agent.endpoint.clone())
+            .unwrap_or_else(|| format!("127.0.0.1:{}", airjedi_net::DEFAULT_PORT));
+        app.add_plugins(thin_client::ThinClientPlugin::new(initial_agent));
     }
 
     #[cfg(feature = "brp")]

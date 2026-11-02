@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use bevy_egui::{egui, EguiPlugin};
 use crate::tiles::{TileDownloadSettings, TileFormat};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -117,6 +118,11 @@ impl BasemapStyle {
 
 #[derive(Resource, Serialize, Deserialize, Clone, Debug)]
 pub struct AppConfig {
+    /// Fusion Agent connection configuration. When enabled, direct receiver
+    /// feeds (SBS-1, BEAST, RTL-SDR) have their enabled states saved and are
+    /// disabled until the agent connection is turned off.
+    #[serde(default)]
+    pub agent: AgentConnectionConfig,
     /// ADS-B data feeds (SBS-1, BEAST, etc.)
     #[serde(default = "default_feeds")]
     pub feeds: Vec<FeedSourceConfig>,
@@ -137,6 +143,101 @@ pub struct AppConfig {
     pub data_ingest: DataIngestConfig,
     #[serde(default = "default_interpolation_enabled")]
     pub interpolation_enabled: bool,
+}
+
+fn default_agent_endpoint() -> String {
+    std::env::var("AIRJEDI_THIN_AGENT")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "127.0.0.1:5599".to_string())
+}
+
+/// Configuration for the remote/headless Fusion Agent connection.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct AgentConnectionConfig {
+    /// Whether the Fusion Agent connection is active.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Agent endpoint in `host:port` format.
+    #[serde(default = "default_agent_endpoint")]
+    pub endpoint: String,
+    /// Snapshot of per-feed `(feed_id -> enabled)` states captured before the
+    /// agent was enabled, restored when the agent is disabled.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub saved_feed_states: HashMap<String, bool>,
+}
+
+impl Default for AgentConnectionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            endpoint: default_agent_endpoint(),
+            saved_feed_states: HashMap::new(),
+        }
+    }
+}
+
+impl AppConfig {
+    /// Enable the Fusion Agent connection, saving the current enabled state of
+    /// every direct feed before disabling them.
+    pub fn enable_agent(&mut self) {
+        if !self.agent.enabled {
+            self.agent.saved_feed_states = self
+                .feeds
+                .iter()
+                .map(|feed| (feed.id.clone(), feed.enabled))
+                .collect();
+            for feed in &mut self.feeds {
+                feed.enabled = false;
+            }
+            self.agent.enabled = true;
+        } else {
+            // Ensure invariant: if already enabled, any feed still marked enabled
+            // is recorded in saved_feed_states and disabled.
+            for feed in &mut self.feeds {
+                if feed.enabled {
+                    self.agent
+                        .saved_feed_states
+                        .insert(feed.id.clone(), true);
+                    feed.enabled = false;
+                } else {
+                    self.agent
+                        .saved_feed_states
+                        .entry(feed.id.clone())
+                        .or_insert(false);
+                }
+            }
+        }
+    }
+
+    /// Disable the Fusion Agent connection and restore each direct feed to the
+    /// enabled state it had before the agent was enabled.
+    pub fn disable_agent(&mut self) {
+        if self.agent.enabled {
+            self.agent.enabled = false;
+            for feed in &mut self.feeds {
+                if let Some(&was_enabled) = self.agent.saved_feed_states.get(&feed.id) {
+                    feed.enabled = was_enabled;
+                }
+            }
+            self.agent.saved_feed_states.clear();
+        }
+    }
+
+    /// Returns whether a feed was enabled prior to enabling the agent (or its
+    /// current `enabled` state when the agent is disabled).
+    pub fn feed_saved_or_current_enabled(&self, feed: &FeedSourceConfig) -> bool {
+        if self.agent.enabled {
+            self.agent
+                .saved_feed_states
+                .get(&feed.id)
+                .copied()
+                .unwrap_or(feed.enabled)
+        } else {
+            feed.enabled
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -510,6 +611,7 @@ impl Default for DataIngestConfig {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
+            agent: AgentConnectionConfig::default(),
             feeds: default_feeds(),
             enrichment_sources: Vec::new(),
             map: MapConfig {
@@ -536,29 +638,60 @@ fn config_path() -> PathBuf {
 
 pub fn load_config() -> AppConfig {
     let path = config_path();
-    if path.exists() {
+    let mut config = if path.exists() {
         match fs::read_to_string(&path) {
-            Ok(contents) => match toml::from_str(&contents) {
-                Ok(config) => {
+            Ok(contents) => match toml::from_str::<AppConfig>(&contents) {
+                Ok(mut parsed) => {
                     info!("Loaded config from {:?}", path);
-                    return config;
+                    // If the config didn't have an explicit [agent] block yet and
+                    // AIRJEDI_THIN_AGENT is set, seed the agent connection and snapshot
+                    // current feed states.
+                    if !contents.contains("[agent]") {
+                        if let Ok(env_agent) = std::env::var("AIRJEDI_THIN_AGENT") {
+                            let trimmed = env_agent.trim();
+                            if !trimmed.is_empty() {
+                                parsed.agent.endpoint = trimmed.to_string();
+                                parsed.enable_agent();
+                            }
+                        }
+                    } else if parsed.agent.enabled {
+                        // Ensure invariant: if agent is enabled in config, any feed
+                        // still marked enabled is saved in saved_feed_states and disabled.
+                        parsed.enable_agent();
+                    }
+                    return parsed;
                 }
                 Err(e) => {
                     warn!("Failed to parse config: {}, using defaults", e);
+                    AppConfig::default()
                 }
             },
             Err(e) => {
                 warn!("Failed to read config: {}, using defaults", e);
+                AppConfig::default()
             }
+        }
+    } else {
+        AppConfig::default()
+    };
+
+    if let Ok(env_agent) = std::env::var("AIRJEDI_THIN_AGENT") {
+        let trimmed = env_agent.trim();
+        if !trimmed.is_empty() {
+            config.agent.endpoint = trimmed.to_string();
+            config.enable_agent();
         }
     }
 
-    let config = AppConfig::default();
     save_config(&config);
     config
 }
 
 pub fn save_config(config: &AppConfig) {
+    #[cfg(test)]
+    if !crate::paths::is_initialized() {
+        return;
+    }
     let path = config_path();
     match toml::to_string_pretty(config) {
         Ok(contents) => {
@@ -668,6 +801,7 @@ impl SettingsUiState {
         }
 
         Ok(AppConfig {
+            agent: AgentConnectionConfig::default(),
             feeds: current_feeds.to_vec(),
             enrichment_sources: current_enrichment_sources.to_vec(),
             map: MapConfig {
@@ -845,6 +979,7 @@ pub fn render_settings_pane_content(
         if ui.button("Save").clicked() {
             match ui_state.validate_and_build(&app_config.feeds, &app_config.enrichment_sources) {
                 Ok(mut new_config) => {
+                    new_config.agent = app_config.agent.clone();
                     new_config.bookmarks = app_config.bookmarks.clone();
                     new_config.appearance.theme = app_theme.name().to_string();
                     save_config(&new_config);
@@ -1025,5 +1160,57 @@ mod enrichment_source_config_tests {
 
         let config: AppConfig = toml::from_str(toml_str).expect("should deserialize");
         assert!(config.enrichment_sources.is_empty());
+    }
+
+    #[test]
+    fn enabling_agent_saves_and_disables_feeds_and_disabling_restores_them() {
+        let mut config = AppConfig {
+            feeds: vec![
+                FeedSourceConfig {
+                    id: "beast-1".to_string(),
+                    name: "Primary Beast".to_string(),
+                    endpoint: "192.168.1.10:30005".to_string(),
+                    protocol: FeedProtocol::Beast,
+                    enabled: true,
+                    device_index: None,
+                    gain: None,
+                    sample_rate: None,
+                    receiver_location: None,
+                },
+                FeedSourceConfig {
+                    id: "sbs-2".to_string(),
+                    name: "Backup SBS-1".to_string(),
+                    endpoint: "192.168.1.11:30003".to_string(),
+                    protocol: FeedProtocol::Sbs1,
+                    enabled: false,
+                    device_index: None,
+                    gain: None,
+                    sample_rate: None,
+                    receiver_location: None,
+                },
+            ],
+            ..AppConfig::default()
+        };
+
+        config.enable_agent();
+        assert!(config.agent.enabled);
+        assert!(config.feeds.iter().all(|f| !f.enabled));
+        assert_eq!(config.agent.saved_feed_states.get("beast-1"), Some(&true));
+        assert_eq!(config.agent.saved_feed_states.get("sbs-2"), Some(&false));
+
+        // Round-trip through TOML while agent is enabled
+        let serialized = toml::to_string_pretty(&config).expect("serialize config");
+        let mut reloaded: AppConfig = toml::from_str(&serialized).expect("deserialize config");
+        assert!(reloaded.agent.enabled);
+        assert!(reloaded.feeds.iter().all(|f| !f.enabled));
+        assert_eq!(reloaded.agent.saved_feed_states.get("beast-1"), Some(&true));
+        assert_eq!(reloaded.agent.saved_feed_states.get("sbs-2"), Some(&false));
+
+        // Disabling agent restores the exact prior state
+        reloaded.disable_agent();
+        assert!(!reloaded.agent.enabled);
+        assert!(reloaded.agent.saved_feed_states.is_empty());
+        assert!(reloaded.feeds[0].enabled);
+        assert!(!reloaded.feeds[1].enabled);
     }
 }

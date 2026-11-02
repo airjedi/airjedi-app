@@ -60,6 +60,10 @@ struct ReconnectBackoff(Timer);
 #[derive(Resource, Default)]
 struct SelectedHistoryTrack(Option<TrackId>);
 
+fn agent_mode_enabled(app_config: Option<Res<AppConfig>>) -> bool {
+    app_config.is_some_and(|c| c.agent.enabled)
+}
+
 /// Registers the replication client and the `DisplayTrack` -> visual hydrator.
 pub struct ThinClientPlugin {
     agent_addr: String,
@@ -76,19 +80,18 @@ impl Plugin for ThinClientPlugin {
     fn build(&self, app: &mut App) {
         let addr = parse_agent_addr(&self.agent_addr);
 
-        // Silence local ingest: in thin mode the agent is the sole track source,
-        // so AdsbPlugin should open no feeds or enrichment streams (it still
-        // provides the model registry the hydrator uses).
-        app.insert_resource(crate::adsb::LocalIngestDisabled);
-
         app.add_plugins((RepliconPlugins, RepliconRenetPlugins));
         register_replicated(app);
 
-        // Overlay configs the fat FusionIntegrationPlugin would normally provide.
-        app.insert_resource(EstimatedTrackConfig::default())
-            .register_type::<EstimatedTrackConfig>()
-            .insert_resource(MultiSensorDebugConfig::default())
-            .register_type::<MultiSensorDebugConfig>();
+        // Ensure overlay configs exist even if FusionIntegrationPlugin isn't added.
+        if !app.world().contains_resource::<EstimatedTrackConfig>() {
+            app.insert_resource(EstimatedTrackConfig::default())
+                .register_type::<EstimatedTrackConfig>();
+        }
+        if !app.world().contains_resource::<MultiSensorDebugConfig>() {
+            app.insert_resource(MultiSensorDebugConfig::default())
+                .register_type::<MultiSensorDebugConfig>();
+        }
 
         app.insert_resource(ThinAgentAddr(addr))
             .insert_resource(ThinClientStatus::default())
@@ -101,27 +104,30 @@ impl Plugin for ThinClientPlugin {
             .add_systems(Startup, connect_to_agent)
             .add_systems(
                 Update,
-                enforce_safe_trail_renderers.after(crate::config::sync_config_to_render_states),
+                enforce_safe_trail_renderers
+                    .after(crate::config::sync_config_to_render_states)
+                    .run_if(agent_mode_enabled),
             )
             .add_systems(
                 Update,
                 (
                     manage_connection,
                     update_thin_status,
-                    ingest_history_previews,
-                    receive_history_messages,
-                    request_history_transfers,
-                    hydrate_new_tracks,
-                    update_hydrated_tracks,
-                    materialize_client_history,
-                    sync_thin_history_chart,
+                    ingest_history_previews.run_if(agent_mode_enabled),
+                    receive_history_messages.run_if(agent_mode_enabled),
+                    request_history_transfers.run_if(agent_mode_enabled),
+                    hydrate_new_tracks.run_if(agent_mode_enabled),
+                    update_hydrated_tracks.run_if(agent_mode_enabled),
+                    materialize_client_history.run_if(agent_mode_enabled),
+                    sync_thin_history_chart.run_if(agent_mode_enabled),
                 )
                     .chain(),
             )
             .add_systems(
                 Update,
                 (draw_estimated_cones, draw_sensor_contributions)
-                    .after(crate::aircraft::interpolation::interpolate_aircraft_positions),
+                    .after(crate::aircraft::interpolation::interpolate_aircraft_positions)
+                    .run_if(agent_mode_enabled),
             );
     }
 }
@@ -191,8 +197,17 @@ fn parse_agent_addr(s: &str) -> SocketAddr {
 fn connect_to_agent(
     mut commands: Commands,
     channels: Res<RepliconChannels>,
-    addr: Res<ThinAgentAddr>,
+    app_config: Option<Res<AppConfig>>,
+    mut addr: ResMut<ThinAgentAddr>,
 ) {
+    let Some(config) = app_config else {
+        return;
+    };
+    addr.0 = parse_agent_addr(&config.agent.endpoint);
+    if !config.agent.enabled {
+        return;
+    }
+
     match create_client(&channels, addr.0) {
         Ok((client, transport)) => {
             commands.insert_resource(client);
@@ -203,21 +218,93 @@ fn connect_to_agent(
     }
 }
 
-/// Re-dial the agent when the connection drops. Two steps, because replicon only
-/// registers a *fresh* client connection (netcode tokens are single-use):
-///  1. On disconnect, tear down the stale `RenetClient` + transport.
-///  2. Once absent, mint a new client + transport after a backoff interval.
+/// Re-dial the agent when the connection drops, or tear down / reconnect when
+/// `app_config.agent.enabled` or `app_config.agent.endpoint` changes at runtime.
 fn manage_connection(
+    app_config: Option<Res<AppConfig>>,
     client: Option<Res<RenetClient>>,
     state: Res<State<ClientState>>,
     time: Res<Time>,
     mut backoff: ResMut<ReconnectBackoff>,
     channels: Res<RepliconChannels>,
-    addr: Res<ThinAgentAddr>,
-    stale: Query<Entity, With<DisplayTrack>>,
+    mut addr: ResMut<ThinAgentAddr>,
+    replicated_entities: Query<Entity, With<DisplayTrack>>,
+    local_visuals: Query<Entity, (With<Aircraft>, Without<DisplayTrack>)>,
+    fusion_tracks: Query<Entity, With<airjedi_fusion::Track>>,
+    mut history_store: ResMut<ClientHistoryStore>,
     mut commands: Commands,
     mut connection_attempted: Local<bool>,
+    mut was_enabled: Local<bool>,
+    mut prev_endpoint: Local<String>,
 ) {
+    let (agent_enabled, endpoint_str) = app_config
+        .as_ref()
+        .map(|c| (c.agent.enabled, c.agent.endpoint.as_str()))
+        .unwrap_or((false, ""));
+
+    // Handle transition from enabled -> disabled: tear down client + replicated entities.
+    if !agent_enabled {
+        if *was_enabled || client.is_some() {
+            if client.is_some() {
+                commands.remove_resource::<RenetClient>();
+                commands.remove_resource::<NetcodeClientTransport>();
+                info!("thin client disconnected (agent connection disabled)");
+            }
+            for entity in &replicated_entities {
+                commands.entity(entity).despawn();
+            }
+            *history_store = ClientHistoryStore::default();
+            *connection_attempted = false;
+            *was_enabled = false;
+        }
+        return;
+    }
+
+    // Handle transition from disabled -> enabled: clean up any local fusion entities
+    // and connect immediately.
+    let endpoint_changed = !prev_endpoint.is_empty() && *prev_endpoint != endpoint_str;
+    if !*was_enabled {
+        *was_enabled = true;
+        *prev_endpoint = endpoint_str.to_string();
+        addr.0 = parse_agent_addr(endpoint_str);
+        for entity in &local_visuals {
+            commands.entity(entity).despawn();
+        }
+        for entity in &fusion_tracks {
+            commands.entity(entity).despawn();
+        }
+        *history_store = ClientHistoryStore::default();
+        if client.is_none() {
+            match create_client(&channels, addr.0) {
+                Ok((new_client, transport)) => {
+                    commands.insert_resource(new_client);
+                    commands.insert_resource(transport);
+                    info!("thin client connecting to agent at {}", addr.0);
+                }
+                Err(e) => warn!("thin client connect failed: {e}"),
+            }
+        }
+        return;
+    }
+
+    // Handle endpoint change while agent is enabled: tear down old client so the
+    // next frame connects to the new address.
+    if endpoint_changed {
+        *prev_endpoint = endpoint_str.to_string();
+        addr.0 = parse_agent_addr(endpoint_str);
+        if client.is_some() {
+            commands.remove_resource::<RenetClient>();
+            commands.remove_resource::<NetcodeClientTransport>();
+        }
+        for entity in &replicated_entities {
+            commands.entity(entity).despawn();
+        }
+        *history_store = ClientHistoryStore::default();
+        *connection_attempted = false;
+        info!("thin client switching agent endpoint to {}", addr.0);
+        return;
+    }
+
     let client_state = *state.get();
 
     // Step 1: disconnected but the stale client is still present - remove it so
@@ -230,7 +317,7 @@ fn manage_connection(
             {
                 commands.remove_resource::<RenetClient>();
                 commands.remove_resource::<NetcodeClientTransport>();
-                for entity in &stale {
+                for entity in &replicated_entities {
                     commands.entity(entity).despawn();
                 }
                 *connection_attempted = false;
@@ -273,11 +360,23 @@ fn should_discard_client(state: ClientState, connection_attempted: bool) -> bool
 
 /// Publish agent-connection status + replicated aircraft count for the status bar.
 fn update_thin_status(
+    app_config: Option<Res<AppConfig>>,
     state: Res<State<ClientState>>,
     aircraft: Query<(), With<Aircraft>>,
     history: Res<ClientHistoryStore>,
     mut status: ResMut<ThinClientStatus>,
 ) {
+    let active = app_config.is_some_and(|c| c.agent.enabled);
+    status.active = active;
+    if !active {
+        status.connected = false;
+        status.aircraft = 0;
+        status.history_tracks = 0;
+        status.history_active_requests = 0;
+        status.history_received_chunks = 0;
+        status.history_total_chunks = 0;
+        return;
+    }
     status.connected = *state.get() == ClientState::Connected;
     status.aircraft = aircraft.iter().count();
     let diagnostics = history.diagnostics();

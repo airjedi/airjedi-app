@@ -162,9 +162,9 @@ pub fn setup_feed_connections(
 ) {
     let mut manager = FeedConnectionManager::default();
 
-    // Thin-client mode opens no local feeds - the agent is the sole ingest - but
-    // we still insert an (empty) manager so status/UI systems have their resource.
-    if ingest_disabled.is_none() {
+    // Thin-client / agent mode opens no local feeds - the agent is the sole ingest -
+    // but we still insert an (empty) manager so status/UI systems have their resource.
+    if ingest_disabled.is_none() && !app_config.agent.enabled {
         for feed in &app_config.feeds {
             if feed.enabled {
                 let data = spawn_feed_client(feed, map_state.latitude, map_state.longitude);
@@ -292,8 +292,20 @@ pub fn reconnect_on_feed_changes(
     map_state: Res<MapState>,
     ingest_disabled: Option<Res<super::LocalIngestDisabled>>,
 ) {
-    // Never open local feeds in thin-client mode, even if the user edits config.
-    if ingest_disabled.is_some() {
+    // When agent connection or LocalIngestDisabled is active, shut down any open
+    // local feeds and do not spawn new ones.
+    if ingest_disabled.is_some() || app_config.agent.enabled {
+        if !manager.connections.is_empty() {
+            for conn in manager.connections.values() {
+                info!(
+                    "[{}] Agent connection active, shutting down local feed",
+                    conn.config.name
+                );
+                conn.data.request_shutdown();
+            }
+            manager.connections.clear();
+        }
+        manager.prev_feed_snapshot = app_config.feeds.clone();
         return;
     }
     if !app_config.is_changed() {

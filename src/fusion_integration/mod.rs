@@ -13,6 +13,10 @@ use bevy::prelude::*;
 
 pub struct FusionIntegrationPlugin;
 
+fn local_fusion_active(app_config: Option<Res<crate::config::AppConfig>>) -> bool {
+    app_config.map_or(true, |c| !c.agent.enabled)
+}
+
 impl Plugin for FusionIntegrationPlugin {
     fn build(&self, app: &mut App) {
         use airjedi_fusion::config::FusionConfig;
@@ -50,13 +54,17 @@ impl Plugin for FusionIntegrationPlugin {
             .init_resource::<multi_sensor_debug::MultiSensorDebugConfig>()
             .add_systems(
                 Update,
-                adsb_adapter::adsb_to_fusion_system.before(FusionSet::Drain),
+                adsb_adapter::adsb_to_fusion_system
+                    .before(FusionSet::Drain)
+                    .run_if(local_fusion_active),
             )
             // Refresh the injectable clock before any projection system reads it,
             // so live behavior matches reading the real clock directly.
             .add_systems(
                 Update,
-                clock::advance_sim_clock.before(render_bridge::sync_tracks_to_visuals),
+                clock::advance_sim_clock
+                    .before(render_bridge::sync_tracks_to_visuals)
+                    .run_if(local_fusion_active),
             )
             .add_systems(
                 Update,
@@ -93,7 +101,8 @@ impl Plugin for FusionIntegrationPlugin {
                     estimated_track::sync_display_estimate
                         .after(estimated_track::update_heading_history)
                         .after(crate::aircraft::interpolation::interpolate_aircraft_positions),
-                ),
+                )
+                    .run_if(local_fusion_active),
             );
     }
 }

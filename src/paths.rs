@@ -35,6 +35,11 @@ fn get_paths() -> &'static AppPaths {
         .expect("paths::init was not called before accessing paths")
 }
 
+#[cfg(test)]
+pub fn is_initialized() -> bool {
+    PATHS.get().is_some()
+}
+
 /// Build default OS-standard paths for the current platform.
 pub fn os_defaults() -> AppPaths {
     AppPaths {

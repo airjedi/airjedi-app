@@ -480,11 +480,19 @@ impl<'a> Behavior<DockPane> for DockBehavior<'a> {
                 render_pane_with_bg(bg, ui, |ui| {
                     let mut state = SystemState::<(
                         Option<ResMut<FeedConnectionManager>>,
+                        Option<Res<crate::statusbar::ThinClientStatus>>,
                         ResMut<AppConfig>,
                         ResMut<crate::location::FeedLocationUiState>,
                     )>::new(world);
-                    let (feed_mgr, mut app_config, mut location_ui) = state.get_mut(world).unwrap();
-                    tools_window::render_data_sources_tab(ui, feed_mgr.as_deref(), &mut app_config, &mut location_ui);
+                    let (feed_mgr, thin_status, mut app_config, mut location_ui) =
+                        state.get_mut(world).unwrap();
+                    tools_window::render_data_sources_tab(
+                        ui,
+                        feed_mgr.as_deref(),
+                        thin_status.as_deref(),
+                        &mut app_config,
+                        &mut location_ui,
+                    );
                 });
             }
 
