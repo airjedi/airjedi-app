@@ -8,6 +8,8 @@ pub mod filter;
 pub mod history;
 pub mod metrics;
 pub mod prelude_imports;
+#[cfg(feature = "remoteid")]
+pub mod remoteid_source;
 pub mod sensor;
 pub mod store;
 pub mod systems;
